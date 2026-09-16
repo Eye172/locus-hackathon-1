@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://YOUR-SPACE.hf.space/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    { "source": "/universities.geojson", "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }] },
+    { "source": "/topo.svg", "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }] }
+  ]
+}

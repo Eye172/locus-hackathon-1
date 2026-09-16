@@ -1,0 +1,23 @@
+{
+  "_note": "Ориентировочный бюджет студента в месяц. Значения — оценки по открытым источникам на указанную дату; обновляются вручную (роль C). Города без записи честно показываются как «нет данных».",
+  "cities": {
+    "Q35493": {"city": "Алматы", "currency": "KZT", "as_of": "2026-09",
+      "items": {"rent_1room": 220000, "dorm": 25000, "transport_pass": 6000, "canteen_lunch": 2500, "groceries_month": 90000},
+      "sources": [{"label": "Krisha.kz (медианная аренда, янв 2026)", "url": "https://krisha.kz/"}, {"label": "Бюро нацстатистики РК", "url": "https://stat.gov.kz/"}, {"label": "Numbeo: Almaty", "url": "https://www.numbeo.com/cost-of-living/in/Almaty"}]},
+    "Q1520": {"city": "Астана", "currency": "KZT", "as_of": "2026-09",
+      "items": {"rent_1room": 200000, "dorm": 25000, "transport_pass": 6000, "canteen_lunch": 2500, "groceries_month": 90000},
+      "sources": [{"label": "Krisha.kz", "url": "https://krisha.kz/"}, {"label": "Numbeo: Astana", "url": "https://www.numbeo.com/cost-of-living/in/Astana"}]},
+    "Q1740": {"city": "Шымкент", "currency": "KZT", "as_of": "2026-09",
+      "items": {"rent_1room": 140000, "dorm": 20000, "transport_pass": 5000, "canteen_lunch": 2000, "groceries_month": 75000},
+      "sources": [{"label": "Krisha.kz", "url": "https://krisha.kz/"}, {"label": "Numbeo: Shymkent", "url": "https://www.numbeo.com/cost-of-living/in/Shymkent"}]},
+    "Q4290": {"city": "Караганда", "currency": "KZT", "as_of": "2026-09",
+      "items": {"rent_1room": 130000, "dorm": 20000, "transport_pass": 5000, "canteen_lunch": 2000, "groceries_month": 75000},
+      "sources": [{"label": "Krisha.kz", "url": "https://krisha.kz/"}, {"label": "Numbeo: Karaganda", "url": "https://www.numbeo.com/cost-of-living/in/Karaganda"}]},
+    "Q9639": {"city": "Бишкек", "currency": "KGS", "as_of": "2026-09",
+      "items": {"rent_1room": 30000, "dorm": 5000, "transport_pass": 1500, "canteen_lunch": 300, "groceries_month": 15000},
+      "sources": [{"label": "Numbeo: Bishkek", "url": "https://www.numbeo.com/cost-of-living/in/Bishkek"}]},
+    "Q269": {"city": "Ташкент", "currency": "UZS", "as_of": "2026-09",
+      "items": {"rent_1room": 5000000, "dorm": 800000, "transport_pass": 250000, "canteen_lunch": 40000, "groceries_month": 2000000},
+      "sources": [{"label": "Numbeo: Tashkent", "url": "https://www.numbeo.com/cost-of-living/in/Tashkent"}]}
+  }
+}

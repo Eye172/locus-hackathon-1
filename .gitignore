@@ -1,0 +1,27 @@
+# secrets
+.env
+backend/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+backend/data/thumbs/
+backend/data/depth/
+backend/data/*.sqlite3
+backend/data/*.backup.json
+backend/data/eval_report.json
+backend/last_profile.json
+docs/pitch/qa/
+
+# node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# misc
+.DS_Store
+Thumbs.db
+backend/data/universities.broad.json
+backend/data/prewarm_*.log
+docs/video/*.webm
