@@ -7,9 +7,9 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -370,7 +370,12 @@ if _dist.exists():
     app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="assets")
 
     @app.get("/{path:path}")
-    async def spa(path: str):
+    async def spa(path: str, request: Request):
+        # One site, not two: while a dev server (FRONTEND_ORIGIN) is running, every page goes there and only /api
+        # stays here; in production FRONTEND_ORIGIN is empty and the built app is served from this container.
+        if settings.frontend_origin and not path.startswith("api/"):
+            q = f"?{request.url.query}" if request.url.query else ""
+            return RedirectResponse(f"{settings.frontend_origin}/{path}{q}", status_code=307)
         target = _dist / path
         if path and target.is_file():
             return FileResponse(target)
