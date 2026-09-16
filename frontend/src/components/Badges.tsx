@@ -1,3 +1,4 @@
+import type { Lang } from '../lib/i18n'
 import type { Level } from '../lib/types'
 import { catLabel, useLang, useT } from '../lib/i18n'
 
@@ -41,3 +42,8 @@ export function CoverageDot({ level }: { level: string }) {
 }
 
 export const COVERAGE_LABEL: Record<string, string> = { strong: 'сильное', medium: 'среднее', weak: 'слабое', none: 'нет данных' }
+const COVERAGE_I18N: Record<string, Record<Lang, string>> = {
+  strong: { ru: 'сильное', en: 'strong', kk: 'күшті' }, medium: { ru: 'среднее', en: 'medium', kk: 'орташа' },
+  weak: { ru: 'слабое', en: 'weak', kk: 'әлсіз' }, none: { ru: 'нет данных', en: 'no data', kk: 'дерек жоқ' },
+}
+export const coverageLabel = (level: string, lang: Lang) => COVERAGE_I18N[level]?.[lang] ?? COVERAGE_LABEL[level] ?? level

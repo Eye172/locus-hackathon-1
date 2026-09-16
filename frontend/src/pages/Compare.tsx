@@ -5,7 +5,7 @@ import { api, streamChat, thumbUrl, type CompareAi, type FactSheet } from '../li
 import type { Candidate, Profile } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
 import { catLabel, useLang, useT } from '../lib/i18n'
-import { COVERAGE_LABEL, CoverageDot } from '../components/Badges'
+import { CoverageDot, coverageLabel } from '../components/Badges'
 import { SearchBox } from '../components/SearchBox'
 import { store, useStoreVersion } from '../lib/store'
 
@@ -48,7 +48,7 @@ function Card({ p, f }: { p: Profile; f?: FactSheet }) {
         <div className="mt-3">
           <Row icon={<Calendar size={13} />} k="основан" v={u.founded ?? '—'} />
           <Row icon={<Users size={13} />} k="студентов" v={u.students ? u.students.toLocaleString('ru-RU') : '—'} />
-          <Row icon={<CoverageDot level={p.coverage.overall} />} k="покрытие фото" v={`${COVERAGE_LABEL[p.coverage.overall]} · ${p.photos.length}`} />
+          <Row icon={<CoverageDot level={p.coverage.overall} />} k="покрытие фото" v={`${coverageLabel(p.coverage.overall, 'ru')} · ${p.photos.length}`} />
           {f?.climate && <Row icon={<Thermometer size={13} />} k="зима / лето" v={`${sign(f.climate.winter.t_mean)} / ${sign(f.climate.summer.t_mean)}`} />}
           {f?.climate && <Row icon={<Sun size={13} />} k="комфортных дней" v={f.climate.comfort_days.comfortable} />}
           {f?.city_context && <Row icon={<Navigation size={13} />} k="до центра" v={f.city_context.distance_to_center_km != null ? `${f.city_context.distance_to_center_km} км` : '—'} />}

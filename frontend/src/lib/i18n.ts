@@ -46,6 +46,7 @@ const D: Record<string, Record<Lang, string>> = {
   'profile.cityTab': { ru: 'Город', en: 'City', kk: 'Қала' },
   'globe.fly': { ru: 'Перелёт к кампусу', en: 'Flying to campus', kk: 'Кампусқа ұшу' },
   'globe.campus': { ru: 'Кампус', en: 'Campus', kk: 'Кампус' },
+  'globe.skip': { ru: 'Пропустить', en: 'Skip', kk: 'Өткізіп жіберу' },
   'globe.open': { ru: 'Открыть профиль', en: 'Open profile', kk: 'Профильді ашу' },
   'globe.hint': { ru: '3D-здания — из OpenStreetMap (OpenFreeMap). Потяните карту правой кнопкой, чтобы осмотреться.', en: '3D buildings from OpenStreetMap (OpenFreeMap). Right-drag to look around.', kk: '3D ғимараттар — OpenStreetMap. Айналаны көру үшін тінтуірдің оң жағымен тартыңыз.' },
   'globe.click': { ru: 'Клик — перелёт к кампусу', en: 'Click to fly to the campus', kk: 'Басу — кампусқа ұшу' },

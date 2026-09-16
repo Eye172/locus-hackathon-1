@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Check, Loader2, MinusCircle, AlertTriangle, Circle, KeyRound, ExternalLink, Thermometer, Bus, Navigation, FileJson, ListChecks, Trash2, ChevronDown } from 'lucide-react'
 import type { CategoryStats, Context, Description, Profile, SourceStatus, Stage } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
-import { catLabel, useLang, useT } from '../lib/i18n'
-import { COVERAGE_LABEL, CoverageDot } from './Badges'
+import { catLabel, useLang, useT, type Lang } from '../lib/i18n'
+import { CoverageDot, coverageLabel } from './Badges'
 import { store, useStoreVersion } from '../lib/store'
 
 const ICON = {
@@ -15,11 +15,17 @@ const ICON = {
   fetching: <Loader2 size={12} className="text-brand animate-spin" />,
   disabled: <KeyRound size={12} className="text-slate-400" />,
 }
-const AGENT: Record<string, string> = { facts: 'Факты', campus: 'Кампус · OSM', collect: 'Scout', fetch: 'Fetcher', analyze: 'Inspector · Curator', assemble: 'Writer' }
+const AGENT: Record<string, Record<Lang, string>> = {
+  facts: { ru: 'Факты', en: 'Facts', kk: 'Деректер' }, campus: { ru: 'Кампус · OSM', en: 'Campus · OSM', kk: 'Кампус · OSM' },
+  collect: { ru: 'Scout', en: 'Scout', kk: 'Scout' }, fetch: { ru: 'Fetcher', en: 'Fetcher', kk: 'Fetcher' },
+  analyze: { ru: 'Inspector · Curator', en: 'Inspector · Curator', kk: 'Inspector · Curator' }, assemble: { ru: 'Writer', en: 'Writer', kk: 'Writer' },
+}
 
 /** One-line agent strip: dot, agent name, time. Sources unfold below. */
 export function AgentsStrip({ stages, sources, elapsed }: { stages: Record<string, Stage>; sources: Record<string, SourceStatus>; elapsed: number }) {
   const [open, setOpen] = useState(false)
+  const lang = useLang()
+  const t = useT()
   const list = Object.values(stages)
   const problems = list.filter((s) => s.status === 'skipped' || s.status === 'error')
   const srcs = Object.entries(sources)
@@ -29,18 +35,18 @@ export function AgentsStrip({ stages, sources, elapsed }: { stages: Record<strin
         {list.map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1.5" title={s.detail ?? ''}>
             {ICON[s.status]}
-            <span className={s.status === 'pending' ? 'text-slate-400' : 'text-ink-2'}>{AGENT[s.key] ?? s.label}</span>
+            <span className={s.status === 'pending' ? 'text-slate-400' : 'text-ink-2'}>{AGENT[s.key]?.[lang] ?? s.label}</span>
             {s.ms != null && s.status !== 'running' && s.status !== 'pending' && <span className="mono text-muted">{(s.ms / 1000).toFixed(1)}s</span>}
           </span>
         ))}
         {srcs.length > 0 && (
           <button onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 text-ink-2 hover:text-ink cursor-pointer">
-            источники <span className="mono">{srcs.filter(([, s]) => s.status === 'done').length}/{srcs.length}</span><ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+            {t('home.sources').toLowerCase()} <span className="mono">{srcs.filter(([, s]) => s.status === 'done').length}/{srcs.length}</span><ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
           </button>
         )}
         <span className="ml-auto mono text-muted">{(elapsed / 1000).toFixed(1)} s</span>
       </div>
-      {problems.length > 0 && <div className="mt-1.5 text-xs text-likely">{problems.map((s) => `${AGENT[s.key] ?? s.label}: ${s.detail}`).join(' · ')}</div>}
+      {problems.length > 0 && <div className="mt-1.5 text-xs text-likely">{problems.map((s) => `${AGENT[s.key]?.[lang] ?? s.label}: ${s.detail}`).join(' · ')}</div>}
       {open && (
         <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-xs">
           {srcs.map(([k, s]) => (
@@ -65,7 +71,7 @@ export function CoverageMatrix({ categories, overall, compact }: { categories: R
       {!compact && (
         <div className="flex items-baseline justify-between mb-2">
           <h3 className="caps text-muted">{t('profile.coverage')}</h3>
-          {overall && <span className="inline-flex items-center gap-1.5 text-xs"><CoverageDot level={overall} />{COVERAGE_LABEL[overall]}</span>}
+          {overall && <span className="inline-flex items-center gap-1.5 text-xs"><CoverageDot level={overall} />{coverageLabel(overall, lang)}</span>}
         </div>
       )}
       <div className="space-y-1.5">
@@ -186,6 +192,7 @@ export function VisitPlan({ qid }: { qid: string }) {
 }
 
 export function JudgePanel({ p }: { p: Profile }) {
+  const lang = useLang()
   const t = useT()
   const download = () => {
     const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' })
@@ -200,7 +207,7 @@ export function JudgePanel({ p }: { p: Profile }) {
           <table className="mt-2 w-full text-xs">
             <thead><tr><Th>агент</Th><Th>статус</Th><Th>время</Th><Th>детали</Th></tr></thead>
             <tbody>{p.stages.map((s) => (
-              <tr key={s.key} className="rule"><td className="py-1.5 pr-3">{AGENT[s.key] ?? s.label}</td><td className="py-1.5 pr-3 text-muted">{s.status}</td><td className="py-1.5 pr-3 mono text-right">{s.ms ?? '—'} ms</td><td className="py-1.5 text-muted">{s.detail}</td></tr>
+              <tr key={s.key} className="rule"><td className="py-1.5 pr-3">{AGENT[s.key]?.[lang] ?? s.label}</td><td className="py-1.5 pr-3 text-muted">{s.status}</td><td className="py-1.5 pr-3 mono text-right">{s.ms ?? '—'} ms</td><td className="py-1.5 text-muted">{s.detail}</td></tr>
             ))}</tbody>
           </table>
           <div className="mt-2 mono text-[11px] text-muted">итого {p.elapsed_ms} ms · {p.partial ? 'частичный' : 'полный'} · {p.generated_at}</div>

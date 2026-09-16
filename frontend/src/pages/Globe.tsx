@@ -1,3 +1,4 @@
+import { Cutscene, hasCutscene } from '../components/Cutscene'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapPin, Sparkles, ArrowRight, Undo2, Loader2 } from 'lucide-react'
@@ -21,6 +22,8 @@ export default function Globe() {
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const [countries, setCountries] = useState<Country[]>([])
   const [phase, setPhase] = useState<'idle' | 'flying' | 'arrived'>('idle')
+  const [cutscene, setCutscene] = useState<string | null>(null)
+  const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
   const coords = useRef<Map<string, [number, number]>>(new Map())
   const autoTimer = useRef<number | undefined>(undefined)
@@ -53,6 +56,7 @@ export default function Globe() {
 
   return (
     <div className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
+      {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} />
       <Clouds zoom={zoom} />
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />
@@ -115,7 +119,7 @@ export default function Globe() {
               </div>
             )}
             <div className="mt-3 flex items-center gap-2">
-              <button onClick={() => nav(`/u/${target.qid}`)} className="btn-primary flex-1 justify-center">{t('globe.open')} <ArrowRight size={16} /></button>
+              <button onClick={openProfile} className="btn-primary flex-1 justify-center">{t('globe.open')} <ArrowRight size={16} /></button>
             </div>
             {phase === 'arrived' && <div className="mt-2 text-[11px] text-blue-200/50">{t('globe.hint')}</div>}
           </div>

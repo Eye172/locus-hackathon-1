@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check } from 'lucide-react'
-import { streamProfile, thumbUrl } from '../lib/api'
+import { streamProfile, thumbUrl, API_BASE } from '../lib/api'
 import type { Campus, Photo, Profile as ProfileT, SourceStatus, Stage, University } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
 import { catLabel, useLang, useT } from '../lib/i18n'
-import { COVERAGE_LABEL, CoverageDot } from '../components/Badges'
+import { CoverageDot, coverageLabel } from '../components/Badges'
 import { AgentsStrip, CoverageMatrix, DescriptionBlock, ContextCards, Timeline, JudgePanel, VisitPlan } from '../components/ProfileParts'
 import { PhotoGrid, PhotoAlbums, PhotoPassport, BrochureVsReality, EmptyState } from '../components/Photos'
 import { CampusMap3D } from '../components/CampusMap3D'
@@ -90,7 +90,8 @@ export default function Profile() {
   const prev = idx > 0 ? () => openPhoto(shown[idx - 1]) : undefined
   const next = idx >= 0 && idx < shown.length - 1 ? () => openPhoto(shown[idx + 1]) : undefined
 
-  const share = async () => { try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
+  // the share link goes through /s/{qid}: crawlers get Open Graph tags + a preview card, people get redirected here
+  const share = async () => { try { const u = new URL(window.location.href); await navigator.clipboard.writeText(`${API_BASE || u.origin}/s/${qid}${u.search}`); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
   const saved = !!store.saved()[qid]
   const doRefresh = () => { setParams({ refresh: '1' }); setRun((r) => r + 1) }
   const doneSources = Object.entries(sources).filter(([, s]) => s.status === 'done').map(([, s]) => s.label)
@@ -150,7 +151,7 @@ export default function Profile() {
               {profile && (
                 <div className="text-xs text-ink-2 flex items-center gap-2">
                   <CoverageDot level={profile.coverage.overall} />
-                  <span>{t('profile.coverage')}: {COVERAGE_LABEL[profile.coverage.overall]}</span>
+                  <span>{t('profile.coverage')}: {coverageLabel(profile.coverage.overall, lang)}</span>
                   <span className="mono text-muted">· {(profile.elapsed_ms / 1000).toFixed(1)} s{cached ? ` · ${t('profile.cached')}` : ''}</span>
                 </div>
               )}

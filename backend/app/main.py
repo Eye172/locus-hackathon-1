@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import cache, http
 from .config import settings
 from .models import CATEGORY_LABELS, SOURCE_LABELS, ExternalCandidates, Photo, PhotoCandidate, Profile
-from .pipeline import orchestrator, vision
+from .pipeline import og, orchestrator, vision
 from .pipeline.resolve import index, resolve
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -326,6 +326,42 @@ async def thumb(photo_id: str):
     if not path.exists():
         raise HTTPException(404)
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/og/{qid}.png")
+async def og_card(qid: str):
+    """1200x630 preview card for messengers and social networks: cover photo, name, city, verified count."""
+    p = await cache.get_profile(qid)
+    row = index.by_id.get(qid)
+    if not p and not row:
+        raise HTTPException(404)
+    png = await asyncio.get_running_loop().run_in_executor(None, og.render, p, row)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/s/{qid}", response_class=HTMLResponse)
+async def share_page(qid: str, tab: str = "photos", photo: str | None = None):
+    """Link-preview page: crawlers read the OG tags, humans are redirected to the app."""
+    p = await cache.get_profile(qid)
+    row = index.by_id.get(qid)
+    if not p and not row:
+        raise HTTPException(404)
+    name = (p.university.name if p else None) or (row.get("ru") or row.get("en") if row else qid)
+    city = (p.university.city if p else None) or (row.get("city") if row else None)
+    verified = sum(1 for ph in p.photos if ph.level == "verified") if p else 0
+    desc = og.description(p, row)
+    target = f"{settings.frontend_origin}/u/{qid}?tab={tab}" + (f"&photo={photo}" if photo else "")
+    esc = lambda x: (x or "").replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")  # noqa: E731
+    html = f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<title>{esc(name)} · CampusLens</title>
+<meta property="og:type" content="website"><meta property="og:site_name" content="CampusLens">
+<meta property="og:title" content="{esc(name)}{(' · ' + esc(city)) if city else ''}">
+<meta property="og:description" content="{esc(desc)}">
+<meta property="og:image" content="/api/og/{qid}.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta http-equiv="refresh" content="0; url={esc(target)}">
+</head><body style="font-family:system-ui;padding:24px"><a href="{esc(target)}">{esc(name)}</a> — {verified} подтверждённых фото. Открываем профиль…</body></html>"""
+    return HTMLResponse(html)
 
 
 # Serve the built frontend when present (single-container deployment)

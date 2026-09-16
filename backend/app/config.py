@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "CampusLens"
     contact_email: str = "nnurkhan91@gmail.com"
     data_dir: Path = BACKEND_DIR / "data"
+    frontend_origin: str = ""   # e.g. https://campuslens.vercel.app when the SPA is not served by this container
 
     # Optional API keys. Each one enables an extra photo source; the pipeline works without them.
     mapillary_token: str | None = None
