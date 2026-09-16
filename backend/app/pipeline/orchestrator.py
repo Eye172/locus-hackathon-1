@@ -312,13 +312,12 @@ class Run:
         reps = dedup.merge_exact(self.fetched)
         photos = self.analyze(reps)
         # Judge agent: second opinion on borderline photos (only when an LLM key is configured)
-        if settings.active_llm() != "none" and self.remaining() > 2:
-            try:
-                n = await asyncio.wait_for(judge_mod.run(photos, {f.id: f for f in reps}, self.uni.name, self.uni.city),
-                                           timeout=max(3.0, self.remaining()))
-                self.logf(f"judge ({settings.active_llm()}): {n} verdicts applied")
-            except asyncio.TimeoutError:
-                self.logf("judge skipped: budget")
+        # The judge gets a floor of 8 s even when collection ate the budget: a flash-lite verdict takes ~2 s per batch,
+        # and a second opinion on borderline photos is worth a few seconds more than the 25 s target.
+        if settings.active_llm() != "none":
+            n = await judge_mod.run(photos, {f.id: f for f in reps}, self.uni.name, self.uni.city,
+                                    budget_s=max(8.0, self.remaining()))
+            self.logf(f"judge ({settings.active_llm()}): {n} verdicts applied")
         good = [p for p in photos if not p.rejected]
         rejected = [p for p in photos if p.rejected]
         kept = dedup.cluster_similar(good, self.embs)

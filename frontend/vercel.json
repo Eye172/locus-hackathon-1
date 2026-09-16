@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://YOUR-SPACE.hf.space/api/$1" },
+    { "source": "/s/(.*)", "destination": "https://YOUR-SPACE.hf.space/s/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

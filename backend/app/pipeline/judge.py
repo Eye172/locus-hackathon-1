@@ -7,6 +7,7 @@ judging at most `judge_max_photos` per profile, in parallel batches of 4.
 from __future__ import annotations
 
 import asyncio
+import time
 import base64
 import io
 import logging
@@ -108,17 +109,27 @@ def apply(p: Photo, v: Verdict, provider: str) -> None:
         p.rejected, p.reject_reason = False, None
 
 
-async def run(photos: list[Photo], fetched_by_id: dict[str, Fetched], name: str, city: str | None) -> int:
-    """Judge borderline photos in place. Returns the number of verdicts applied."""
+async def run(photos: list[Photo], fetched_by_id: dict[str, Fetched], name: str, city: str | None,
+              budget_s: float = 8.0) -> int:
+    """Judge borderline photos in place, most confident first, applying each batch as it lands so a tight budget
+    still yields partial verdicts. Returns the number of verdicts applied."""
     if settings.active_llm() == "none":
         return 0
     borderline = [p for p in photos if settings.judge_low <= p.confidence < settings.judge_high and p.id in fetched_by_id]
     borderline.sort(key=lambda p: -p.confidence)
     borderline = borderline[: settings.judge_max_photos]
     applied = 0
-    for i in range(0, len(borderline), 4):
-        batch = borderline[i:i + 4]
-        results = await asyncio.gather(*[review(fetched_by_id[p.id], name, city) for p in batch], return_exceptions=True)
+    deadline = time.monotonic() + budget_s
+    for i in range(0, len(borderline), 5):
+        left = deadline - time.monotonic()
+        if left < 1.5:
+            break
+        batch = borderline[i:i + 5]
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[review(fetched_by_id[p.id], name, city) for p in batch], return_exceptions=True), timeout=left)
+        except asyncio.TimeoutError:
+            break
         for p, res in zip(batch, results):
             if isinstance(res, tuple) and res[0] is not None:
                 apply(p, res[0], res[1])

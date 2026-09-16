@@ -13,6 +13,7 @@
    ---
    ```
 3. Secrets Space: `GEMINI_API_KEY` (опц.), `MAPILLARY_TOKEN`, `FLICKR_API_KEY`, `GOOGLE_MAPS_API_KEY` (опц.).
+   Переменная `FRONTEND_ORIGIN=https://<проект>.vercel.app` — чтобы страницы шаринга `/s/{qid}` перенаправляли в приложение.
 4. Persistent storage (если доступно) для `data/` — иначе кэш профилей живёт до рестарта; прогрев можно запускать
    после старта: `python scripts/prewarm.py` внутри контейнера.
 5. Проверка: `https://<space>.hf.space/api/health` → `{"ok": true, "clip_ready": true}`.

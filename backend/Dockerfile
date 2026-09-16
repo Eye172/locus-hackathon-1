@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HF_HUB_DISABLE_SYMLINKS_WARNING=1 \
     HF_HOME=/app/.cache/huggingface
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
