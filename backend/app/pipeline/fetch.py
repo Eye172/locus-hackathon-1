@@ -20,6 +20,8 @@ Image.MAX_IMAGE_PIXELS = 60_000_000
 
 MIN_SIDE = 300
 MAX_BYTES = 12_000_000
+# Wikimedia panoramas are legitimate wide shots; on websites and social feeds a 3:1 image is a slider strip or banner
+WIDE_OK_SOURCES = {"commons_cat", "commons_depicts", "commons_geo", "wikipedia", "city_article", "city_cat"}
 
 
 @dataclass
@@ -52,7 +54,7 @@ def _dms_to_deg(v, ref) -> float | None:
         return None
 
 
-def _decode(data: bytes, pid: str) -> dict | None:
+def _decode(data: bytes, pid: str, max_aspect: float = 3.5) -> dict | None:
     """Runs in a worker thread."""
     try:
         im = Image.open(io.BytesIO(data))
@@ -60,7 +62,7 @@ def _decode(data: bytes, pid: str) -> dict | None:
         if fmt in ("GIF", "SVG", "ICO", "BMP"):
             return None
         w, h = im.size
-        if min(w, h) < MIN_SIDE or w / h > 3.5 or h / w > 3.5:
+        if min(w, h) < MIN_SIDE or w / h > max_aspect or h / w > 3.5:
             return None
         exif_date = exif_lat = exif_lon = None
         try:
@@ -119,7 +121,7 @@ async def fetch_one(cand: PhotoCandidate, sem: asyncio.Semaphore, deadline: floa
         looks_like_image = data[:3] == b"\xff\xd8\xff" or data[:4] == b"\x89PNG" or data[:4] == b"RIFF"
         if not ct.startswith("image/") and not looks_like_image:
             return None
-        dec = await asyncio.to_thread(_decode, data, pid)
+        dec = await asyncio.to_thread(_decode, data, pid, 3.5 if cand.source in WIDE_OK_SOURCES else 2.4)
         if not dec:
             return None
         return Fetched(cand=cand, id=pid, last_modified=r.headers.get("last-modified"), **dec)

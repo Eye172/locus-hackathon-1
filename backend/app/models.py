@@ -134,6 +134,18 @@ class Signal(BaseModel):
     value: str | None = None
 
 
+class AiVerdict(BaseModel):
+    """What the vision model said about one photo (see pipeline/ai_inspector.py)."""
+    place: Literal["this_university", "city", "other_place", "unknown", "not_photo"]
+    rel: int = Field(ge=0, le=3)          # how sure the photo shows this university (or, for place=city, this city)
+    cat: str                              # one of CATEGORIES or "none"
+    q: int = Field(ge=0, le=3)            # usefulness for a prospective student
+    flags: list[str] = Field(default_factory=list)
+    era: str = "unknown"                  # 2020s | 2010s | 2000s | older | unknown
+    why: str = ""
+    model: str = ""
+
+
 class PhotoRef(BaseModel):
     id: str
     thumb: str
@@ -183,6 +195,11 @@ class Photo(BaseModel):
     rejected: bool = False
     reject_reason: str | None = None
     preliminary: bool = False
+    ai: AiVerdict | None = None          # vision-model verdict; None when no model looked at the photo
+    quality: int | None = None           # 0-3 usefulness (from the verdict)
+    date_estimate: str | None = None     # "2010s" etc. when no real date is known; always shown as an estimate
+    ref_similarity: float | None = None  # CLIP cosine to the reference photo of the university
+    featured: bool = False               # picked by the curator for the compact per-category set
 
 
 class Stage(BaseModel):
@@ -247,4 +264,6 @@ class Profile(BaseModel):
     elapsed_ms: int = 0
     partial: bool = False
     cached: bool = False
-    version: str = "0.1"
+    reference: dict | None = None        # {url, page_url, source} of the trusted reference photo shown to the inspector
+    inspector: dict | None = None        # {model, photos, calls, tokens_in, tokens_out, ms, errors}
+    version: str = "0.2"

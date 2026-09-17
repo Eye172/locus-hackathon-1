@@ -18,7 +18,8 @@ const ICON = {
 const AGENT: Record<string, Record<Lang, string>> = {
   facts: { ru: 'Факты', en: 'Facts', kk: 'Деректер' }, campus: { ru: 'Кампус · OSM', en: 'Campus · OSM', kk: 'Кампус · OSM' },
   collect: { ru: 'Scout', en: 'Scout', kk: 'Scout' }, fetch: { ru: 'Fetcher', en: 'Fetcher', kk: 'Fetcher' },
-  analyze: { ru: 'Inspector · Curator', en: 'Inspector · Curator', kk: 'Inspector · Curator' }, assemble: { ru: 'Writer', en: 'Writer', kk: 'Writer' },
+  inspect: { ru: 'ИИ-инспектор', en: 'AI inspector', kk: 'ЖИ-инспектор' },
+  analyze: { ru: 'Curator', en: 'Curator', kk: 'Curator' }, assemble: { ru: 'Writer', en: 'Writer', kk: 'Writer' },
 }
 
 /** One-line agent strip: dot, agent name, time. Sources unfold below. */
@@ -222,12 +223,31 @@ export function JudgePanel({ p }: { p: Profile }) {
           </table>
         </div>
       </div>
-      <div className="card p-5">
-        <h3 className="caps text-muted">{t('judge.thresholds')}</h3>
-        <div className="mt-2 text-xs text-ink-2 grid grid-cols-2 sm:grid-cols-4 gap-2 mono">
-          <span>verified ≥ 0.65</span><span>likely ≥ 0.40</span><span>pHash ≤ 8</span><span>cosine ≥ 0.93</span>
-          <span>junk &gt; 0.55</span><span>budget 25 s</span><span>source timeout 6 s</span><span>outdated &gt; 8 y</span>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6">
+        <div className="card p-5">
+          <h3 className="caps text-muted">{t('judge.inspector')}</h3>
+          {p.inspector ? (
+            <div className="mt-2 text-xs text-ink-2 grid grid-cols-2 sm:grid-cols-3 gap-2 mono">
+              <span>{p.inspector.model}</span>
+              <span>{p.inspector.photos} / {p.inspector.submitted} photos</span>
+              <span>{p.inspector.cached} from cache</span>
+              <span>{p.inspector.calls} calls · {p.inspector.ms} ms</span>
+              <span>{p.inspector.tokens_in} + {p.inspector.tokens_out} tokens</span>
+              <span>{p.inspector.errors} errors</span>
+            </div>
+          ) : <div className="mt-2 text-xs text-muted">—</div>}
+          <h3 className="caps text-muted mt-4">{t('judge.thresholds')}</h3>
+          <div className="mt-2 text-xs text-ink-2 grid grid-cols-2 sm:grid-cols-4 gap-2 mono">
+            <span>verified ≥ 0.65</span><span>likely ≥ 0.40</span><span>pHash ≤ 8</span><span>cosine ≥ 0.93</span>
+            <span>strip &gt; 2.4:1</span><span>budget 25 s</span><span>source timeout 6 s</span><span>outdated &gt; 8 y</span>
+          </div>
         </div>
+        {p.reference && (
+          <div className="card p-3 lg:w-56">
+            <h3 className="caps text-muted px-2 pt-1">{t('judge.reference')}</h3>
+            <img src={p.reference.url} alt="" className="mt-2 w-full aspect-[4/3] object-cover rounded-md" />
+          </div>
+        )}
       </div>
       <div className="card p-5">
         <div className="flex items-center justify-between">

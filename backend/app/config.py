@@ -45,16 +45,24 @@ class Settings(BaseSettings):
 
     # Verification thresholds
     verified_threshold: float = 0.65
-    likely_threshold: float = 0.30           # with a vision judge available (it can raise or drop borderline photos)
-    likely_threshold_no_judge: float = 0.40  # stricter when nobody double-checks
+    likely_threshold: float = 0.40
 
     def likely_cut(self) -> float:
-        return self.likely_threshold if self.active_llm() != "none" else self.likely_threshold_no_judge
-    judge_max_photos: int = 10
+        return self.likely_threshold
+
+    # AI inspector: a vision model looks at every candidate (pipeline/ai_inspector.py).
+    # 3.5 flash-lite at LOW media resolution = 280 tokens per photo; a batch of 8 answers in ~3 s (≈ $0.002).
+    # Small batches in parallel keep the tail latency down: a slow call costs 8 photos, not 16.
+    inspect_model: str = "gemini-3.5-flash-lite"
+    inspect_batch: int = 8
+    inspect_concurrency: int = 6
+    inspect_max_photos: int = 112
+    inspect_max_street: int = 10      # Mapillary/Flickr street frames: few are informative, they mostly feed the walk tab
+    inspect_timeout_s: float = 12.0
     depth_warmup: bool = True
-    judge_low: float = 0.30
-    judge_high: float = 0.65
     outdated_years: int = 8
+    curate_quota: dict[str, int] = {"campus": 8, "dormitory": 6, "classroom": 6, "library": 6, "lab": 6,
+                                    "sports": 6, "student_life": 8, "city": 6}
 
     # Mirrors (kumi.systems, private.coffee, maps.mail.ru) hang from some networks; the main host answers in ~1 s.
     overpass_urls: list[str] = ["https://overpass-api.de/api/interpreter"]

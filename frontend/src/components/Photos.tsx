@@ -16,6 +16,7 @@ const levelBar = (l: Photo['level']) => (l === 'verified' ? 'conf-verified' : l 
 export function PhotoTile({ p, qid, onOpen, large }: { p: Photo; qid: string; onOpen: (p: Photo) => void; large?: boolean }) {
   useStoreVersion()
   const lang = useLang()
+  const t = useT()
   const fav = store.favorites(qid).includes(p.id)
   return (
     <figure className={`group relative m-0 pop ${large ? 'col-span-2 row-span-2' : ''}`}>
@@ -25,7 +26,7 @@ export function PhotoTile({ p, qid, onOpen, large }: { p: Photo; qid: string; on
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition-opacity" />
         <div className="absolute left-2.5 right-2.5 bottom-2.5 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="truncate font-medium">{p.title || p.source_label}</div>
-          <div className="flex items-center gap-2 opacity-80 mono text-[11px]">{p.date && <span>{p.date}</span>}{p.sources_count > 1 && <span className="inline-flex items-center gap-1"><Layers size={11} />{p.sources_count}</span>}{p.geo_inside && <span className="inline-flex items-center gap-1"><MapPin size={11} />кампус</span>}</div>
+          <div className="flex items-center gap-2 opacity-80 mono text-[11px]">{p.date ? <span>{p.date}</span> : p.date_estimate && p.date_estimate !== 'unknown' ? <span title={t('passport.estimate')}>≈{t('era.' + p.date_estimate)}</span> : null}{p.sources_count > 1 && <span className="inline-flex items-center gap-1"><Layers size={11} />{p.sources_count}</span>}{p.geo_inside && <span className="inline-flex items-center gap-1"><MapPin size={11} />кампус</span>}</div>
         </div>
         <div className="absolute top-2 left-2 flex gap-1">{p.outdated && <OutdatedChip />}{p.preliminary && <span className="chip bg-white/90 text-brand">предв.</span>}</div>
         {p.similar.length > 0 && <span className="absolute top-2 right-2 chip bg-black/55 text-white mono">+{p.similar.length}</span>}
@@ -50,24 +51,35 @@ export function PhotoGrid({ photos, qid, onOpen, empty }: { photos: Photo[]; qid
   )
 }
 
-/** Album view: one rail per category, first photo large. */
+/** Album view: one rail per category, first photo large. Shows the curator's picks; the rest unfolds on demand. */
 export function PhotoAlbums({ photos, qid, onOpen, coverage }: { photos: Photo[]; qid: string; onOpen: (p: Photo) => void; coverage: Record<string, string> }) {
   const lang = useLang()
+  const t = useT()
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const curated = photos.some((p) => p.featured)  // profiles built before the curator have no picks
   return (
     <div className="space-y-8">
       {CATEGORIES.map((c) => {
         const list = photos.filter((p) => p.category === c)
         if (!list.length) return null
+        const picks = curated ? list.filter((p) => p.featured) : list.slice(0, 11)
+        const shown = open[c] ? list : picks.length ? picks : list.slice(0, 6)
+        const more = list.length - shown.length
         return (
           <section key={c}>
             <div className="flex items-baseline gap-3 mb-3">
               <h3 className="text-lg font-bold">{catLabel(c, lang)}</h3>
-              <span className="mono text-xs text-muted">{list.length}</span>
-              <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted"><CoverageDot level={coverage[c] ?? 'none'} />{list.filter((p) => p.level === 'verified').length} подтверждено</span>
+              <span className="mono text-xs text-muted">{shown.length}{list.length > shown.length ? ` / ${list.length}` : ''}</span>
+              <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted"><CoverageDot level={coverage[c] ?? 'none'} />{list.filter((p) => p.level === 'verified').length} {t('level.verified')}</span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-x-4 gap-y-5 grid-flow-dense">
-              {list.slice(0, 11).map((p, i) => <PhotoTile key={p.id} p={p} qid={qid} onOpen={onOpen} large={i === 0} />)}
+              {shown.map((p, i) => <PhotoTile key={p.id} p={p} qid={qid} onOpen={onOpen} large={i === 0} />)}
             </div>
+            {(more > 0 || open[c]) && (
+              <button onClick={() => setOpen((o) => ({ ...o, [c]: !o[c] }))} className="mt-3 text-xs text-ink-2 hover:text-brand cursor-pointer">
+                {open[c] ? t('profile.showLess') : `${t('profile.showAll')} · +${more}`}
+              </button>
+            )}
           </section>
         )
       })}
@@ -129,6 +141,28 @@ export function BrochureVsReality({ photos, onOpen }: { photos: Photo[]; onOpen:
   )
 }
 
+function AiBlock({ p }: { p: Photo }) {
+  const t = useT()
+  const v = p.ai
+  if (!v) return <div className="text-xs text-muted">{t('passport.aiNone')}</div>
+  const dots = (n: number) => <span className="mono tracking-widest">{'●'.repeat(n)}<span className="text-slate-300">{'●'.repeat(3 - n)}</span></span>
+  const bad = v.place === 'other_place' || v.place === 'not_photo'
+  return (
+    <div>
+      <h3 className="caps text-muted">{t('passport.ai')} <span className="normal-case tracking-normal font-normal mono text-[10px]">· {v.model}</span></h3>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs items-baseline">
+        <dt className="text-muted">{t('passport.aiPlace')}</dt><dd className={bad ? 'text-unverified font-medium' : ''}>{t('ai.place.' + v.place)}</dd>
+        <dt className="text-muted">{t('passport.aiSure')}</dt><dd>{dots(v.rel)}</dd>
+        <dt className="text-muted">{t('passport.aiUseful')}</dt><dd>{dots(v.q)}</dd>
+        {v.era !== 'unknown' && <><dt className="text-muted">{t('passport.aiEra')}</dt><dd>{t('era.' + v.era)}</dd></>}
+        {p.ref_similarity != null && <><dt className="text-muted">{t('passport.refSim')}</dt><dd className="mono">{Math.round(p.ref_similarity * 100)}%</dd></>}
+      </dl>
+      {v.flags.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{v.flags.map((f) => <span key={f} className="chip text-likely border-likely/30">{t('ai.flag.' + f)}</span>)}</div>}
+      {v.why && <div className="mt-1.5 text-xs text-ink-2">«{v.why}»</div>}
+    </div>
+  )
+}
+
 export function PhotoPassport({ p, qid, campus, all, onClose, onOpen, onPrev, onNext }: {
   p: Photo; qid: string; campus?: Campus | null; all: Photo[]; onClose: () => void; onOpen: (p: Photo) => void; onPrev?: () => void; onNext?: () => void
 }) {
@@ -137,7 +171,7 @@ export function PhotoPassport({ p, qid, campus, all, onClose, onOpen, onPrev, on
   const [flagged, setFlagged] = useState(false)
   const [planned, setPlanned] = useState(false)
   const [three, setThree] = useState(false)
-  useEffect(() => { setThree(false) }, [p.id])
+  useEffect(() => { setThree(false); setFlagged(false); setPlanned(false) }, [p.id])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); if (e.key === 'ArrowLeft') onPrev?.(); if (e.key === 'ArrowRight') onNext?.() }
     window.addEventListener('keydown', onKey)
@@ -181,6 +215,8 @@ export function PhotoPassport({ p, qid, campus, all, onClose, onOpen, onPrev, on
               {p.reject_reason && <div className="mt-2 text-xs text-unverified">Отклонено: {p.reject_reason}</div>}
             </div>
 
+            <AiBlock p={p} />
+
             <div>
               <h3 className="caps text-muted">{t('passport.categories')}</h3>
               <div className="mt-2 space-y-1.5">
@@ -195,7 +231,8 @@ export function PhotoPassport({ p, qid, campus, all, onClose, onOpen, onPrev, on
               <Row k="источники" v={<span className="flex flex-wrap gap-1">{p.sources.map((s) => <SourceChip key={s} source={s} brochure={s === 'official'} />)}</span>} />
               <Row k={t('passport.author')} v={p.author || '—'} />
               <Row k={t('passport.license')} v={p.license || '—'} />
-              <Row k={t('passport.date')} v={p.date ? <span className="mono">{p.date} <span className="text-muted">({p.date_source})</span></span> : '—'} />
+              <Row k={t('passport.date')} v={p.date ? <span className="mono">{p.date} <span className="text-muted">({p.date_source})</span></span>
+                : p.date_estimate && p.date_estimate !== 'unknown' ? <span>≈ {t('era.' + p.date_estimate)} <span className="text-muted">({t('passport.estimate')})</span></span> : '—'} />
               <Row k={t('passport.size')} v={<span className="mono">{p.width}×{p.height}</span>} />
               {p.building && <Row k={t('passport.building')} v={`${p.building} (${p.building_kind})`} />}
               {p.lat != null && <Row k={t('passport.geo')} v={<span className="mono">{p.lat.toFixed(5)}, {p.lon?.toFixed(5)}{p.geo_distance_m != null ? ` · ${p.geo_distance_m} м` : ''}</span>} />}

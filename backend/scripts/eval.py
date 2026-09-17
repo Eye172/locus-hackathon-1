@@ -10,6 +10,8 @@ labels.json format:
 }
 "belongs" — the photo really shows this university (or its city for category "city").
 Positive prediction = photo kept in the profile (verified or likely); negative = rejected.
+strict_precision also requires the right category (when the label has one);
+featured_precision is measured on the curated set the profile shows first.
 """
 from __future__ import annotations
 
@@ -45,6 +47,8 @@ async def evaluate() -> None:
         return
     tp = fp = fn = tn = 0
     cat_ok = cat_n = 0
+    strict_ok = 0
+    feat_ok = feat_n = 0
     per: dict[str, dict] = {}
     for qid, items in labels.items():
         p = await cache.get_profile(qid)
@@ -64,6 +68,11 @@ async def evaluate() -> None:
             if predicted and truth and lab.get("category"):
                 cat_n += 1
                 cat_ok += ph.category == lab["category"]
+            if predicted and truth and (not lab.get("category") or ph.category == lab["category"]):
+                strict_ok += 1
+            if predicted and getattr(ph, "featured", False):
+                feat_n += 1
+                feat_ok += truth and (not lab.get("category") or ph.category == lab["category"])
         per[qid] = row
         tp += row["tp"]; fp += row["fp"]; fn += row["fn"]; tn += row["tn"]
     precision = tp / (tp + fp) if tp + fp else 0.0
@@ -71,7 +80,10 @@ async def evaluate() -> None:
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     report = {"labelled": tp + fp + fn + tn, "tp": tp, "fp": fp, "fn": fn, "tn": tn,
               "precision": round(precision, 3), "recall": round(recall, 3), "f1": round(f1, 3),
-              "category_accuracy": round(cat_ok / cat_n, 3) if cat_n else None, "per_university": per}
+              "category_accuracy": round(cat_ok / cat_n, 3) if cat_n else None,
+              "strict_precision": round(strict_ok / (tp + fp), 3) if tp + fp else None,
+              "featured_precision": round(feat_ok / feat_n, 3) if feat_n else None, "featured": feat_n,
+              "per_university": per}
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
 

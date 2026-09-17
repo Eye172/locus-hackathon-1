@@ -1,54 +1,1032 @@
 {
-  "_note": "Ручная разметка для scripts/eval.py. belongs = фото действительно показывает этот вуз (или его город для category=city) и пригодно для визуального профиля. Размечено по просмотру превью 16.09.2026.",
-  "Q2783344": {
-    "c292ba95704dc26d": {"belongs": true, "category": "lab"},
-    "34d6962a0891d590": {"belongs": true, "category": "campus"},
-    "07f0a4dbbe847d7f": {"belongs": true, "category": "city"},
-    "cb65b0627071db7d": {"belongs": true, "category": "city"},
-    "a5818e102897bc34": {"belongs": true, "category": "lab"},
-    "923c3ab747e6ecd4": {"belongs": true, "category": "student_life"},
-    "8141db4ee6e50e64": {"belongs": true, "category": "lab"},
-    "e87d30db654009bc": {"belongs": true, "category": "lab"},
-    "9afe5521a82c87ed": {"belongs": true, "category": "lab"},
-    "c38f8b42e2a4ceb6": {"belongs": true, "category": "campus"},
-    "3a8dd4ec36e7ff61": {"belongs": false, "category": "none", "why": "портрет/церемония, не кампус"},
-    "fc2fbc32c767991d": {"belongs": true, "category": "sports"},
-    "8e5ecc16992e0f8a": {"belongs": true, "category": "sports"},
-    "40a9a461ea1d33d0": {"belongs": true, "category": "sports"},
-    "bdae8a6622da931f": {"belongs": true, "category": "lab"},
-    "cf44429a3f2452a8": {"belongs": true, "category": "lab"},
-    "5e39eb189e4e7c50": {"belongs": true, "category": "sports"},
-    "9de25e34fc55df8f": {"belongs": true, "category": "sports"},
-    "5f9db779789bee55": {"belongs": true, "category": "campus"},
-    "4a521f1fadc82c3f": {"belongs": true, "category": "sports"},
-    "939f5f80e8040836": {"belongs": true, "category": "lab"},
-    "0346d4f99b4dae8e": {"belongs": true, "category": "lab"},
-    "2262b07aa92e56a9": {"belongs": true, "category": "lab"},
-    "0c6b9d7143870daf": {"belongs": true, "category": "city"},
-    "ac2b593fb8b8d4e7": {"belongs": true, "category": "city"},
-    "afe715fc93237a75": {"belongs": true, "category": "city"},
-    "4ed56a1c897161a2": {"belongs": true, "category": "city"},
-    "cada90b2da72ce3e": {"belongs": true, "category": "lab"},
-    "6be83695904236f5": {"belongs": true, "category": "library"},
-    "da3ce5cfcbab58e3": {"belongs": true, "category": "student_life"},
-    "108d122538827687": {"belongs": true, "category": "campus", "why": "вход в School of Humanities, реальное фото"},
-    "d231d72fbb84a750": {"belongs": true, "category": "campus", "why": "вход в School of Science and Technology"},
-    "9e5b9ac1bdabafdb": {"belongs": false, "category": "none", "why": "стоковое фото Unsplash на сайте вуза"},
-    "9f936a240bd6a138": {"belongs": false, "category": "none", "why": "стоковое фото врача"},
-    "bb530dbe50141fce": {"belongs": false, "category": "none", "why": "постер симпозиума"},
-    "1ccce7eecfc487ac": {"belongs": false, "category": "none", "why": "портрет"},
-    "414b22292b798c62": {"belongs": false, "category": "none", "why": "портрет"},
-    "7b87d576758493cf": {"belongs": false, "category": "none", "why": "логотип"},
-    "b362aced996624c6": {"belongs": false, "category": "none", "why": "логотип"},
-    "9c0dd35facd37bb0": {"belongs": false, "category": "none", "why": "логотип"},
-    "3302e66f56d03612": {"belongs": false, "category": "none", "why": "ИИ-картинка на сайте"},
-    "691a9e5d9f9fd59e": {"belongs": false, "category": "none", "why": "постер"},
-    "820a7363842b09dc": {"belongs": false, "category": "none", "why": "постер"},
-    "00922dec71e275b3": {"belongs": false, "category": "none", "why": "постер"},
-    "4d7a1fb5fc78bddf": {"belongs": false, "category": "none", "why": "карта"},
-    "72366c1444042470": {"belongs": false, "category": "none", "why": "карта"},
-    "c02fc6e184a9df5e": {"belongs": false, "category": "none", "why": "спутниковый снимок"},
-    "6ed861d0634766b1": {"belongs": false, "category": "none", "why": "схема районов"},
-    "9b7275677bf5e469": {"belongs": false, "category": "none", "why": "самолёт, не город"}
+ "_note": "belongs = the photo should be in the profile (this university, or its city for category city). Banners, strips, stock, portraits, officials at tables, maps and unrelated places are false. Hand-labelled 17.09.2026 from contact sheets; ambiguous photos are left out.",
+ "Q2783344": {
+  "c292ba95704dc26d": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "34d6962a0891d590": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "07f0a4dbbe847d7f": {
+   "belongs": true,
+   "category": "city"
+  },
+  "cb65b0627071db7d": {
+   "belongs": true,
+   "category": "city"
+  },
+  "a5818e102897bc34": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "923c3ab747e6ecd4": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "8141db4ee6e50e64": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "e87d30db654009bc": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "9afe5521a82c87ed": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "c38f8b42e2a4ceb6": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "3a8dd4ec36e7ff61": {
+   "belongs": false,
+   "category": "none",
+   "why": "портрет/церемония, не кампус"
+  },
+  "fc2fbc32c767991d": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "8e5ecc16992e0f8a": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "40a9a461ea1d33d0": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "bdae8a6622da931f": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "cf44429a3f2452a8": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "5e39eb189e4e7c50": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "9de25e34fc55df8f": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "5f9db779789bee55": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "4a521f1fadc82c3f": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "939f5f80e8040836": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "0346d4f99b4dae8e": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "2262b07aa92e56a9": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "0c6b9d7143870daf": {
+   "belongs": true,
+   "category": "city"
+  },
+  "ac2b593fb8b8d4e7": {
+   "belongs": true,
+   "category": "city"
+  },
+  "afe715fc93237a75": {
+   "belongs": true,
+   "category": "city"
+  },
+  "4ed56a1c897161a2": {
+   "belongs": true,
+   "category": "city"
+  },
+  "cada90b2da72ce3e": {
+   "belongs": true,
+   "category": "lab"
+  },
+  "6be83695904236f5": {
+   "belongs": true,
+   "category": "library"
+  },
+  "da3ce5cfcbab58e3": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "108d122538827687": {
+   "belongs": true,
+   "category": "campus",
+   "why": "вход в School of Humanities, реальное фото"
+  },
+  "d231d72fbb84a750": {
+   "belongs": true,
+   "category": "campus",
+   "why": "вход в School of Science and Technology"
+  },
+  "9e5b9ac1bdabafdb": {
+   "belongs": false,
+   "category": "none",
+   "why": "стоковое фото Unsplash на сайте вуза"
+  },
+  "9f936a240bd6a138": {
+   "belongs": false,
+   "category": "none",
+   "why": "стоковое фото врача"
+  },
+  "bb530dbe50141fce": {
+   "belongs": false,
+   "category": "none",
+   "why": "постер симпозиума"
+  },
+  "1ccce7eecfc487ac": {
+   "belongs": false,
+   "category": "none",
+   "why": "портрет"
+  },
+  "414b22292b798c62": {
+   "belongs": false,
+   "category": "none",
+   "why": "портрет"
+  },
+  "7b87d576758493cf": {
+   "belongs": false,
+   "category": "none",
+   "why": "логотип"
+  },
+  "b362aced996624c6": {
+   "belongs": false,
+   "category": "none",
+   "why": "логотип"
+  },
+  "9c0dd35facd37bb0": {
+   "belongs": false,
+   "category": "none",
+   "why": "логотип"
+  },
+  "3302e66f56d03612": {
+   "belongs": false,
+   "category": "none",
+   "why": "ИИ-картинка на сайте"
+  },
+  "691a9e5d9f9fd59e": {
+   "belongs": false,
+   "category": "none",
+   "why": "постер"
+  },
+  "820a7363842b09dc": {
+   "belongs": false,
+   "category": "none",
+   "why": "постер"
+  },
+  "00922dec71e275b3": {
+   "belongs": false,
+   "category": "none",
+   "why": "постер"
+  },
+  "4d7a1fb5fc78bddf": {
+   "belongs": false,
+   "category": "none",
+   "why": "карта"
+  },
+  "72366c1444042470": {
+   "belongs": false,
+   "category": "none",
+   "why": "карта"
+  },
+  "c02fc6e184a9df5e": {
+   "belongs": false,
+   "category": "none",
+   "why": "спутниковый снимок"
+  },
+  "6ed861d0634766b1": {
+   "belongs": false,
+   "category": "none",
+   "why": "схема районов"
+  },
+  "9b7275677bf5e469": {
+   "belongs": false,
+   "category": "none",
+   "why": "самолёт, не город"
   }
+ },
+ "Q1734762": {
+  "264fa13106d35275": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "cf627b460ed31f78": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "c9e8470488c6551b": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "7eea551de3665d24": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "604681e4a9533231": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "f0f009692c65f807": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "99f3771a37ffe919": {
+   "belongs": true
+  },
+  "ffdcac5086e870ac": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "63bfebb082d4b3a7": {
+   "belongs": true,
+   "category": "city"
+  },
+  "22db01faa6f16c3c": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "bd06050b41827ddd": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "f4fb5755ea3bcd95": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "ac648a27eac5093f": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "731baca82948d14b": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f7d277b3e94a622a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e27dceb4107e7eda": {
+   "belongs": true,
+   "category": "city"
+  },
+  "d32c24212d376ef3": {
+   "belongs": false
+  },
+  "3836314f8aeace78": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f5bddcb74e31bdc4": {
+   "belongs": true,
+   "category": "city"
+  },
+  "a721713c94c50222": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "7f4669a68f32498a": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "baae49b2957cb91b": {
+   "belongs": false
+  },
+  "52cc30f2bdd1f97b": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "fde30925d4d979ab": {
+   "belongs": true,
+   "category": "city"
+  },
+  "7462007d3afb2e39": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "6e3c989c208371ac": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "a845937a4f863fa2": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "f19629c7d15bb307": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "3020c8166c229b97": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "564432add7b2eb02": {
+   "belongs": false
+  },
+  "ffe176675d4d8bc5": {
+   "belongs": true
+  },
+  "cdb2e658b6aca70a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f9391f64bdf696c1": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "29009254e5af40f5": {
+   "belongs": true
+  },
+  "0db783edba9ab90c": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "70f13098fbc151fe": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "22df4b14852dcb0b": {
+   "belongs": true
+  },
+  "b33f66d06af615dd": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "7185444846d0b8ea": {
+   "belongs": true,
+   "category": "sports"
+  },
+  "acc19efc71ee9852": {
+   "belongs": true,
+   "category": "city"
+  },
+  "466c8a7ff543f8ef": {
+   "belongs": true,
+   "category": "city"
+  },
+  "a0ea67ad6579c73b": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "1dc18e0f8c9d9c95": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "64a3e034339ebfe1": {
+   "belongs": true,
+   "category": "dormitory"
+  },
+  "051805c9d162044a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "6eec5567b0d044ed": {
+   "belongs": false
+  },
+  "80589cbd19130c17": {
+   "belongs": false
+  },
+  "3c282118498a8149": {
+   "belongs": true
+  },
+  "e462698348e1832b": {
+   "belongs": false
+  },
+  "b764faad85bf0924": {
+   "belongs": false
+  },
+  "9b82a6af247169a4": {
+   "belongs": false
+  },
+  "8553971bc027d133": {
+   "belongs": false
+  },
+  "0760c2ae8399fb4d": {
+   "belongs": false
+  },
+  "bff9fbaaa69ea095": {
+   "belongs": false
+  },
+  "7b9f331b05baed71": {
+   "belongs": false
+  },
+  "9e9cac16b0a46604": {
+   "belongs": false
+  },
+  "914c31449a88c617": {
+   "belongs": true,
+   "category": "library"
+  },
+  "b3da98c91d30ac31": {
+   "belongs": false
+  },
+  "e53bc1bab4bde783": {
+   "belongs": false
+  },
+  "f94c6b5079ec86af": {
+   "belongs": false
+  },
+  "48131fff33ec18d5": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "0f9da4f271838089": {
+   "belongs": false
+  },
+  "9e0161c8b99fee4c": {
+   "belongs": false
+  },
+  "8fb168d656ee17d8": {
+   "belongs": false
+  },
+  "f5fa680d6840ddcb": {
+   "belongs": false
+  },
+  "4361022120b839aa": {
+   "belongs": false
+  },
+  "193388758d6bd564": {
+   "belongs": false
+  },
+  "692492cf600e8367": {
+   "belongs": false
+  },
+  "2ddec0628ec5bf85": {
+   "belongs": true
+  },
+  "c24108eab991dde7": {
+   "belongs": false
+  },
+  "eb45222a7d1fe564": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e356914a00fc19eb": {
+   "belongs": false
+  },
+  "af20344e77df47e8": {
+   "belongs": false
+  },
+  "c88e0cb0b4d50389": {
+   "belongs": true,
+   "category": "city"
+  },
+  "68bfa80b4b3270ca": {
+   "belongs": false
+  },
+  "24a9f4ba3d49753f": {
+   "belongs": false
+  },
+  "9f73bb702c43e100": {
+   "belongs": false
+  }
+ },
+ "Q427677": {
+  "3dc2fa1b4a917a1d": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "70ab55c8ae88dce4": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "8d3651b8a19206da": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "12e96f688245feba": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "0cebd31d25186803": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "63bfebb082d4b3a7": {
+   "belongs": true,
+   "category": "city"
+  },
+  "db39b02436545f45": {
+   "belongs": false
+  },
+  "e2a834079032d8a9": {
+   "belongs": true,
+   "category": "classroom"
+  },
+  "2ee996be562f2e28": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "95b4f27685094893": {
+   "belongs": true
+  },
+  "731baca82948d14b": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f7d277b3e94a622a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e27dceb4107e7eda": {
+   "belongs": true,
+   "category": "city"
+  },
+  "304f35c471c928b0": {
+   "belongs": false
+  },
+  "af0b85adf3673f00": {
+   "belongs": true,
+   "category": "city"
+  },
+  "da5c8bef7f0ca943": {
+   "belongs": false
+  },
+  "b7cbd4071edc3afa": {
+   "belongs": true
+  },
+  "3836314f8aeace78": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f5bddcb74e31bdc4": {
+   "belongs": true,
+   "category": "city"
+  },
+  "5d7aebb2671187bf": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "fde30925d4d979ab": {
+   "belongs": true,
+   "category": "city"
+  },
+  "8baa4c7ebc2daeb8": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "44f9cf99a114eaa6": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "3cead86bcf21238f": {
+   "belongs": false
+  },
+  "051805c9d162044a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "6eec5567b0d044ed": {
+   "belongs": false
+  },
+  "80589cbd19130c17": {
+   "belongs": false
+  },
+  "add185ef04d48e13": {
+   "belongs": false
+  },
+  "311cdc853ace7e79": {
+   "belongs": false
+  },
+  "3415219c330720b7": {
+   "belongs": false
+  },
+  "a13f7f37ba3b52f8": {
+   "belongs": false
+  },
+  "d3b6adc089eb8050": {
+   "belongs": false
+  },
+  "642b9010752fa293": {
+   "belongs": false
+  },
+  "551876cd3f273150": {
+   "belongs": false
+  },
+  "898f48e0a5aac7aa": {
+   "belongs": false
+  },
+  "b53b7c69127aa5c5": {
+   "belongs": false
+  },
+  "d9fd1cc1b7fd68da": {
+   "belongs": false
+  },
+  "b3be8e6acfd4c258": {
+   "belongs": false
+  },
+  "812c62b986789e88": {
+   "belongs": false
+  },
+  "ac5b1f3f2d0885dd": {
+   "belongs": false
+  },
+  "6ecdfda19357e301": {
+   "belongs": false
+  },
+  "3a84f4d0d11df6af": {
+   "belongs": false
+  },
+  "3f53533230faac13": {
+   "belongs": false
+  },
+  "be9644ec4c3780e0": {
+   "belongs": false
+  },
+  "262d85c65975e103": {
+   "belongs": false
+  },
+  "27c3a8b88a403484": {
+   "belongs": false
+  },
+  "a61288f5a99f7b80": {
+   "belongs": false
+  },
+  "a46f39e3c291ac8a": {
+   "belongs": false
+  },
+  "c0523d2d7bca03e0": {
+   "belongs": false
+  },
+  "4fe3cfbe69b6e01d": {
+   "belongs": false
+  },
+  "bc8dfa1e06a7f95e": {
+   "belongs": false
+  },
+  "4490a3b31a62d3cc": {
+   "belongs": false
+  },
+  "fe08884a4da903cb": {
+   "belongs": false
+  },
+  "4a4580a110473569": {
+   "belongs": false
+  },
+  "64632d816e4be812": {
+   "belongs": false
+  },
+  "d5468364543cdb28": {
+   "belongs": false
+  },
+  "eb38811e82f010c2": {
+   "belongs": false
+  },
+  "05c489ae85756a92": {
+   "belongs": false
+  },
+  "6061dfc1a1b7ceee": {
+   "belongs": false
+  },
+  "a046253f4aaea9c1": {
+   "belongs": false
+  },
+  "d29fe32428d376e6": {
+   "belongs": false
+  },
+  "ff866be08b7e157d": {
+   "belongs": false
+  },
+  "7e2e80744b0bf376": {
+   "belongs": false
+  },
+  "5ebe5e17ef82c7b7": {
+   "belongs": false
+  },
+  "c8537cd5599e7505": {
+   "belongs": false
+  }
+ },
+ "Q1513804": {
+  "bcdce0f6826e14f3": {
+   "belongs": true,
+   "category": "campus"
+  },
+  "63bfebb082d4b3a7": {
+   "belongs": true,
+   "category": "city"
+  },
+  "7b061a9f6812dcc9": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "2affe011f2b61605": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "18b2ca8274fbec77": {
+   "belongs": true
+  },
+  "5642a351afbec309": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "c8bea4381db76d53": {
+   "belongs": false
+  },
+  "855c3d45d4531af3": {
+   "belongs": false
+  },
+  "d8f6f5271f96b7c3": {
+   "belongs": false
+  },
+  "4f96a57ae2022022": {
+   "belongs": false
+  },
+  "d6d73faff65672c3": {
+   "belongs": false
+  },
+  "1210eccae5571b48": {
+   "belongs": true
+  },
+  "7f359d968a7f956d": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "95490cfcde395682": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "9a068afa7969700e": {
+   "belongs": false
+  },
+  "85368ea5f5de4a90": {
+   "belongs": false
+  },
+  "a9fea0c9ea4259ba": {
+   "belongs": false
+  },
+  "731baca82948d14b": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f7d277b3e94a622a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e27dceb4107e7eda": {
+   "belongs": true,
+   "category": "city"
+  },
+  "719e9e933e8246a5": {
+   "belongs": true
+  },
+  "32ef7a1963be09b2": {
+   "belongs": false
+  },
+  "3836314f8aeace78": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f5bddcb74e31bdc4": {
+   "belongs": true,
+   "category": "city"
+  },
+  "fde30925d4d979ab": {
+   "belongs": true,
+   "category": "city"
+  },
+  "c8f97ecce7da20d4": {
+   "belongs": true,
+   "category": "city"
+  },
+  "b1d53509647ac7d8": {
+   "belongs": false
+  },
+  "051805c9d162044a": {
+   "belongs": true,
+   "category": "city"
+  },
+  "6eec5567b0d044ed": {
+   "belongs": false
+  },
+  "80589cbd19130c17": {
+   "belongs": false
+  },
+  "8a8483fc96febb39": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "cfc73ebe2aa34c44": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "d05c459fef571e21": {
+   "belongs": false
+  },
+  "044f82aefdbffe04": {
+   "belongs": false
+  },
+  "810ed8471d31dbab": {
+   "belongs": false
+  },
+  "23f8869cd0549a3a": {
+   "belongs": false
+  },
+  "61f1d76285bcec72": {
+   "belongs": false
+  },
+  "a033d817fd039de3": {
+   "belongs": false
+  },
+  "98ac992f626c1f8e": {
+   "belongs": true
+  },
+  "2ac612b22e28b6f5": {
+   "belongs": false
+  }
+ },
+ "Q4227527": {
+  "3752ef637e677b02": {
+   "belongs": true,
+   "category": "city"
+  },
+  "9708f4e431025672": {
+   "belongs": true,
+   "category": "city"
+  },
+  "099719ab411e3e96": {
+   "belongs": true,
+   "category": "city"
+  },
+  "d37580c3193c783c": {
+   "belongs": true,
+   "category": "city"
+  },
+  "8c03bccfd733d247": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e53efc34b03bd535": {
+   "belongs": true,
+   "category": "city"
+  },
+  "576419dc8e523732": {
+   "belongs": true,
+   "category": "city"
+  },
+  "7e3485889e01deab": {
+   "belongs": true,
+   "category": "city"
+  },
+  "f08900b77caec668": {
+   "belongs": true,
+   "category": "city"
+  },
+  "13ac8b5e1c033822": {
+   "belongs": true,
+   "category": "city"
+  },
+  "e35322aebed836e5": {
+   "belongs": true,
+   "category": "city"
+  },
+  "fb6279f8937a4de6": {
+   "belongs": true,
+   "category": "city"
+  },
+  "58263636d5aee1d6": {
+   "belongs": true,
+   "category": "city"
+  },
+  "bd79a9f504e1b83f": {
+   "belongs": false
+  },
+  "2a74de5ba511d300": {
+   "belongs": false
+  },
+  "24e886e748c59fac": {
+   "belongs": false
+  },
+  "969b99bae7c09bd4": {
+   "belongs": false
+  },
+  "72366c1444042470": {
+   "belongs": false
+  },
+  "3e6e4ee3255f48b0": {
+   "belongs": false
+  },
+  "9b73064e6e375164": {
+   "belongs": false
+  },
+  "a962eaf5984c3346": {
+   "belongs": false
+  }
+ },
+ "Q121743262": {
+  "974a41dee30edacc": {
+   "belongs": true,
+   "category": "city"
+  },
+  "4eb1ff339c30d304": {
+   "belongs": true,
+   "category": "city"
+  },
+  "7640b7de05995f22": {
+   "belongs": true,
+   "category": "city"
+  },
+  "3fd44a5744006fae": {
+   "belongs": true,
+   "category": "city"
+  },
+  "51a4ccf8f31fcef5": {
+   "belongs": false
+  },
+  "d5ddf6222eba5c7c": {
+   "belongs": true,
+   "category": "city"
+  },
+  "7319dc58da7c8aa2": {
+   "belongs": true,
+   "category": "city"
+  },
+  "2fd7fa2c6723a8a8": {
+   "belongs": true,
+   "category": "city"
+  },
+  "008d5f9367b9b004": {
+   "belongs": true,
+   "category": "city"
+  },
+  "97e4f55418f04182": {
+   "belongs": true,
+   "category": "city"
+  },
+  "13551bb0f7525b7c": {
+   "belongs": false
+  },
+  "d5a879cb5e7ae907": {
+   "belongs": false
+  },
+  "c34ba4f8b0676e74": {
+   "belongs": false
+  },
+  "271a6d90f8f86da3": {
+   "belongs": false
+  }
+ },
+ "We5afa23012d9": {
+  "fade76c4f6e88602": {
+   "belongs": false
+  },
+  "b61aa32547767661": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "0de4367664d7432a": {
+   "belongs": false
+  },
+  "ccf3ab4bdea91f6b": {
+   "belongs": false
+  },
+  "da2d0c4d8f395398": {
+   "belongs": true,
+   "category": "classroom"
+  },
+  "6a384dbc12811763": {
+   "belongs": false
+  },
+  "6a17b02c93550874": {
+   "belongs": true,
+   "category": "student_life"
+  },
+  "77c58faca77c7835": {
+   "belongs": true
+  },
+  "60cf021898d8ef92": {
+   "belongs": true
+  },
+  "76b2499e78ef11bf": {
+   "belongs": true
+  },
+  "21dbdab5295a9c51": {
+   "belongs": false
+  },
+  "64d3e13558492d24": {
+   "belongs": false
+  },
+  "e4722632a7f99d4d": {
+   "belongs": false
+  },
+  "0678bc77f4486beb": {
+   "belongs": false
+  },
+  "e32dd88092525897": {
+   "belongs": false
+  }
+ }
 }

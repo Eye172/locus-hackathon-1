@@ -63,7 +63,7 @@ def render(p: Profile | None, row: dict | None) -> bytes:
     if p:
         for ph in p.photos:
             f = settings.thumbs_dir / f"{ph.id}.jpg"
-            if ph.level == "verified" and f.exists():
+            if ph.level == "verified" and ph.category != "city" and f.exists():
                 cover = f
                 break
     cw = 640

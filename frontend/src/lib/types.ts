@@ -61,6 +61,17 @@ export interface Campus {
 }
 
 export interface Signal { key: string; label: string; weight: number; value?: string | null }
+export type Era = '2020s' | '2010s' | '2000s' | 'older' | 'unknown'
+export interface AiVerdict {
+  place: 'this_university' | 'city' | 'other_place' | 'unknown' | 'not_photo'
+  rel: number
+  cat: string
+  q: number
+  flags: string[]
+  era: Era
+  why: string
+  model: string
+}
 export interface PhotoRef { id: string; thumb: string; source: string; page_url: string; similarity?: number | null }
 
 export interface Photo {
@@ -102,6 +113,16 @@ export interface Photo {
   rejected: boolean
   reject_reason?: string | null
   preliminary: boolean
+  ai?: AiVerdict | null
+  quality?: number | null
+  date_estimate?: Era | null
+  ref_similarity?: number | null
+  featured?: boolean
+}
+
+export interface InspectorStats {
+  provider: string; model: string; photos: number; submitted: number; cached: number
+  calls: number; tokens_in: number; tokens_out: number; ms: number; errors: number; reference: boolean
 }
 
 export interface Stage {
@@ -160,6 +181,8 @@ export interface Profile {
   elapsed_ms: number
   partial: boolean
   cached: boolean
+  reference?: { url: string } | null
+  inspector?: InspectorStats | null
   version: string
 }
 

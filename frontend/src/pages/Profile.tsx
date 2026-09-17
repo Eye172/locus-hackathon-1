@@ -111,7 +111,8 @@ export default function Profile() {
     { key: 'judge', label: t('profile.judge') },
   ]
   const name = uni ? (uni.names[lang] || uni.name) : ''
-  const hero = profile?.photos.find((p) => p.category === 'campus' && p.level === 'verified') ?? profile?.photos[0]
+  // a city view must never stand in for the university in the header
+  const hero = profile?.photos.find((p) => p.category === 'campus' && p.level === 'verified') ?? profile?.photos.find((p) => p.category !== 'city')
 
   return (
     <div>

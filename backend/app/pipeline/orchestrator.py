@@ -7,26 +7,30 @@ in parallel with the non-geographic sources; geo sources wait for it. Everything
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 import numpy as np
+from PIL import Image
 
-from .. import cache
+from .. import cache, http
 from ..config import settings
 from ..geo import CampusGeom
 from ..models import (BROCHURE_SOURCES, CATEGORIES, Campus, CategoryStats, Photo, PhotoCandidate, Profile,
                       SOURCE_LABELS, Stage, University)
 from . import categorize as categorize_mod
 from . import context as context_mod
-from . import dedup, describe, vision
+from . import curate, dedup, describe, vision
 from . import enrich as enrich_mod
-from . import judge as judge_mod
+from .ai_inspector import Inspector
 from .fetch import Fetched, fetch_all
+from .fetch import photo_id as fetch_id
 from .sources import social, commons, flickr, mapillary, official_site, places, wikipedia
-from .verify import VerifyContext, score
+from .verify import CITY_SOURCES, REJECT_FLAGS, VerifyContext, score
 
 log = logging.getLogger("campuslens.orchestrator")
 Emit = Callable[[dict], Awaitable[None]]
@@ -36,7 +40,8 @@ STAGES = [
     ("campus", "Границы кампуса (OSM)"),
     ("collect", "Сбор кандидатов из источников"),
     ("fetch", "Загрузка изображений"),
-    ("analyze", "Проверка, категории, дубли"),
+    ("inspect", "ИИ-инспектор: проверка каждого фото"),
+    ("analyze", "Уверенность, дубли, отбор"),
     ("assemble", "Сборка профиля"),
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
@@ -60,6 +65,9 @@ class Run:
         self.campus: Campus | None = None
         self.vctx: VerifyContext | None = None
         self.campus_task: asyncio.Task | None = None
+        self.inspector: Inspector | None = None
+        self.ref_emb: np.ndarray | None = None
+        self.reference: dict | None = None
 
     # ---------- helpers ----------
     def ms(self) -> int:
@@ -116,18 +124,71 @@ class Run:
     def text_of(self, f: Fetched) -> str:
         return " ".join([f.cand.text or "", f.cand.title or ""] + [x.text or "" for x in f.extra_sources])
 
+    def verdict_of(self, f: Fetched):
+        if not self.inspector:
+            return None
+        v = self.inspector.verdicts.get(f.id)
+        if v is None:  # a copy of this image may have been inspected under another URL
+            v = next((self.inspector.verdicts[x] for x in (fetch_id(c.url) for c in f.extra_sources)
+                      if x in self.inspector.verdicts), None)
+        return v
+
     def analyze(self, items: list[Fetched]) -> list[Photo]:
         photos: list[Photo] = []
         buildings = self.campus.buildings if self.campus else []
         for f in items:
             p = self.make_photo(f)
-            categorize_mod.categorize(p, self.clf[f.id], self.text_of(f), f.cand.is_city, buildings)
-            score(p, self.vctx, self.text_of(f), f.cand.is_city)
-            if not p.rejected and p.level == "unverified":
-                p.rejected = True
-                p.reject_reason = f"низкая уверенность ({p.confidence:.0%}): недостаточно сигналов принадлежности"
+            is_city = f.cand.is_city or f.cand.source in CITY_SOURCES
+            categorize_mod.categorize(p, self.clf[f.id], self.text_of(f), is_city, buildings)
+            v = self.verdict_of(f)
+            if v and p.rejected and v.place in ("this_university", "city") and v.q >= 1 \
+                    and not set(v.flags) & REJECT_FLAGS and p.reject_reason and p.reject_reason.startswith("не фотография кампуса"):
+                # CLIP took a real photo (a banner on a building, a stage with text) for junk; the inspector looked closer
+                p.rejected, p.reject_reason, p.junk_soft = False, None, True
+            sim = float(np.dot(self.embs[f.id], self.ref_emb)) if self.ref_emb is not None and f.id in self.embs else None
+            score(p, self.vctx, self.text_of(f), is_city, verdict=v, ref_sim=sim)
             photos.append(p)
         return photos
+
+    def describe_for_ai(self, f: Fetched) -> str:
+        """One metadata line per candidate for the inspector prompt."""
+        c = f.cand
+        cap = " ".join((c.title or c.text or "").split())[:90]
+        u = urlparse(c.page_url)
+        page = (u.netloc.replace("www.", "") + u.path)[:70]
+        lat, lon = (c.lat, c.lon) if c.lat is not None else (f.exif_lat, f.exif_lon)
+        if lat is None or lon is None:
+            geo = "none"
+        else:
+            d = self.vctx.geom.distance_m(lat, lon)
+            geo = ("inside the campus outline" if self.vctx.geom.mode == "polygon" else "within 500 m of the university point") \
+                if d == 0 else f"{d:.0f} m from the campus"
+        kind = "city article/category (photo of the city)" if c.is_city or c.source in CITY_SOURCES else SOURCE_LABELS.get(c.source, c.source)
+        return f"source={kind}; caption={cap!r}; page={page}; geotag={geo}; size={f.width}x{f.height}; date={c.date or f.exif_date or '?'}"
+
+    async def load_reference(self) -> None:
+        """A trusted photo of the main building (Wikidata P18, else the Wikipedia lead image) for the inspector."""
+        img = None
+        for url in [self.uni.image_url]:
+            if not url:
+                continue
+            try:
+                r = await http.get(url, timeout=4.0)
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                    im = Image.open(io.BytesIO(r.content)).convert("RGB")
+                    if min(im.size) >= 150:
+                        emb = await vision.encode([im])
+                        clf = vision.clip.classify(emb)[0]
+                        if clf["junk_total"] < 0.5:  # P18 is sometimes a logo or a map
+                            img, self.ref_emb = im, emb[0]
+                            self.reference = {"url": url}
+            except Exception as e:  # noqa: BLE001
+                self.logf(f"reference photo failed: {e!r}")
+            if img is not None:
+                break
+        self.logf(f"reference photo: {'yes' if img is not None else 'none'}")
+        if self.inspector:
+            self.inspector.set_reference(img)
 
     async def embed(self, items: list[Fetched]) -> None:
         new = [f for f in items if f.id not in self.embs]
@@ -206,6 +267,12 @@ class Run:
         if fetched:
             await self.embed(fetched)
             self.fetched.extend(fetched)
+            if self.inspector:
+                # only near-certain junk skips the inspector: CLIP calls fountains "maps" and facades "posters"
+                todo = [f for f in fetched if self.clf[f.id]["junk_total"] < 0.97]
+                if name in ("mapillary", "flickr"):
+                    todo = todo[:settings.inspect_max_street]
+                self.inspector.submit(todo)
             prelim = self.analyze(fetched)
             for p in prelim:
                 p.preliminary = True
@@ -277,6 +344,9 @@ class Run:
         self.campus_task = asyncio.create_task(self.resolve_campus())
         context_task = asyncio.create_task(context_mod.build(self.uni, self.campus))
         asyncio.create_task(vision.warmup())
+        if settings.active_llm() != "none":
+            self.inspector = Inspector(self.uni, self.describe_for_ai)
+        ref_task = asyncio.create_task(self.load_reference())
 
         await self.stage("collect", "running")
         await self.stage("fetch", "running")
@@ -317,7 +387,9 @@ class Run:
 
         # CLIP loads lazily inside embed(); at server start it is already warm, so collection begins immediately
         tasks = {asyncio.create_task(self.source_pipeline(n, f(), lim), name=n): n for n, (f, lim) in factories.items()}
-        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.remaining(), 3.0))
+        # sources get the budget minus a reserve for the inspector's last batches and the assembly
+        reserve = 6.0 if self.inspector else 1.5
+        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.remaining() - reserve, 3.0))
         for t in pending:
             t.cancel()
             self.partial = True
@@ -332,27 +404,41 @@ class Run:
         await self.stage("collect", "done", count=sum(s.get("count", 0) for s in self.sources_status.values() if s["status"] == "done"))
         await self.stage("fetch", "done", count=len(self.fetched))
 
+        # ---------- AI inspector: wait for the batches still in flight ----------
+        try:
+            await asyncio.wait_for(ref_task, timeout=1.0)
+        except Exception:
+            pass
+        if self.inspector:
+            await self.stage("inspect", "running")
+            await self.inspector.finish(timeout=max(4.0, self.remaining() + 2.0))
+            st = self.inspector.stats()
+            self.logf(f"inspector {st['model']}: {st['photos']}/{len(self.fetched)} photos judged "
+                      f"({st['cached']} from cache, {st['calls']} calls, {st['tokens_in']}+{st['tokens_out']} tokens, "
+                      f"{st['errors']} errors)")
+            status = "done" if st["photos"] else "error"
+            await self.stage("inspect", status, count=st["photos"],
+                             detail=f"проверено ИИ: {st['photos']} из {len(self.fetched)} · {st['model']}"
+                                    + (f" · ошибок: {st['errors']}" if st["errors"] else ""))
+        else:
+            await self.stage("inspect", "skipped", detail="нет ключа LLM: только CLIP и сигналы источников")
+
         # ---------- analysis over the full set (cross-source signals need everything) ----------
         await self.stage("analyze", "running")
         reps = dedup.merge_exact(self.fetched)
         photos = self.analyze(reps)
-        # Judge agent: second opinion on borderline photos (only when an LLM key is configured)
-        # The judge gets a floor of 8 s even when collection ate the budget: a flash-lite verdict takes ~2 s per batch,
-        # and a second opinion on borderline photos is worth a few seconds more than the 25 s target.
-        if settings.active_llm() != "none":
-            n = await judge_mod.run(photos, {f.id: f for f in reps}, self.uni.name, self.uni.city,
-                                    budget_s=max(8.0, self.remaining()))
-            self.logf(f"judge ({settings.active_llm()}): {n} verdicts applied")
         good = [p for p in photos if not p.rejected]
         rejected = [p for p in photos if p.rejected]
         kept = dedup.cluster_similar(good, self.embs)
         hidden = len(good) - len(kept)
+        kept = curate.feature(kept, self.embs)
+        rejected.sort(key=lambda p: -p.confidence)
         await self.stage("analyze", "done",
-                         detail=f"копий объединено: {len(self.fetched) - len(reps)}, похожих скрыто: {hidden}, отклонено: {len(rejected)}")
+                         detail=f"копий объединено: {len(self.fetched) - len(reps)}, похожих скрыто: {hidden}, "
+                                f"отклонено: {len(rejected)}, в подборке: {sum(p.featured for p in kept)}")
 
         # ---------- assemble ----------
         await self.stage("assemble", "running")
-        kept.sort(key=lambda p: (-p.confidence, -(p.width * p.height)))
         cats: dict[str, CategoryStats] = {c: CategoryStats() for c in CATEGORIES}
         for p in kept:
             cats[p.category].verified += p.level == "verified"
@@ -372,22 +458,27 @@ class Run:
         for p in kept:
             if p.year:
                 timeline[str(p.year)] = timeline.get(str(p.year), 0) + 1
-        walk = sorted([p for p in kept if p.source == "mapillary"], key=lambda p: p.date or "")
+        # the walk is street-level context: every real Mapillary frame, even the ones not chosen for the albums
+        walk = sorted([p for p in kept + rejected if p.source == "mapillary"
+                       and (not p.rejected or (p.reject_reason or "").startswith(("низкая уверенность", "малоинформативный")))],
+                      key=lambda p: p.date or "")
         try:
-            context = await asyncio.wait_for(context_task, timeout=max(1.0, self.remaining() + 4))
+            context = await asyncio.wait_for(context_task, timeout=max(1.0, self.remaining()))
         except Exception:
             context = None
         stats = {"verified": n_verified, "likely": sum(s.likely for s in cats.values()),
                  "sources": len({s for p in kept for s in p.sources}),
                  "weak": [c for c in CATEGORIES if coverage[c] in ("weak", "none") and c != "city"],
                  "per_category": {c: {"verified": s.verified, "likely": s.likely} for c, s in cats.items()}}
-        description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None)
+        description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
+                                           timeout=max(3.0, min(9.0, self.remaining() + 2.0)))
         profile = Profile(
             university=self.uni, campus=self.campus, photos=kept, rejected=rejected, categories=cats,
             coverage=coverage, description=description, context=context, walk=walk,
             timeline=dict(sorted(timeline.items())), stages=list(self.stages.values()),
             sources_status=self.sources_status, log=self.log,
             generated_at=datetime.now(timezone.utc).isoformat(), elapsed_ms=self.ms(), partial=self.partial,
+            reference=self.reference, inspector=self.inspector.stats() if self.inspector else None,
         )
         await self.stage("assemble", "done", count=len(kept))
         profile.stages = list(self.stages.values())

@@ -186,11 +186,12 @@ async def gemini(uni: University, campus: Campus | None, stats: dict, context: d
         return None
 
 
-async def build(uni: University, campus: Campus | None, stats: dict, context: dict | None) -> Description:
+async def build(uni: University, campus: Campus | None, stats: dict, context: dict | None,
+                timeout: float = 9.0) -> Description:
     provider = settings.active_llm()
     d = None
     if provider == "claude":
-        d = await claude(uni, campus, stats, context)
+        d = await claude(uni, campus, stats, context, timeout=timeout)
     elif provider == "gemini":
-        d = await gemini(uni, campus, stats, context)
+        d = await gemini(uni, campus, stats, context, timeout=timeout)
     return d or template(uni, campus, stats, context)

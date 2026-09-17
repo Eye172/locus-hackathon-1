@@ -22,6 +22,7 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
     + ({ campus: 0.35, dormitory: 0.12, library: 0.1, sports: 0.06, student_life: 0.0, classroom: -0.18, lab: -0.2 } as Record<string, number>)[p.category]
     + (p.source === 'official' || p.source.startsWith('commons') || p.source === 'wikipedia' ? 0.08 : 0) + (p.source === 'mapillary' ? -0.2 : 0)
     + (p.width > p.height ? 0.1 : -0.12) + (p.width >= 1000 ? 0.08 : 0) + (p.level === 'verified' ? 0.1 : 0) - Math.min(0.2, p.junk_score)
+    + (p.quality != null ? (p.quality - 1.5) * 0.12 : 0) + (p.featured ? 0.05 : 0) + (p.ai?.flags.length ? -0.15 : 0)
   return ok.sort((a, b) => score(b) - score(a)).filter((p) => !seen.has(p.id) && seen.add(p.id)).slice(0, limit)
 }
 

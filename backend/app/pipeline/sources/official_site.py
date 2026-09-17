@@ -35,6 +35,43 @@ IMG_URL = re.compile(r"\.(jpe?g|png|webp)(\?|&|$)", re.I)
 BINARY_LINK = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|jpe?g|png|gif|webp|mp4|mp3|avi|mov)(\?|$)", re.I)
 CSS_URL = re.compile(r"url\((?:'|\")?([^'\")]+\.(?:jpe?g|png|webp)[^'\")]*)", re.I)
 YEAR_IN_URL = re.compile(r"/(20\d{2})/(\d{2})/")
+ISO_DATE = re.compile(r"((?:19|20)\d{2})-(\d{2})-(\d{2})")
+DATE_META = ("article:published_time", "og:published_time", "datepublished", "date", "dc.date", "pubdate",
+             "publish-date", "article:modified_time")
+
+
+def _largest_srcset(srcset: str) -> str | None:
+    """'a.jpg 480w, b.jpg 1200w' -> 'b.jpg' (the widest entry; x-descriptors count as width x 1000)."""
+    best, best_w = None, -1.0
+    for part in srcset.split(","):
+        bits = part.strip().split()
+        if not bits:
+            continue
+        w = 0.0
+        if len(bits) > 1:
+            d = bits[1].lower()
+            try:
+                w = float(d[:-1]) * (1000 if d.endswith("x") else 1)
+            except ValueError:
+                w = 0.0
+        if w > best_w:
+            best, best_w = bits[0], w
+    return best
+
+
+def _page_date(soup: BeautifulSoup) -> str | None:
+    for m in soup.find_all("meta"):
+        key = (m.get("property") or m.get("name") or m.get("itemprop") or "").lower()
+        if key in DATE_META and m.get("content"):
+            d = ISO_DATE.search(m["content"])
+            if d:
+                return d.group(0)
+    t = soup.find("time", attrs={"datetime": True})
+    if t:
+        d = ISO_DATE.search(t["datetime"])
+        if d:
+            return d.group(0)
+    return None
 
 
 def _same_site(base: str, url: str) -> bool:
@@ -69,7 +106,7 @@ async def _fetch_page(url: str, timeout: float, _hop: int = 0) -> tuple[str, str
         return None
 
 
-def _extract(final_url: str, html: str) -> tuple[list[dict], list[str], str]:
+def _extract(final_url: str, html: str) -> tuple[list[dict], list[str], str, str | None]:
     soup = BeautifulSoup(html, "lxml")
     title = (soup.title.string or "").strip() if soup.title and soup.title.string else ""
     images: list[dict] = []
@@ -78,9 +115,9 @@ def _extract(final_url: str, html: str) -> tuple[list[dict], list[str], str]:
             if m.get("content"):
                 images.append({"src": m["content"], "alt": title, "og": True})
     for img in soup.find_all("img"):
-        src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-original")
-        if not src and img.get("srcset"):
-            src = img["srcset"].split(",")[-1].strip().split(" ")[0]
+        # the widest srcset entry beats `src`, which is often a small crop for the page layout
+        srcset = img.get("srcset") or img.get("data-srcset") or img.get("data-lazy-srcset")
+        src = (_largest_srcset(srcset) if srcset else None) or img.get("data-src") or img.get("data-lazy-src")             or img.get("data-original") or img.get("src")
         if not src or src.startswith("data:"):
             continue
         images.append({"src": src, "alt": (img.get("alt") or img.get("title") or "").strip(), "og": False})
@@ -96,7 +133,7 @@ def _extract(final_url: str, html: str) -> tuple[list[dict], list[str], str]:
             continue
         if href.startswith("http") and _same_site(final_url, href):
             links.append(href)
-    return images, links, title
+    return images, links, title, _page_date(soup)
 
 
 async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) -> list[PhotoCandidate]:
@@ -107,8 +144,8 @@ async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) 
         return []
     final_url, html = home
     uni.social = social.discover(html, final_url)  # footer icons: instagram / telegram / youtube / vk…
-    images, links, title = _extract(final_url, html)
-    pages: list[tuple[str, str, list[dict]]] = [(final_url, title, images)]
+    images, links, title, _ = _extract(final_url, html)  # a homepage date is the date of the page, not of its photos
+    pages: list[tuple[str, str, list[dict], str | None]] = [(final_url, title, images, None)]
 
     scored = {}
     for l in links:
@@ -120,12 +157,12 @@ async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) 
     for res in results:
         if isinstance(res, tuple):
             u, h = res
-            imgs, _, t = _extract(u, h)
-            pages.append((u, t, imgs))
+            imgs, _, t, d = _extract(u, h)
+            pages.append((u, t, imgs, d))
 
     seen: set[str] = set()
     out: list[PhotoCandidate] = []
-    for page_url, page_title, imgs in pages:
+    for page_url, page_title, imgs, page_date in pages:
         page_score = _link_score(page_url)
         for im in imgs:
             src = urldefrag(urljoin(page_url, im["src"]))[0]
@@ -138,6 +175,8 @@ async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) 
             m = YEAR_IN_URL.search(src)
             if m:
                 date, date_source = f"{m.group(1)}-{m.group(2)}", "url"
+            elif page_date:
+                date, date_source = page_date, "page"
             out.append(PhotoCandidate(
                 url=src, page_url=page_url, source="official",
                 title=im["alt"] or page_title or None,
