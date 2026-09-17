@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from ... import cache, http
 from ...config import settings
 from ...models import PhotoCandidate, University
+from .. import video_frames
 
 log = logging.getLogger("campuslens.social_api")
 SC = "https://api.scrapecreators.com"
@@ -152,6 +153,55 @@ def _jpeg(img: dict | None) -> str | None:
     return next((u for u in urls if ".jpeg" in u or ".jpg" in u), None)
 
 
+MAX_VIDEOS = 4      # videos we open per source: each costs one small download and two ffmpeg seeks
+
+
+def _aweme(a: dict) -> dict:
+    return a.get("aweme_info", a)
+
+
+def _page(a: dict) -> tuple[str, str, str]:
+    author = (a.get("author") or {}).get("unique_id") or ""
+    return author, f"https://www.tiktok.com/@{author}/video/{a.get('aweme_id') or a.get('id')}",         " ".join((a.get("desc") or "").split())
+
+
+async def _tiktok_frames(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
+    """Frames from inside the videos. The cover is a designed poster; the footage behind it is the campus."""
+    picked: list[dict] = []
+    seen_authors: set[str] = set()
+    for raw in awemes:
+        a = _aweme(raw)
+        author = (a.get("author") or {}).get("unique_id") or ""
+        v = a.get("video") or {}
+        url = ((v.get("play_addr") or {}).get("url_list") or [None])[0]
+        if not url or (a.get("image_post_info") or {}).get("images"):
+            continue          # photo carousels already carry real photos: _tiktok_items handles them
+        if author in seen_authors:
+            continue          # eight different students beat eight clips by one of them
+        seen_authors.add(author)
+        picked.append(a)
+        if len(picked) >= MAX_VIDEOS:
+            break
+    if not picked:
+        return []
+    jobs = [(((a.get("video") or {}).get("play_addr") or {}).get("url_list")[0],
+             (a.get("video") or {}).get("duration", 0) / 1000,
+             str(a.get("aweme_id") or a.get("id"))) for a in picked]
+    out: list[PhotoCandidate] = []
+    for a, paths in zip(picked, await video_frames.many(jobs)):
+        author, page, desc = _page(a)
+        for k, path in enumerate(paths):
+            out.append(PhotoCandidate(
+                url=f"file:{path}", page_url=page, source=source,
+                title=(f"Кадр из видео @{author}: {desc[:80]}" if desc else f"Кадр из видео @{author}"),
+                text=f"{desc} @{author}", author=f"@{author}",
+                license="© автор видео в TikTok (кадр со ссылкой на видео)",
+                date=_date(a.get("create_time")), date_source="post" if a.get("create_time") else None,
+                collector=f"tiktok:frame{k}",
+            ))
+    return out[:limit]
+
+
 def _tiktok_items(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
     out: list[PhotoCandidate] = []
     for a in awemes:
@@ -181,10 +231,19 @@ def _tiktok_items(awemes: list[dict], source: str, limit: int) -> list[PhotoCand
     return out[:limit]
 
 
+async def _videos_and_frames(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
+    """Photo carousels as they are, plus frames from the clips; covers only when ffmpeg is missing."""
+    items = _tiktok_items(awemes, source, limit)
+    if not video_frames.available():
+        return items
+    frames = await _tiktok_frames(awemes, source, limit)
+    return (frames + items)[:limit] if frames else items
+
+
 async def tiktok_videos(url: str, limit: int = 16) -> list[PhotoCandidate]:
     h = handle_of(url)
     j = await _sc("/v3/tiktok/profile/videos", handle=h) if h else None
-    return _tiktok_items((j or {}).get("aweme_list") or [], "tiktok", limit)
+    return await _videos_and_frames((j or {}).get("aweme_list") or [], "tiktok", limit)
 
 
 async def tiktok_search(uni: University, limit: int = 12) -> list[PhotoCandidate]:
@@ -192,7 +251,45 @@ async def tiktok_search(uni: University, limit: int = 12) -> list[PhotoCandidate
     if len(q) < 6:
         return []
     j = await _sc("/v1/tiktok/search/keyword", query=q)
-    return _tiktok_items((j or {}).get("search_item_list") or [], "tiktok_search", limit)
+    return await _videos_and_frames((j or {}).get("search_item_list") or [], "tiktok_search", limit)
+
+
+def _tag(name: str | None) -> str:
+    return re.sub(r"[^\w]+", "", (name or "").lower(), flags=re.U)
+
+
+def hashtags(uni: University) -> list[str]:
+    """How students write the university as one word.
+
+    Two shapes cover almost everything: the full name run together (#nazarbayevuniversity) and the abbreviation
+    everyone actually types (#kbtu). The long form is precise; the short one is where the student videos are, and
+    it is also where another university with the same initials lives - which is why hashtag hits are treated as
+    search results: no name in the caption, and the inspector has to be certain (verify.SEARCH_SOURCES)."""
+    out: list[str] = []
+    for name in [uni.names.get("en"), uni.names.get("ru") or uni.name]:
+        t = _tag(name)
+        if 12 <= len(t) <= 40 and t not in out:
+            out.append(t)
+    # latin first (TikTok tags are mostly transliterated), then shortest, then alphabetically so the choice
+    # is the same on every run
+    short = sorted({t for a in uni.aliases if 4 <= len(t := _tag(a)) <= 8},
+                   key=lambda t: (not t.isascii(), len(t), t))
+    return (out[:1] + short[:1]) or out[:2]
+
+
+async def tiktok_hashtag(uni: University, limit: int = 16) -> list[PhotoCandidate]:
+    """Videos under the university's own hashtag - posted by students, not by the press office."""
+    tags = hashtags(uni)
+    if not tags:
+        return []
+    found = await asyncio.gather(*[_sc("/v1/tiktok/search/hashtag", hashtag=t) for t in tags])
+    lists = await asyncio.gather(*[_videos_and_frames((j or {}).get("aweme_list") or [], "tiktok_hashtag", limit)
+                                   for j in found if (j or {}).get("aweme_list")])
+    # the long form is precise, the abbreviation is where the students are: take from both, not all of the first
+    out: list[PhotoCandidate] = []
+    for row in zip(*lists) if len(lists) > 1 else [(c,) for c in (lists[0] if lists else [])]:
+        out += [c for c in row if c]
+    return out[:limit]
 
 
 # ---------- YouTube Data API ----------

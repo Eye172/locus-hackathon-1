@@ -107,6 +107,8 @@ class Settings(BaseSettings):
                                  "env": "SCRAPECREATORS_API_KEY"},
             "tiktok": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
             "tiktok_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
+            "tiktok_hashtag": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
+                               "env": "SCRAPECREATORS_API_KEY"},
             "youtube_search": {"enabled": bool(self.youtube_api_key), "needs_key": True, "env": "YOUTUBE_API_KEY"},
             "web_image": {"enabled": bool(self.serper_api_key), "needs_key": True, "env": "SERPER_API_KEY"},
             "map_review": {"enabled": bool(self.serper_api_key), "needs_key": True, "env": "SERPER_API_KEY"},

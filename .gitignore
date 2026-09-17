@@ -28,6 +28,7 @@ docs/video/*.webm
 frontend/public/cutscenes/*.mp4
 deploy/_stage/
 backend/data/hero/
+backend/data/frames/
 docs/video/transition_sheet.png
 docs/video/_rec/
 docs/video/levels_*.png

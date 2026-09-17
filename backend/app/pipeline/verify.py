@@ -39,6 +39,7 @@ SOURCE_PRIOR: dict[str, float] = {
     "commons_search": 0.20,
     "openverse": 0.15,
     "tiktok_search": 0.10,
+    "tiktok_hashtag": 0.12,
     "youtube_search": 0.15,
 }
 SOURCE_SIGNAL_LABEL: dict[str, str] = {
@@ -64,6 +65,7 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "commons_search": "Файл Commons, в описании которого есть название вуза",
     "openverse": "Фото с открытой лицензией (Openverse) по названию вуза",
     "tiktok_search": "Видео в TikTok по запросу с названием вуза (автор не обязательно вуз)",
+    "tiktok_hashtag": "Кадр из видео под хэштегом вуза в TikTok (снято не вузом)",
     "youtube_search": "Кадр видео на YouTube по запросу с названием вуза (автор не обязательно вуз)",
 }
 CITY_SOURCES = {"city_article", "city_cat"}
@@ -73,7 +75,8 @@ GEO_CROWD_SOURCES = {"vk_geo"}
 # posted by someone else about the university: the tag or the coordinate points here, the picture still has to
 # be looked at. Nothing from these sources is shown without the inspector's verdict.
 CROWD_SOURCES = GEO_CROWD_SOURCES | {"instagram_tagged"}
-SEARCH_SOURCES = {"web_image", "tiktok_search", "youtube_search", "openverse", "commons_search", "external"}
+SEARCH_SOURCES = {"web_image", "tiktok_search", "tiktok_hashtag", "youtube_search", "openverse", "commons_search",
+                  "external"}
 REJECT_FLAGS = {"illustration", "stock", "screenshot", "logo", "collage"}
 # almost every photo a university posts carries its logo in a corner and a line of text over the sky. That is
 # branding on a real picture, not a fake one, and the model already tells the two apart: a poster is not useful to

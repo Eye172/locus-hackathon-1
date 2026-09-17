@@ -44,6 +44,7 @@ SOURCE_LABELS: dict[str, str] = {
     "openverse": "Openverse (открытые лицензии)",
     "tiktok": "TikTok вуза",
     "tiktok_search": "TikTok (поиск по названию)",
+    "tiktok_hashtag": "TikTok (хэштег вуза)",
     "youtube_search": "YouTube (поиск по названию)",
 }
 BROCHURE_SOURCES = {"official"}

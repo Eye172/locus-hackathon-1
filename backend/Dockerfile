@@ -5,7 +5,9 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HF_HUB_DISABLE_SYMLINKS_WARNING=1 \
     HF_HOME=/app/.cache/huggingface
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
+# ffmpeg: frames from the middle of short videos (app/pipeline/video_frames.py); without it those sources
+# fall back to the designed cover
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 fonts-dejavu-core ffmpeg \n    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt

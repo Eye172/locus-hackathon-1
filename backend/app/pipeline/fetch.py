@@ -7,6 +7,7 @@ import io
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import imagehash
 from PIL import Image, ImageOps
@@ -108,14 +109,21 @@ async def fetch_one(cand: PhotoCandidate, sem: asyncio.Semaphore, deadline: floa
     async with sem:
         if time.monotonic() > deadline:
             return None
-        try:
-            r = await http.get(cand.url, timeout=settings.fetch_timeout_s)
-        except Exception:
-            return None
-        if r.status_code != 200:
-            return None
-        ct = r.headers.get("content-type", "")
-        data = r.content
+        last_modified = None
+        if cand.url.startswith("file:"):
+            # a frame this pipeline already extracted from a video (pipeline/video_frames.py)
+            try:
+                data, ct = Path(cand.url[5:]).read_bytes(), "image/jpeg"
+            except OSError:
+                return None
+        else:
+            try:
+                r = await http.get(cand.url, timeout=settings.fetch_timeout_s)
+            except Exception:
+                return None
+            if r.status_code != 200:
+                return None
+            ct, data, last_modified = r.headers.get("content-type", ""), r.content, r.headers.get("last-modified")
         if len(data) > MAX_BYTES or len(data) < 2000:
             return None
         looks_like_image = data[:3] == b"\xff\xd8\xff" or data[:4] == b"\x89PNG" or data[:4] == b"RIFF"
@@ -124,7 +132,7 @@ async def fetch_one(cand: PhotoCandidate, sem: asyncio.Semaphore, deadline: floa
         dec = await asyncio.to_thread(_decode, data, pid, 3.5 if cand.source in WIDE_OK_SOURCES else 2.4)
         if not dec:
             return None
-        return Fetched(cand=cand, id=pid, last_modified=r.headers.get("last-modified"), **dec)
+        return Fetched(cand=cand, id=pid, last_modified=last_modified, **dec)
 
 
 async def fetch_all(cands: list[PhotoCandidate], deadline: float, limit: int | None = None) -> list[Fetched]:

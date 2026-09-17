@@ -258,7 +258,9 @@ class Run:
         # the official site is the richest source and the slowest (homepage + 8 subpages): it gets 4 s more
         timeout = (settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
                    + (9.0 if name in SOCIAL_SOURCES else 0) + (4.0 if name == "official" else 0)
-                   + (6.0 if name in ("web_image", "map_review", "tiktok_search", "youtube_search") else 0))
+                   + (6.0 if name in ("web_image", "map_review", "youtube_search") else 0)
+                   # these open the videos themselves: a download plus two ffmpeg seeks per clip
+                   + (10.0 if name in ("tiktok", "tiktok_search", "tiktok_hashtag") else 0))
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -365,7 +367,8 @@ class Run:
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
             if name in ("mapillary", "flickr", "places", "vk", "vk_geo", "web_image", "map_review", "instagram",
-                        "instagram_tagged", "tiktok", "tiktok_search", "youtube_search") and not st["enabled"]:
+                        "instagram_tagged", "tiktok", "tiktok_search", "tiktok_hashtag",
+                        "youtube_search") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
         def bbox_pad() -> list[float]:
@@ -392,7 +395,8 @@ class Run:
             factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 20)
             factories["instagram_tagged"] = (lambda: self.after_official("instagram", social_api.instagram_tagged), 20)
             factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
-            factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 8)
+            factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 10)
+            factories["tiktok_hashtag"] = (lambda: social_api.tiktok_hashtag(self.uni), 12)
         if "youtube_search" in enabled:
             factories["youtube_search"] = (lambda: social_api.youtube_search(self.uni), 8)
         if "mapillary" in enabled:

@@ -392,6 +392,12 @@ async def hero(qid: str, photo_id: str, src: str | None = None):
         # when it hashes to this photo id (ids are sha1(url)[:16]), so nothing foreign can be proxied
         from .pipeline.fetch import photo_id as _pid
         url = ph.url if ph else (src if src and src.startswith("http") and _pid(src) == photo_id else None)
+        if url and url.startswith("file:"):
+            # a frame we extracted ourselves: the full-size file is already on disk
+            frame = Path(url[5:])
+            if frame.exists():
+                path = frame
+            url = None
         if url:
             try:
                 r = await http.get(url, timeout=8.0)
