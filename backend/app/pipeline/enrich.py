@@ -27,6 +27,22 @@ async def _nominatim(name: str) -> tuple[float, float] | None:
 async def facts(qid: str, log_fn=None) -> tuple[University, dict | None]:
     """Wikidata entity + Wikipedia summary + coordinates from the first source that has them."""
     logf = log_fn or (lambda s: None)
+    if qid.startswith("W"):  # found in the web, not in Wikidata (see sources/websearch.py)
+        from .. import cache as cache_mod
+        ent = await cache_mod.kv_get("web", qid)
+        if not ent:
+            raise RuntimeError("Этот вуз найден в вебе в прошлой сессии, повторите поиск")
+        uni = University(qid=qid, name=ent["name"], names={"en": ent["name"]}, website=ent.get("website"),
+                         description=ent.get("snippet"), city=ent.get("city"), lat=ent.get("lat"), lon=ent.get("lon"),
+                         coord_source=ent.get("coord_source"))
+        if uni.lat is None:
+            pt = await _nominatim(f"{uni.name} {uni.city or ''}")
+            if pt:
+                uni.lat, uni.lon, uni.coord_source = pt[0], pt[1], "nominatim"
+        if uni.lat is None:
+            raise RuntimeError("Не удалось определить координаты университета: уточните город в запросе")
+        logf(f"web entity {ent.get('domain')} · coords from {uni.coord_source}")
+        return uni, None
     uni = await wikidata.entity(qid)
     row = index.by_id.get(qid)
     if row:
@@ -63,7 +79,7 @@ def provisional_campus(uni: University) -> Campus:
 async def campus(uni: University, log_fn=None) -> Campus:
     """Campus outline and tagged buildings from OSM. Adjusts the anchor point to the outline centre."""
     logf = log_fn or (lambda s: None)
-    c = await osm.campus(uni.qid, uni.lat, uni.lon, uni.aliases)
+    c = await osm.campus(uni.qid, uni.lat, uni.lon, uni.aliases or [uni.name])
     if c.mode == "polygon" and uni.coord_source != "wikidata":
         b = c.bbox
         uni.lat, uni.lon = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2

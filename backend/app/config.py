@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5"
     gemini_api_key: str | None = None
+    vk_service_token: str | None = None      # free service token of a VK app: wall photos of the official group
     higgsfield_api_key: str | None = None   # cutscene generation only, never called by the profile pipeline
     gemini_model: str = "gemini-3.5-flash-lite"  # 2.5 is closed to new keys; 3.x "flash" thinks for 20-60 s, lite answers in ~2 s
     llm_provider: str = "auto"   # auto | claude | gemini | none
@@ -81,6 +82,10 @@ class Settings(BaseSettings):
             "mapillary": {"enabled": bool(self.mapillary_token), "needs_key": True, "env": "MAPILLARY_TOKEN"},
             "flickr": {"enabled": bool(self.flickr_api_key), "needs_key": True, "env": "FLICKR_API_KEY"},
             "places": {"enabled": bool(self.google_maps_api_key), "needs_key": True, "env": "GOOGLE_MAPS_API_KEY"},
+            "telegram": {"enabled": True, "needs_key": False},
+            "youtube": {"enabled": True, "needs_key": False},
+            "instagram": {"enabled": True, "needs_key": False},
+            "vk": {"enabled": bool(self.vk_service_token), "needs_key": True, "env": "VK_SERVICE_TOKEN"},
             "llm": {"enabled": self.active_llm() != "none", "needs_key": True,
                     "env": "ANTHROPIC_API_KEY or GEMINI_API_KEY", "provider": self.active_llm()},
         }

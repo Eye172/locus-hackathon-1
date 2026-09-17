@@ -167,7 +167,8 @@ async def nominatim_outline(qid: str, names: list[str], lat: float, lon: float) 
 
 async def campus(qid: str, lat: float, lon: float, aliases: list[str]) -> Campus:
     """Find the campus outline and everything tagged inside it. Falls back to Nominatim, then to a 500 m radius."""
-    data = await overpass(_q_by_wikidata(qid))
+    # web-found universities (W…) have no wikidata tag: go straight to the outline by name / nearby search
+    data = await overpass(_q_by_wikidata(qid)) if qid.startswith("Q") else None
     campus_el = None
     if data:
         outlines = [el for el in data.get("elements", []) if _polygon_of(el)]

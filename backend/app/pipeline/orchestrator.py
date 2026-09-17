@@ -25,7 +25,7 @@ from . import dedup, describe, vision
 from . import enrich as enrich_mod
 from . import judge as judge_mod
 from .fetch import Fetched, fetch_all
-from .sources import commons, flickr, mapillary, official_site, places, wikipedia
+from .sources import social, commons, flickr, mapillary, official_site, places, wikipedia
 from .verify import VerifyContext, score
 
 log = logging.getLogger("campuslens.orchestrator")
@@ -40,6 +40,7 @@ STAGES = [
     ("assemble", "Сборка профиля"),
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
+SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "vk"}  # wait for the official site (links), then fetch
 
 
 class Run:
@@ -156,6 +157,24 @@ class Run:
                          count=len(c.buildings))
         await self.emit({"type": "campus", "campus": c.model_dump(), "university": self.uni.model_dump(), "elapsed_ms": self.ms()})
 
+    async def after_official(self, network: str, factory):
+        """Social sources need the links from the official homepage first; no link → honest empty result."""
+        try:
+            await asyncio.wait_for(self.official_done.wait(), timeout=9.0)
+        except asyncio.TimeoutError:
+            pass
+        url = self.uni.social.get(network)
+        if not url:
+            self.logf(f"{network}: no link on the official site")
+            return []
+        return await factory(url)
+
+    async def official_then(self, coro):
+        try:
+            return await coro
+        finally:
+            self.official_done.set()
+
     async def after_campus(self, factory):
         if self.campus_task:
             try:
@@ -167,7 +186,7 @@ class Run:
     # ---------- source pipelines ----------
     async def source_pipeline(self, name: str, coro, limit: int) -> None:
         t = time.monotonic()
-        timeout = settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
+        timeout = settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0) + (9.0 if name in SOCIAL_SOURCES else 0)
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -264,14 +283,18 @@ class Run:
         per = settings.max_per_source
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
-            if name in ("mapillary", "flickr", "places") and not st["enabled"]:
+            if name in ("mapillary", "flickr", "places", "vk") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
         def bbox_pad() -> list[float]:
             return self.vctx.geom.bbox(pad_m=120)
 
+        self.official_done = asyncio.Event()
         factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
-            "official": (lambda: official_site.collect(self.uni), per),
+            "official": (lambda: self.official_then(official_site.collect(self.uni)), per),
+            "telegram": (lambda: self.after_official("telegram", social.telegram), 30),
+            "youtube": (lambda: self.after_official("youtube", social.youtube), 15),
+            "instagram": (lambda: self.after_official("instagram", social.instagram), 24),
             "commons_cat": (lambda: self.commons_bundle("commons_cat"), per),
             "commons_depicts": (lambda: self.commons_bundle("commons_depicts"), 20),
             "wikipedia": (lambda: self.commons_bundle("wikipedia"), 20),
@@ -284,6 +307,8 @@ class Run:
             factories["flickr"] = (lambda: self.after_campus(lambda: flickr.collect(bbox_pad(), 30)), 30)
         if "places" in enabled:
             factories["places"] = (lambda: places.collect(self.uni), 10)
+        if "vk" in enabled:
+            factories["vk"] = (lambda: self.after_official("vk", social.vk), 30)
         external = await cache.get_external(self.qid)
         if external:
             ext_cands = [PhotoCandidate.model_validate(c) for c in external]

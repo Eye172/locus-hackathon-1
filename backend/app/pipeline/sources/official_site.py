@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from ... import http
 from ...models import PhotoCandidate, University
+from . import social
 
 KEYWORDS = [
     (r"campus|kampus|кампус", 5),
@@ -46,12 +47,24 @@ def _link_score(url: str) -> int:
     return sum(w for r, w in KW_RES if r.search(path))
 
 
-async def _fetch_page(url: str, timeout: float) -> tuple[str, str] | None:
+META_REFRESH = re.compile(r"""<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["']?\s*\d+\s*;\s*url=([^"'>\s]+)""", re.I)
+JS_REDIRECT = re.compile(r"""(?:location\.href|location\.replace\(|window\.location)\s*=?\s*\(?["']([^"']+)["']""", re.I)
+
+
+async def _fetch_page(url: str, timeout: float, _hop: int = 0) -> tuple[str, str] | None:
     try:
         r = await http.get(url, timeout=timeout)
         if r.status_code != 200 or "text/html" not in r.headers.get("content-type", ""):
             return None
-        return str(r.url), r.text
+        html = r.text
+        # tiny "shell" pages that forward to the real site (miras.edu.kz → miras.app): follow once
+        if len(html) < 2000 and _hop == 0:
+            m = META_REFRESH.search(html) or JS_REDIRECT.search(html)
+            if m:
+                target = urljoin(str(r.url), m.group(1).strip())
+                if target.startswith("http") and target.rstrip("/") != str(r.url).rstrip("/"):
+                    return await _fetch_page(target, timeout, _hop=1)
+        return str(r.url), html
     except Exception:
         return None
 
@@ -86,13 +99,14 @@ def _extract(final_url: str, html: str) -> tuple[list[dict], list[str], str]:
     return images, links, title
 
 
-async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 5) -> list[PhotoCandidate]:
+async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) -> list[PhotoCandidate]:
     if not uni.website:
         return []
     home = await _fetch_page(uni.website, timeout=min(timeout, 5.0))
     if not home:
         return []
     final_url, html = home
+    uni.social = social.discover(html, final_url)  # footer icons: instagram / telegram / youtube / vk…
     images, links, title = _extract(final_url, html)
     pages: list[tuple[str, str, list[dict]]] = [(final_url, title, images)]
 

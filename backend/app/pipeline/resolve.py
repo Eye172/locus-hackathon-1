@@ -18,7 +18,7 @@ from rapidfuzz import fuzz, process
 
 from ..config import settings
 from ..models import Candidate
-from .sources import wikidata
+from .sources import websearch, wikidata
 
 log = logging.getLogger("campuslens.resolve")
 
@@ -180,25 +180,35 @@ class Index:
             bonus += self._notability(r)
             best[row] = max(best.get(row, 0), score + bonus)
 
-        for text, score, cid in process.extract(qs, self.choice_texts, scorer=fuzz.WRatio, limit=120, score_cutoff=74):
-            consider(self.choice_row[cid], score, text)
-
-        # "универ алматы", "Astana university", "Almatyy KBTU": the city narrows the search and boosts its rows
+        # "универ алматы", "Astana IT University", "Университет Мирас Шымкент": a city in the query narrows the search;
+        # the name part is matched WITHOUT the city so the city word cannot drag unrelated local universities up
         alias, rest = self._city_in(qn)
-        if alias:
-            city_rows = self.city_rows[alias]
-            rest_s = strip_generic(rest)
-            if rest_s:
+        city_rows = self.city_rows[alias] if alias else set()
+        rest_s = strip_generic(rest) if alias else ""
+        if alias and not rest_s:
+            # only a city (plus generic words): its universities, most notable first
+            for row in city_rows:
+                consider(row, 70 + 2 * self._notability(self.rows[row]), "")
+            for row in list(best):
+                best[row] += 10
+        elif alias and len(rest_s) <= 2:
+            # a very short name part ("IT", "Q"): fuzzy matching is meaningless, require the whole word
+            word = re.compile(rf"(?<!\w){re.escape(rest_s)}(?!\w)")
+            for row in city_rows:
+                if any(word.search(self.choice_texts[c]) for c in self.row_choices[row]):
+                    consider(row, 96, "")
+        else:
+            name_q = rest_s if alias else qs
+            for text, score, cid in process.extract(name_q, self.choice_texts, scorer=fuzz.WRatio, limit=120, score_cutoff=74):
+                consider(self.choice_row[cid], score, text)
+            if alias:
                 sub = [cid for row in city_rows for cid in self.row_choices[row]]
                 sub_texts = [self.choice_texts[c] for c in sub]
-                for text, score, k in process.extract(rest_s, sub_texts, scorer=fuzz.WRatio, limit=40, score_cutoff=60):
+                for text, score, k in process.extract(name_q, sub_texts, scorer=fuzz.WRatio, limit=40, score_cutoff=75):
                     consider(self.choice_row[sub[k]], score, text)
-            else:  # only a city was named: its universities, most notable first
-                for row in city_rows:
-                    consider(row, 70 + 2 * self._notability(self.rows[row]), "")
-            for row in list(best):
-                if row in city_rows:
-                    best[row] += 10
+                for row in list(best):
+                    if row in city_rows and best[row] >= 80:
+                        best[row] += 6
 
         ranked = sorted(best.items(), key=lambda x: -x[1])[:limit]
         out: list[Candidate] = []
@@ -249,4 +259,14 @@ async def resolve(q: str) -> list[Candidate]:
         if normalize(c.label) == qn:
             c.score = max(c.score, 1.05)
     out.sort(key=lambda c: -c.score)
+    # nothing convincing in Wikidata or the index: the web (official site + geocoding) answers for any university
+    if (not out or out[0].score < 1.0) and len(qn) >= 4:
+        try:
+            alias, _rest = index._city_in(qn)
+            web = await asyncio.wait_for(websearch.find_university(q, city_hint=alias), timeout=6.0)
+            if web and web.qid not in merged:
+                out.append(web)
+                out.sort(key=lambda c: -c.score)
+        except Exception as e:  # noqa: BLE001
+            log.warning("web resolve failed: %s", e or type(e).__name__)
     return out[:10]

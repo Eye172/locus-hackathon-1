@@ -64,6 +64,13 @@ async def mini(qid: str):
     row = index.by_id.get(qid)
     p = await cache.get_profile(qid)
     if not row and not p:
+        if qid.startswith("W"):
+            ent = await cache.kv_get("web", qid)
+            if not ent:
+                raise HTTPException(404, "unknown university")
+            return {"qid": qid, "name": ent["name"], "names": {}, "city": ent.get("city"), "country": None, "founded": None,
+                    "students": None, "logo_url": None, "lat": ent.get("lat"), "lon": ent.get("lon"), "profile": None,
+                    "website": ent.get("website"), "origin": "web"}
         try:
             from .pipeline.sources import wikidata
             uni = await wikidata.entity(qid)

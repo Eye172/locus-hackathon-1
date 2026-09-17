@@ -20,6 +20,10 @@ SOURCE_PRIOR: dict[str, float] = {
     "commons_geo": 0.20,
     "city_article": 0.45,
     "city_cat": 0.35,
+    "telegram": 0.35,
+    "instagram": 0.35,
+    "vk": 0.35,
+    "youtube": 0.30,
 }
 SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "commons_depicts": "Structured data Commons: «изображает» этот вуз",
@@ -32,6 +36,10 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "commons_geo": "Файл Commons с геометкой рядом с кампусом",
     "city_article": "Файл используется в статье о городе",
     "city_cat": "Файл в категории города на Commons",
+    "telegram": "Пост в официальном Telegram-канале вуза (ссылка с сайта)",
+    "instagram": "Публикация в официальном Instagram вуза (ссылка с сайта)",
+    "vk": "Пост в официальной группе VK вуза",
+    "youtube": "Кадр видео с официального YouTube-канала вуза",
 }
 
 

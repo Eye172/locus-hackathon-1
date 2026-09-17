@@ -31,6 +31,10 @@ SOURCE_LABELS: dict[str, str] = {
     "mapillary": "Mapillary",
     "flickr": "Flickr",
     "places": "Google Places",
+    "telegram": "Telegram-канал вуза",
+    "youtube": "YouTube-канал вуза (кадры видео)",
+    "instagram": "Instagram вуза",
+    "vk": "Группа VK вуза",
     "external": "Внешний коллектор",
 }
 BROCHURE_SOURCES = {"official"}
@@ -51,7 +55,7 @@ class Candidate(BaseModel):
     country: str | None = None
     logo_url: str | None = None
     score: float = 0.0
-    origin: Literal["index", "wikidata"] = "wikidata"
+    origin: Literal["index", "wikidata", "web"] = "wikidata"
 
 
 class University(BaseModel):
@@ -80,6 +84,7 @@ class University(BaseModel):
     image_url: str | None = None
     summary: str | None = None
     summary_url: str | None = None
+    social: dict[str, str] = Field(default_factory=dict)  # network -> profile url, found on the official site
 
 
 class Building(BaseModel):

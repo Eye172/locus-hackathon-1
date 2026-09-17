@@ -19,6 +19,9 @@ import { store, useStoreVersion } from '../lib/store'
 type Tab = 'photos' | 'bvr' | 'map' | 'climate' | 'city' | 'timeline' | 'walk' | 'rejected' | 'judge'
 const FILTERS: string[] = ['all', ...CATEGORIES]
 
+const PHOTO_NETS = new Set(['telegram', 'youtube', 'vk'])  // networks we actually fetch photos from; the rest are links
+const SOCIAL_NAME: Record<string, string> = { instagram: 'Instagram', telegram: 'Telegram', youtube: 'YouTube', vk: 'VK', facebook: 'Facebook', tiktok: 'TikTok' }
+
 export default function Profile() {
   const { qid = '' } = useParams()
   const [params, setParams] = useSearchParams()
@@ -131,7 +134,9 @@ export default function Profile() {
                       {uni.students && <div><dt className="caps text-muted">студентов</dt><dd className="mono">{uni.students.toLocaleString('ru-RU')}</dd></div>}
                       {uni.city && <div><dt className="caps text-muted">город</dt><dd>{uni.city}{uni.country ? `, ${uni.country}` : ''}</dd></div>}
                       {uni.website && <div><dt className="caps text-muted">сайт</dt><dd><a href={uni.website} target="_blank" rel="noreferrer" className="hover:text-brand inline-flex items-center gap-1">{uni.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}<ExternalLink size={11} /></a></dd></div>}
-                      <div><dt className="caps text-muted">wikidata</dt><dd><a href={`https://www.wikidata.org/wiki/${uni.qid}`} target="_blank" rel="noreferrer" className="mono hover:text-brand">{uni.qid}</a></dd></div>
+                      {uni.qid.startsWith('Q') ? <div><dt className="caps text-muted">wikidata</dt><dd><a href={`https://www.wikidata.org/wiki/${uni.qid}`} target="_blank" rel="noreferrer" className="mono hover:text-brand">{uni.qid}</a></dd></div>
+                        : <div><dt className="caps text-muted">{t('profile.foundVia')}</dt><dd>{t('search.webLong')}</dd></div>}
+                      {uni.social && Object.keys(uni.social).length > 0 && <div className="basis-full"><dt className="caps text-muted">{t('profile.social')}</dt><dd className="flex flex-wrap gap-1.5 mt-1">{Object.entries(uni.social).map(([net, url]) => <a key={net} href={url} target="_blank" rel="noreferrer" className="chip hover:border-brand hover:text-brand" title={PHOTO_NETS.has(net) ? t('profile.socialPhotos') : undefined}>{SOCIAL_NAME[net] ?? net}{PHOTO_NETS.has(net) && <span className="ml-1 text-[10px] text-brand">· {t('profile.socialPhotos')}</span>}</a>)}</dd></div>}
                     </dl>
                   </>
                 ) : <div className="space-y-2"><div className="shimmer h-8 w-2/3 rounded" /><div className="shimmer h-4 w-1/3 rounded" /><div className="shimmer h-4 w-1/2 rounded" /></div>}

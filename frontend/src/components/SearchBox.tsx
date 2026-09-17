@@ -69,7 +69,7 @@ export function SearchBox({ onPick, dark, autoFocus, size = 'lg', direction = 'd
                     {c.logo_url ? <img src={c.logo_url} alt="" className="w-9 h-9 object-contain" loading="lazy" /> : <MapPin size={16} className="opacity-60" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate">{c.label}</div>
+                    <div className="font-medium truncate">{c.label}{c.origin === 'web' && <span className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-brand/15 text-brand">{t('search.web')}</span>}</div>
                     <div className="text-xs opacity-60 truncate">{[c.city, c.country].filter(Boolean).join(', ')}{c.description ? ` · ${c.description}` : ''}</div>
                   </div>
                   <span className="text-[11px] opacity-50 font-mono">{c.qid}</span>

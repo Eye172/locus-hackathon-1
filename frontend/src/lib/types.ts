@@ -10,7 +10,7 @@ export interface Candidate {
   country?: string | null
   logo_url?: string | null
   score: number
-  origin: 'index' | 'wikidata'
+  origin: 'index' | 'wikidata' | 'web'
 }
 
 export interface University {
@@ -20,6 +20,7 @@ export interface University {
   aliases: string[]
   description?: string | null
   website?: string | null
+  social?: Record<string, string>
   commons_category?: string | null
   wikipedia: Record<string, string>
   lat?: number | null
