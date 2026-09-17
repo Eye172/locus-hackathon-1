@@ -3,6 +3,7 @@ import { Footprints, KeyRound, Building2, Move3d } from 'lucide-react'
 import type { Campus, Photo, University } from '../lib/types'
 import { API_BASE, thumbUrl } from '../lib/api'
 import { DepthPhoto } from './DepthPhoto'
+import { SourceLink } from './SourceLink'
 import { catLabel, useLang, useT } from '../lib/i18n'
 
 const GKEY = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined) || ''
@@ -84,6 +85,7 @@ export function WalkTab({ uni, campus, photos, walk, onOpen }: { uni: University
             {three.map((p) => (
               <figure key={p.id} className="m-0">
                 <button onClick={() => onOpen(p)} className="block w-full rounded-lg overflow-hidden bg-slate-100 cursor-pointer"><DepthPhoto src={thumbUrl(p)} depthSrc={`${API_BASE}/api/depth/${p.id}.png`} alt={p.title ?? ''} /></button>
+                <SourceLink p={p} />
                 <figcaption className="mt-1.5 flex justify-between text-xs"><span className="caps text-ink-2">{catLabel(p.category, lang)}</span><span className="mono text-verified">{Math.round(p.confidence * 100)}%</span></figcaption>
               </figure>
             ))}
@@ -95,7 +97,12 @@ export function WalkTab({ uni, campus, photos, walk, onOpen }: { uni: University
       {walk.length > 0 && (
         <div>
           <h3 className="caps text-muted mb-3">{t('walk.mapillaryInsideTitle')}</h3>
-          <div className="flex gap-3 overflow-auto pb-2">{walk.map((p) => <button key={p.id} onClick={() => onOpen(p)} className="shrink-0 w-64 aspect-[4/3] rounded-lg overflow-hidden bg-slate-100 cursor-pointer"><img src={thumbUrl(p)} alt="" className="w-full h-full object-cover" /></button>)}</div>
+          <div className="flex gap-3 overflow-auto pb-2">{walk.map((p) => (
+            <div key={p.id} className="shrink-0 w-64">
+              <button onClick={() => onOpen(p)} className="block w-full aspect-[4/3] rounded-lg overflow-hidden bg-slate-100 cursor-pointer"><img src={thumbUrl(p)} alt="" className="w-full h-full object-cover" /></button>
+              <SourceLink p={p} />
+            </div>
+          ))}</div>
         </div>
       )}
     </div>

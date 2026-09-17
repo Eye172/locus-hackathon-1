@@ -8,8 +8,8 @@ import { DepthPhoto } from './DepthPhoto'
 import { catLabel, useLang, useT } from '../lib/i18n'
 import { ConfidenceBar, CoverageDot, OutdatedChip, SourceChip } from './Badges'
 import { store, useStoreVersion } from '../lib/store'
+import { SourceLink, sourceName } from './SourceLink'
 
-const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
 const levelText = (l: Photo['level']) => (l === 'verified' ? 'text-verified' : l === 'likely' ? 'text-likely' : 'text-unverified')
 const levelBar = (l: Photo['level']) => (l === 'verified' ? 'conf-verified' : l === 'likely' ? 'conf-likely' : 'conf-unverified')
 
@@ -31,12 +31,15 @@ export function PhotoTile({ p, qid, onOpen, large }: { p: Photo; qid: string; on
         <div className="absolute top-2 left-2 flex gap-1">{p.outdated && <OutdatedChip />}{p.preliminary && <span className="chip bg-white/90 text-brand">предв.</span>}</div>
         {p.similar.length > 0 && <span className="absolute top-2 right-2 chip bg-black/55 text-white mono">+{p.similar.length}</span>}
       </button>
-      <figcaption className="mt-1.5 flex items-center justify-between gap-2">
-        <span className="caps text-ink-2 truncate">{catLabel(p.category, lang)} <span className={`ml-1 ${p.is_brochure ? 'text-brochure' : 'text-reality'}`}>·</span> <span className="mono normal-case tracking-normal text-muted font-normal">{host(p.page_url)}</span></span>
-        <span className="flex items-center gap-2 shrink-0">
-          <span className={`mono text-[11px] ${levelText(p.level)}`}>{Math.round(p.confidence * 100)}%</span>
-          <button onClick={() => store.toggleFavorite(qid, p.id)} className={`cursor-pointer ${fav ? 'text-rose-500' : 'text-slate-300 hover:text-rose-400'}`} title="В избранное"><Heart size={14} fill={fav ? 'currentColor' : 'none'} /></button>
-        </span>
+      <figcaption className="mt-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="caps text-ink-2 truncate">{catLabel(p.category, lang)}<span className={`ml-1 ${p.is_brochure ? 'text-brochure' : 'text-reality'}`}>·</span></span>
+          <span className="flex items-center gap-2 shrink-0">
+            <span className={`mono text-[11px] ${levelText(p.level)}`}>{Math.round(p.confidence * 100)}%</span>
+            <button onClick={() => store.toggleFavorite(qid, p.id)} className={`cursor-pointer ${fav ? 'text-rose-500' : 'text-slate-300 hover:text-rose-400'}`} title="В избранное"><Heart size={14} fill={fav ? 'currentColor' : 'none'} /></button>
+          </span>
+        </div>
+        <SourceLink p={p} />
       </figcaption>
     </figure>
   )
@@ -124,10 +127,13 @@ export function BrochureVsReality({ photos, onOpen }: { photos: Photo[]; onOpen:
                   {list.length === 0 ? <div className="text-xs text-muted p-3">нет фото</div> : (
                     <div className="grid grid-cols-2 gap-2">
                       {list.slice(0, 6).map((p) => (
-                        <button key={p.id} onClick={() => onOpen(p)} className="relative aspect-[4/3] rounded-md overflow-hidden bg-slate-100 cursor-pointer">
-                          <img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" />
-                          <div className="absolute inset-x-0 bottom-0 conf-bar"><i className={levelBar(p.level)} style={{ width: `${Math.round(p.confidence * 100)}%` }} /></div>
-                        </button>
+                        <div key={p.id} className="min-w-0">
+                          <button onClick={() => onOpen(p)} className="relative block w-full aspect-[4/3] rounded-md overflow-hidden bg-slate-100 cursor-pointer">
+                            <img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                            <div className="absolute inset-x-0 bottom-0 conf-bar"><i className={levelBar(p.level)} style={{ width: `${Math.round(p.confidence * 100)}%` }} /></div>
+                          </button>
+                          <SourceLink p={p} />
+                        </div>
                       ))}
                     </div>
                   )}
@@ -229,6 +235,7 @@ export function PhotoPassport({ p, qid, campus, all, onClose, onOpen, onPrev, on
 
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-baseline">
               <Row k="источники" v={<span className="flex flex-wrap gap-1">{p.sources.map((s) => <SourceChip key={s} source={s} brochure={s === 'official'} />)}</span>} />
+              <Row k="страница" v={<a href={p.page_url} target="_blank" rel="noreferrer" title={p.page_url} className="hover:text-brand hover:underline underline-offset-2">{sourceName(p)} <ExternalLink size={11} className="inline -mt-0.5" /></a>} />
               <Row k={t('passport.author')} v={p.author || '—'} />
               <Row k={t('passport.license')} v={p.license || '—'} />
               <Row k={t('passport.date')} v={p.date ? <span className="mono">{p.date} <span className="text-muted">({p.date_source})</span></span>

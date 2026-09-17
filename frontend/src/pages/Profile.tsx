@@ -12,6 +12,7 @@ import { CampusMap3D } from '../components/CampusMap3D'
 import { ClimateTab } from '../components/ClimateTab'
 import { CityTab } from '../components/CityTab'
 import { WalkTab } from '../components/WalkTab'
+import { SourceLink } from '../components/SourceLink'
 import { api } from '../lib/api'
 import type { ContextPack } from '../lib/types'
 import { store, useStoreVersion } from '../lib/store'
@@ -226,14 +227,15 @@ export default function Profile() {
                 <div className="text-sm text-muted">Отклонённые кандидаты остаются видимыми: это доказательство, что отбор автоматический, а не ручной.</div>
                 <div className="card divide-y divide-line">
                   {profile.rejected.map((p) => (
-                    <button key={p.id} onClick={() => openPhoto(p)} className="w-full flex items-center gap-4 p-3 text-left hover:bg-slate-50 cursor-pointer">
-                      <div className="w-20 h-14 rounded-md bg-slate-100 overflow-hidden shrink-0 grayscale"><img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" /></div>
+                    <div key={p.id} className="flex items-center gap-4 p-3 hover:bg-slate-50">
+                      <button onClick={() => openPhoto(p)} className="w-20 h-14 rounded-md bg-slate-100 overflow-hidden shrink-0 grayscale cursor-pointer"><img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" /></button>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm text-unverified truncate">{p.reject_reason}</div>
+                        <button onClick={() => openPhoto(p)} className="block max-w-full text-left text-sm text-unverified truncate cursor-pointer">{p.reject_reason}</button>
                         <div className="text-xs text-muted truncate">{p.source_label}{p.title ? ` · ${p.title}` : ''}</div>
+                        <SourceLink p={p} />
                       </div>
                       <span className="mono text-xs text-muted shrink-0">{Math.round(p.confidence * 100)}%</span>
-                    </button>
+                    </div>
                   ))}
                   {profile.rejected.length === 0 && <div className="p-4 text-sm text-muted">Ничего не отклонено</div>}
                 </div>

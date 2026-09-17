@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { ArrowRight, MapPin, Calendar, Users, Navigation, Thermometer, Sun, Wallet, Bus, Sparkles, Send, Bot, Loader2 } from 'lucide-react'
 import { api, streamChat, thumbUrl, type CompareAi, type FactSheet } from '../lib/api'
+import { sourceName } from '../components/SourceLink'
 import type { Candidate, Profile } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
 import { catLabel, useLang, useT } from '../lib/i18n'
@@ -41,7 +42,8 @@ function Card({ p, f }: { p: Profile; f?: FactSheet }) {
   const hero = p.photos.find((x) => x.category === 'campus') ?? p.photos[0]
   return (
     <div className="card overflow-hidden">
-      {hero && <div className="aspect-[16/9] bg-slate-100"><img src={thumbUrl(hero)} alt="" className="w-full h-full object-cover" /></div>}
+      {hero && <div className="relative aspect-[16/9] bg-slate-100"><img src={thumbUrl(hero)} alt="" className="w-full h-full object-cover" />
+        <a href={hero.page_url} target="_blank" rel="noreferrer" title={hero.page_url} className="absolute right-1.5 bottom-1.5 max-w-[70%] truncate rounded bg-black/35 px-1.5 text-[10px] leading-4 text-white/80 hover:bg-black/60 hover:text-white">{sourceName(hero)}</a></div>}
       <div className="p-4">
         <Link to={`/u/${u.qid}`} className="font-bold text-lg leading-snug hover:text-brand">{u.names[lang] || u.name}</Link>
         <div className="text-xs text-muted mt-0.5 flex items-center gap-1"><MapPin size={11} />{[u.city, u.country].filter(Boolean).join(', ')}</div>
@@ -174,7 +176,7 @@ export default function Compare() {
                 <div className="grid grid-cols-2 gap-6">
                   {[la, lb].map((list, i) => (
                     <div key={i} className="grid grid-cols-4 gap-2">
-                      {list.map((p) => <a key={p.id} href={p.page_url} target="_blank" rel="noreferrer" className="aspect-[4/3] rounded-md overflow-hidden bg-slate-100"><img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" /></a>)}
+                      {list.map((p) => <a key={p.id} href={p.page_url} target="_blank" rel="noreferrer" title={`${sourceName(p)} ↗`} className="aspect-[4/3] rounded-md overflow-hidden bg-slate-100"><img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" /></a>)}
                       {list.length === 0 && <div className="col-span-4 text-xs text-muted p-3">нет подтверждённых фото</div>}
                     </div>
                   ))}
