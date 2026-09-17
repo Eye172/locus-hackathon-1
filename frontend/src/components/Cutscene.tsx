@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 
 /** Optional cinematic between the fly-through and the profile (Higgsfield branch, SPEC §10):
  *  drop `public/cutscenes/{qid}.mp4` and the globe plays it here; without a file nothing changes. */
-export function Cutscene({ src, onDone, skipLabel }: { src: string; onDone: () => void; skipLabel: string }) {
+export function Cutscene({ src, onDone, skipLabel, aiLabel }: { src: string; onDone: () => void; skipLabel: string; aiLabel: string }) {
   const ref = useRef<HTMLVideoElement>(null)
   useEffect(() => {
     const v = ref.current
@@ -15,6 +15,7 @@ export function Cutscene({ src, onDone, skipLabel }: { src: string; onDone: () =
   return (
     <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
       <video ref={ref} src={src} muted playsInline onEnded={onDone} onError={onDone} className="w-full h-full object-cover" />
+      <div className="absolute bottom-5 left-5 chip bg-black/50 !text-white/85 backdrop-blur">{aiLabel}</div>
       <button onClick={onDone} className="absolute top-4 right-4 btn-ghost !text-white/80 hover:!text-white bg-black/40 backdrop-blur"><X size={16} /> {skipLabel}</button>
     </div>
   )

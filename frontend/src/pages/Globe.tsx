@@ -56,7 +56,7 @@ export default function Globe() {
 
   return (
     <div className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
-      {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
+      {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} />
       <Clouds zoom={zoom} />
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />

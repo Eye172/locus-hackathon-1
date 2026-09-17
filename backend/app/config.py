@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5"
     gemini_api_key: str | None = None
+    higgsfield_api_key: str | None = None   # cutscene generation only, never called by the profile pipeline
     gemini_model: str = "gemini-3.5-flash-lite"  # 2.5 is closed to new keys; 3.x "flash" thinks for 20-60 s, lite answers in ~2 s
     llm_provider: str = "auto"   # auto | claude | gemini | none
 
