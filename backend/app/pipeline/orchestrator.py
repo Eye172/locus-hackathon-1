@@ -29,7 +29,8 @@ from . import enrich as enrich_mod
 from .ai_inspector import Inspector
 from .fetch import Fetched, fetch_all
 from .fetch import photo_id as fetch_id
-from .sources import social, social_api, commons, flickr, mapillary, official_site, places, web_images, wikipedia
+from .sources import (social, social_api, commons, flickr, map_reviews, mapillary, official_site, places,
+                      vk_geo, web_images, wikipedia)
 from .verify import CITY_SOURCES, REJECT_FLAGS, VerifyContext, score
 
 log = logging.getLogger("campuslens.orchestrator")
@@ -257,7 +258,7 @@ class Run:
         # the official site is the richest source and the slowest (homepage + 8 subpages): it gets 4 s more
         timeout = (settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
                    + (9.0 if name in SOCIAL_SOURCES else 0) + (4.0 if name == "official" else 0)
-                   + (6.0 if name in ("web_image", "tiktok_search", "youtube_search") else 0))
+                   + (6.0 if name in ("web_image", "map_review", "tiktok_search", "youtube_search") else 0))
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -363,8 +364,8 @@ class Run:
         per = settings.max_per_source
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
-            if name in ("mapillary", "flickr", "places", "vk", "web_image", "instagram", "tiktok", "tiktok_search",
-                        "youtube_search") and not st["enabled"]:
+            if name in ("mapillary", "flickr", "places", "vk", "vk_geo", "web_image", "map_review", "instagram",
+                        "tiktok", "tiktok_search", "youtube_search") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
         def bbox_pad() -> list[float]:
@@ -386,6 +387,7 @@ class Run:
         }
         if "web_image" in enabled:
             factories["web_image"] = (lambda: web_images.google_images(self.uni), 45)
+            factories["map_review"] = (lambda: map_reviews.collect(self.uni), 24)
         if "instagram" in enabled:
             factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 16)
             factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
@@ -400,6 +402,8 @@ class Run:
             factories["places"] = (lambda: places.collect(self.uni), 10)
         if "vk" in enabled:
             factories["vk"] = (lambda: self.after_official("vk", social.vk), 30)
+            # geotagged photos of passers-by and students: the anchor is the coordinate, not the university's channel
+            factories["vk_geo"] = (lambda: vk_geo.collect(self.uni), 24)
         external = await cache.get_external(self.qid)
         if external:
             ext_cands = [PhotoCandidate.model_validate(c) for c in external]

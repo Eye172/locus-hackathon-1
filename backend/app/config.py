@@ -107,9 +107,11 @@ class Settings(BaseSettings):
             "tiktok_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
             "youtube_search": {"enabled": bool(self.youtube_api_key), "needs_key": True, "env": "YOUTUBE_API_KEY"},
             "web_image": {"enabled": bool(self.serper_api_key), "needs_key": True, "env": "SERPER_API_KEY"},
+            "map_review": {"enabled": bool(self.serper_api_key), "needs_key": True, "env": "SERPER_API_KEY"},
             "commons_search": {"enabled": True, "needs_key": False},
             "openverse": {"enabled": True, "needs_key": False},
             "vk": {"enabled": bool(self.vk_service_token), "needs_key": True, "env": "VK_SERVICE_TOKEN"},
+            "vk_geo": {"enabled": bool(self.vk_service_token), "needs_key": True, "env": "VK_SERVICE_TOKEN"},
             "llm": {"enabled": self.active_llm() != "none", "needs_key": True,
                     "env": "ANTHROPIC_API_KEY or GEMINI_API_KEY", "provider": self.active_llm()},
         }

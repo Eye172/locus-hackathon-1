@@ -32,6 +32,8 @@ SOURCE_PRIOR: dict[str, float] = {
     "commons_geo": 0.20,
     "city_article": 0.45,
     "city_cat": 0.35,
+    "map_review": 0.30,
+    "vk_geo": 0.18,
     "web_image": 0.20,
     "commons_search": 0.20,
     "openverse": 0.15,
@@ -54,6 +56,8 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "vk": "Пост в официальной группе VK вуза",
     "tiktok": "Видео в официальном TikTok вуза (ссылка с сайта)",
     "youtube": "Кадр видео с официального YouTube-канала вуза",
+    "map_review": "Фото из отзыва, привязанного к объекту вуза на Google Картах",
+    "vk_geo": "Автор поставил геометку у кампуса при загрузке во ВКонтакте",
     "web_image": "Google Картинки по запросу с названием вуза",
     "commons_search": "Файл Commons, в описании которого есть название вуза",
     "openverse": "Фото с открытой лицензией (Openverse) по названию вуза",
@@ -61,6 +65,9 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "youtube_search": "Кадр видео на YouTube по запросу с названием вуза (автор не обязательно вуз)",
 }
 CITY_SOURCES = {"city_article", "city_cat"}
+# sources anchored by a coordinate, not by a channel of the university: whatever people happened to photograph
+# there, including each other. A close-up of one private person is neither useful to an applicant nor ours to show.
+GEO_CROWD_SOURCES = {"vk_geo"}
 SEARCH_SOURCES = {"web_image", "tiktok_search", "youtube_search", "openverse", "commons_search", "external"}
 REJECT_FLAGS = {"illustration", "stock", "screenshot", "logo", "collage"}
 SOFT_FLAGS = {"banner": -0.20, "crop": -0.10, "official_meeting": -0.25, "portrait": -0.08, "text": -0.05}
@@ -219,6 +226,9 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
         if verdict is not None and verdict.place == "this_university" and verdict.rel < 3:
             _reject(p, "найдено поиском: на странице нет названия вуза, и ИИ не узнал в фото именно этот вуз")
 
+    if verdict is not None and p.source in GEO_CROWD_SOURCES and "portrait" in verdict.flags:
+        _reject(p, "личное фото человека рядом с кампусом, а не сам кампус")
+
     # 6. copies in several sources
     if p.sources_count > 1:
         signals.append(Signal(key="cross_source", label=f"Найдено в {p.sources_count} источниках",
@@ -235,8 +245,8 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
 
     if verdict is None and settings.active_llm() != "none":
         signals.append(Signal(key="ai_pending", label="ИИ-инспектор не успел проверить фото", weight=0.0))
-        if set(p.sources) <= SEARCH_SOURCES:
-            # a search hit is only a lead: without the inspector's look it is not shown as the university
+        if set(p.sources) <= SEARCH_SOURCES | GEO_CROWD_SOURCES:
+            # a search hit or a stranger's geotag is only a lead: without the inspector's look it is not shown
             _reject(p, "найдено поиском, но ИИ-инспектор не успел проверить фото в отведённое время")
 
     conf = max(0.0, min(1.0, sum(s.weight for s in signals)))
