@@ -15,21 +15,67 @@ const SKY_SPACE: SkySpecification = {
 
 export const BLUE_MARBLE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg'
 
-/** Warm the HTTP cache with the whole planet at low zoom (1+4+16+64 small JPEGs), so the spiral dive never shows
- *  an unloaded (black) side of the globe while it turns and grows at the same time. Runs when the browser is idle. */
-export function prefetchPlanet(maxZ = 3): void {
+const warmed = new Set<string>()
+const keep: HTMLImageElement[] = []  // hold references so the browser does not drop in-flight loads
+function warm(url: string): boolean {
+  if (warmed.has(url)) return false
+  warmed.add(url)
+  const im = new Image()
+  im.crossOrigin = 'anonymous'  // same request mode as the map's own tile requests, so the cache entry is reused
+  im.decoding = 'async'
+  im.src = url
+  keep.push(im)
+  if (keep.length > 800) keep.splice(0, keep.length - 800)
+  return true
+}
+const tileUrl = (tpl: string, z: number, x: number, y: number) => tpl.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x))
+
+/** Warm the HTTP cache with the planet at low zoom (levels 0–3 everywhere, level 4 between ±67°), so the spiral dive
+ *  never shows an unloaded (black) side of the globe while it turns and grows. Runs when the browser is idle. */
+export function prefetchPlanet(): void {
   const go = () => {
-    for (let z = 0; z <= maxZ; z++) {
+    for (let z = 0; z <= 4; z++) {
       const n = 1 << z
-      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const im = new Image()
-        im.crossOrigin = 'anonymous'  // same mode as the map's own requests, so the cache entry is reused
-        im.src = BLUE_MARBLE.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x))
-      }
+      const y0 = z === 4 ? 3 : 0, y1 = z === 4 ? 12 : n
+      for (let y = y0; y < y1; y++) for (let x = 0; x < n; x++) warm(tileUrl(BLUE_MARBLE, z, x, y))
     }
   }
   const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
   if (ric) ric(go, { timeout: 2500 }); else window.setTimeout(go, 1200)
+}
+
+function tileXY(lat: number, lon: number, z: number): [number, number] {
+  const n = 2 ** z
+  const r = (Math.max(-85, Math.min(85, lat)) * Math.PI) / 180
+  const x = Math.floor(((((lon + 180) % 360) + 360) % 360 / 360) * n)
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n)
+  return [Math.min(n - 1, x), Math.max(0, Math.min(n - 1, y))]
+}
+
+/** Warm exactly the imagery a scripted camera path will show: for each sample, the tiles around the view centre at the
+ *  raster level MapLibre picks for 256-px tiles (round(zoom + 1)). Blue Marble up to map zoom 7.5, Esri from zoom 4. */
+export function prefetchPath(samples: { lat: number; lon: number; zoom: number }[], view: { w: number; h: number }, cap = 380): number {
+  let n = 0
+  for (const s of samples) {
+    const z = Math.round(s.zoom + 1)
+    if (z < 5) continue                                   // levels 0–4 come from prefetchPlanet
+    const tpls = [...(s.zoom <= 7.6 ? [BLUE_MARBLE] : []), ...(s.zoom >= 3.9 ? [ESRI_IMAGERY] : [])]
+    const tilePx = 512 * 2 ** (s.zoom - z)
+    const hw = Math.min(4, Math.ceil(view.w / 2 / tilePx)), hh = Math.min(3, Math.ceil(view.h / 2 / tilePx))
+    const [cx, cy] = tileXY(s.lat, s.lon, z)
+    const N = 2 ** z
+    for (const tpl of tpls) {
+      if (tpl === BLUE_MARBLE && z > 8) continue
+      for (let dy = -hh; dy <= hh; dy++) {
+        const y = cy + dy
+        if (y < 0 || y >= N) continue
+        for (let dx = -hw; dx <= hw; dx++) {
+          if (warm(tileUrl(tpl, z, (((cx + dx) % N) + N) % N, y)) && ++n >= cap) return n
+        }
+      }
+    }
+  }
+  return n
 }
 const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 

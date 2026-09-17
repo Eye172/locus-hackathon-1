@@ -1,380 +1,281 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { Map as MLMap, Popup, type GeoJSONSource } from 'maplibre-gl'
-import 'maplibre-gl/dist/maplibre-gl.css'
-import { prefetchPlanet, loadSatelliteStyle } from './darkTheme'
-import {
-  CAMPUS_LIMITS, PLANET_LIMITS, cityLimits, cityOf, countryAt, countryLimits, layerVisibleAt, lngLatBounds, loadCountries,
-  loadCountry, localName, padBox, pointCity,
-  type BBox, type CityInfo, type CountryFile, type CountryInfo, type Level, type LevelLimits, type UniPoint,
-} from './levels'
-
+import { Map as MLMap, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 type Map = MLMap
+type MapMouseEvent = MapLayerMouseEvent
+import 'maplibre-gl/dist/maplibre-gl.css'
+import { prefetchPath, prefetchPlanet, loadSatelliteStyle } from './darkTheme'
 
-export interface LevelState { level: Level; country: CountryInfo | null; city: CityInfo | null }
-export interface UniSelection extends UniPoint { cityName?: string; countryIso?: string }
+export interface HoverInfo { qid: string; name: string; name_en: string; city?: string; c: string; x: number; y: number; lon: number; lat: number }
 export interface GlobeHandle {
-  getMap: () => Map | null
+  flyToUniversity: (lat: number, lon: number) => Promise<void>
   peekAt: (lat: number, lon: number) => void
-  enterPlanet: () => void
-  enterCountry: (iso: string) => Promise<void>
-  enterCity: (iso: string, cityId: number) => Promise<void>
-  levelUp: () => void
-  /** search result → staged spiral flight straight to its city, the university selected */
-  flyToUniversity: (u: { qid: string; name: string; lat: number; lon: number; city?: string | null }) => Promise<UniSelection | null>
-  select: (qid: string | null) => void
-  diveIntoCampus: (lat: number, lon: number, ms: number) => void
+  turnTo: (lat: number, lon: number) => Promise<void>
+  spinAndApproach: (lat: number, lon: number, opts?: { approachMs?: number; zoom?: number; onApproach?: () => void }) => void
+  setMarkers: (on: boolean) => void
+  diveZoom: (lat: number, lon: number, ms?: number, zoom?: number) => void
   landAt: (lat: number, lon: number) => void
   riseBuildings: () => void
-  exitCampus: () => void
+  flyToCountry: (bbox: number[]) => void
+  resetToGlobe: () => void
+  getMap: () => Map | null
 }
 interface Props {
-  lang: string
-  t: (key: string) => string
-  lite?: boolean
-  onLevel?: (s: LevelState) => void
-  onSelectUni?: (u: UniSelection | null) => void
-  onOpenCampus?: (u: UniSelection) => void
-  onHint?: (hint: 'deeper' | 'up' | null) => void
+  onHover?: (h: HoverInfo | null) => void
+  onSelect?: (h: HoverInfo) => void
+  onZoom?: (zoom: number) => void
+  onReady?: () => void
 }
 
 const HOME: [number, number] = [66, 44]
-const BUILDINGS = 'building-3d'
-const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
-const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch] as string))
+// university markers: faded out once a university is chosen, back when the user returns to the planet
+const MARKERS: { id: string; props: [string, number][] }[] = [
+  { id: 'unis-glow', props: [['circle-opacity', 0.35]] },
+  { id: 'unis-point', props: [['circle-opacity', 1], ['circle-stroke-opacity', 1]] },
+  { id: 'unis-cluster', props: [['circle-opacity', 0.88], ['circle-stroke-opacity', 1]] },
+  { id: 'unis-cluster-count', props: [['text-opacity', 1]] },
+  { id: 'unis-label', props: [['text-opacity', 1]] },
+]
+const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
 
-/** Stretchable rounded "flat card" drawn in GL behind university names (icon-text-fit), one image for all labels. */
-function cardImage(fill: string, stroke: string): ImageData {
-  const s = 2, w = 24 * s, h = 20 * s
-  const c = document.createElement('canvas'); c.width = w; c.height = h
-  const g = c.getContext('2d')!
-  g.beginPath(); g.roundRect(1, 1, w - 2, h - 2, 6 * s)
-  g.fillStyle = fill; g.fill(); g.lineWidth = 1 * s; g.strokeStyle = stroke; g.stroke()
-  return g.getImageData(0, 0, w, h)
+/** The spiral dive as a pure function of time, shared by the flight itself and by tile prefetching.
+ *  The planet turns (eastward from orbit, the short way when already zoomed in) and comes closer at the same time:
+ *  zoom = "closer while turning" (peaks with the rotation) + "dive" (small at first, accelerating into the clouds). */
+function planSpiral(c0: { lng: number; lat: number }, z0: number, lat: number, lon: number, zTarget: number) {
+  const east = (((lon - c0.lng) % 360) + 360) % 360
+  const dLng = z0 > 3.2 ? ((lon - c0.lng + 540) % 360) - 180 : (east < 180 ? east + 360 : east)
+  const spinMs = 1400 + Math.abs(dLng) * 3.2       // 180° → 2.0 s, 540° → 3.1 s
+  const total = spinMs + 3000                      // the dive keeps going ~3 s after the turn has settled
+  const zTurnEnd = Math.max(z0, 3.4)
+  const turn = (t: number) => (1 - Math.cos(Math.PI * Math.pow(t, 0.7))) / 2
+  const closer = (t: number) => (1 - Math.cos(Math.PI * Math.pow(t, 0.8))) / 2
+  const dive = (u: number) => Math.pow(u, 2.2)
+  const at = (elapsed: number) => {
+    const el = Math.max(0, elapsed)                // negative time would make the fractional powers NaN
+    const ts = Math.min(1, el / spinMs), u = Math.min(1, el / total)
+    const e = turn(ts)
+    return { e, lng: c0.lng + dLng * e, lat: c0.lat + (lat - c0.lat) * e,
+             zoom: z0 + (zTurnEnd - z0) * closer(ts) + (zTarget - zTurnEnd) * dive(u) }
+  }
+  const samples = () => {
+    const out: { lat: number; lon: number; zoom: number }[] = []
+    for (let el = 0; el <= total; el += 120) { const p = at(el); out.push({ lat: p.lat, lon: ((p.lng + 540) % 360) - 180, zoom: p.zoom }) }
+    return out
+  }
+  return { dLng, spinMs, total, at, samples }
 }
+const BUILDINGS = 'building-3d'
 
-export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ lang, t, lite, onLevel, onSelectUni, onOpenCampus, onHint }, ref) {
+export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady }, ref) {
   const container = useRef<HTMLDivElement>(null)
   const stars = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<Map | null>(null)
   const spinning = useRef(true)
-  const motion = useRef(0)
+  const markersOn = useRef(true)
+  const motion = useRef(0)  // rAF id of the scripted camera move (turn + approach)
+  const resetTimers = useRef<number[]>([])
   const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
   const starField = useRef<{ x: number; y: number; r: number; a: number }[]>([])
-  const layerIds = useRef<string[]>([])
-  const state = useRef<LevelState>({ level: 'planet', country: null, city: null })
-  const countries = useRef<CountryInfo[]>([])
-  const file = useRef<CountryFile | null>(null)
-  const extra = useRef<UniPoint[]>([])
-  const selected = useRef<string | null>(null)
-  const popup = useRef<Popup | null>(null)
-  const busy = useRef(false)  // a level transition is running: ignore interaction-driven transitions
-  const props = useRef({ lang, t, onLevel, onSelectUni, onOpenCampus, onHint })
-  props.current = { lang, t, onLevel, onSelectUni, onOpenCampus, onHint }
 
-  // ------------------------------------------------------------------ stars (planet level only)
   const drawStars = () => {
     const c = stars.current, map = mapRef.current
     if (!c || !map) return
-    const dpr = Math.min(1.5, window.devicePixelRatio || 1)
+    const dpr = window.devicePixelRatio || 1
     const w = c.clientWidth, h = c.clientHeight
-    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+    if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr }
     const ctx = c.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
+    if (!starField.current.length) {
+      for (let i = 0; i < 420; i++) starField.current.push({ x: Math.random(), y: Math.random(), r: Math.random() * 1.3 + 0.3, a: Math.random() })
+    }
     const z = map.getZoom()
     const fade = z > 4 ? Math.max(0, 1 - (z - 4) / 3) : 1
     if (fade <= 0) return
-    if (!starField.current.length) for (let i = 0; i < 420; i++) starField.current.push({ x: Math.random(), y: Math.random(), r: Math.random() * 1.3 + 0.3, a: Math.random() })
-    const tt = performance.now() / 1000
-    ctx.fillStyle = '#DCE4FF'
+    const t = performance.now() / 1000
     for (const s of starField.current) {
-      ctx.globalAlpha = (lite ? 0.7 : 0.55 + 0.45 * Math.sin(tt * 1.3 + s.a * 20)) * fade * 0.9
+      const tw = 0.55 + 0.45 * Math.sin(t * 1.3 + s.a * 20)
+      ctx.globalAlpha = tw * fade * 0.9
+      ctx.fillStyle = '#DCE4FF'
       ctx.beginPath(); ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2); ctx.fill()
     }
-    const R = (512 * Math.pow(2, z)) / (2 * Math.PI) + 8   // keep the planet disc clear
-    ctx.globalCompositeOperation = 'destination-out'; ctx.globalAlpha = 1
+    // clear the globe disc so stars never overlap the planet
+    const R = (512 * Math.pow(2, z)) / (2 * Math.PI) + 8
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.globalAlpha = 1
     ctx.beginPath(); ctx.arc(w / 2, h / 2, R, 0, Math.PI * 2); ctx.fill()
     ctx.globalCompositeOperation = 'source-over'
   }
 
-  // ------------------------------------------------------------------ 3D buildings (campus level only)
   const flat = useRef(false)
   const flattenBuildings = (map: Map) => {
     if (flat.current || !map.getLayer(BUILDINGS)) return
     flat.current = true
     map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', 0)
     map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', 0)
+    map.setLayerZoomRange(BUILDINGS, 13, 24)
   }
+
   const animateBuildings = (map: Map) => {
     flat.current = false
     if (!map.getLayer(BUILDINGS)) return
     const t0 = performance.now()
     const step = () => {
-      const k = Math.min(1, (performance.now() - t0) / 1200)
-      const e = 1 - Math.pow(1 - k, 3)
+      const t = Math.min(1, Math.max(0, performance.now() - t0) / 1200)
+      const e = 1 - Math.pow(1 - t, 3)
       map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', ['*', ['coalesce', ['get', 'render_height'], 12], e])
       map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', ['*', ['coalesce', ['get', 'render_min_height'], 0], e])
-      if (k < 1) requestAnimationFrame(step)
+      if (t < 1) requestAnimationFrame(step)
     }
     requestAnimationFrame(step)
   }
 
-  // ------------------------------------------------------------------ level machinery
-  const setVisible = (map: Map, show: (id: string) => boolean) => {
-    for (const id of layerIds.current) {
+  const showMarkers = (on: boolean, ms = 600) => {
+    const map = mapRef.current
+    markersOn.current = on
+    if (!map) return
+    for (const { id, props } of MARKERS) {
       if (!map.getLayer(id)) continue
-      const vis = show(id) ? 'visible' : 'none'
-      if (map.getLayoutProperty(id, 'visibility') !== vis) map.setLayoutProperty(id, 'visibility', vis)
+      for (const [prop, value] of props) {
+        type PaintName = Parameters<Map['setPaintProperty']>[1]
+        map.setPaintProperty(id, `${prop}-transition` as PaintName, { duration: ms, delay: 0 })  // style-spec transition, honoured at runtime
+        map.setPaintProperty(id, prop as PaintName, on ? value : 0)
+      }
     }
+    if (!on) { map.getCanvas().style.cursor = ''; onHover?.(null) }
   }
-  const relax = (map: Map) => { map.setMaxBounds(null); map.setMinZoom(0); map.setMaxZoom(20); map.setMaxPitch(70) }
-  const applyLimits = (map: Map, lim: LevelLimits, bounds?: BBox | null) => {
-    map.setMinZoom(Math.min(lim.minZoom, map.getZoom()))
-    map.setMaxZoom(Math.max(lim.maxZoom, map.getZoom()))
-    map.setMaxPitch(lim.maxPitch)
-    if (lim.rotate) { map.dragRotate.enable(); map.touchZoomRotate.enableRotation() }
-    else { map.dragRotate.disable(); map.touchZoomRotate.disableRotation() }
-    if (bounds) map.setMaxBounds(lngLatBounds(bounds))
-  }
-  const report = (next: Partial<LevelState>) => {
-    state.current = { ...state.current, ...next }
-    props.current.onLevel?.(state.current)
-  }
+
   const cancelMotion = () => { if (motion.current) cancelAnimationFrame(motion.current); motion.current = 0 }
-  // camera moves started inside a map input event are cancelled by MapLibre's handler manager right after the event;
-  // start them on the next tick instead
-  const later = (fn: () => void) => { window.setTimeout(fn, 30) }
-
-  const flyCam = (map: Map, cam: { center: [number, number]; zoom: number; pitch?: number; bearing?: number }, ms: number) =>
-    new Promise<void>((resolve) => {
-      cancelMotion(); relax(map); map.stop()
-      let done = false
-      const finish = () => { if (!done) { done = true; resolve() } }
-      map.once('moveend', finish)
-      window.setTimeout(finish, ms + 400)
-      map.flyTo({ center: cam.center, zoom: cam.zoom, pitch: cam.pitch ?? 0, bearing: cam.bearing ?? 0, duration: ms, curve: 1.42, essential: true })
-    })
-
-  const camFor = (map: Map, b: BBox, padding: number) => {
-    relax(map)  // cameraForBounds clamps to the current level's zoom range: lift it first
-    const cam = map.cameraForBounds(lngLatBounds(b), { padding })
-    const c = cam?.center as { lng: number; lat: number } | [number, number] | undefined
-    const center: [number, number] = Array.isArray(c) ? c : c ? [c.lng, c.lat] : [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2]
-    return { center, zoom: cam?.zoom ?? 5 }
-  }
-
-  const setSource = (map: Map, id: string, data: GeoJSON.FeatureCollection) => (map.getSource(id) as GeoJSONSource | undefined)?.setData(data)
-
-  const countriesFC = (): GeoJSON.FeatureCollection => ({
-    type: 'FeatureCollection',
-    features: countries.current.map((c, i) => ({
-      type: 'Feature', id: i, geometry: { type: 'Point', coordinates: [c.center[1], c.center[0]] },
-      properties: { iso: c.iso, name: localName(c, props.current.lang), count: c.count, cities: c.cities },
-    })),
-  })
-  const citiesFC = (f: CountryFile | null): GeoJSON.FeatureCollection => ({
-    type: 'FeatureCollection',
-    features: (f?.cities ?? []).map((c) => ({ type: 'Feature', id: c.id, geometry: { type: 'Point', coordinates: [c.lon, c.lat] }, properties: { id: c.id, name: c.name, count: c.count } })),
-  })
-  const unisOf = (city: CityInfo | null): UniPoint[] => {
-    const base = city && file.current && city.id >= 0 ? file.current.unis.filter((u) => u.c === city.id) : []
-    return [...base, ...extra.current.filter((x) => !base.some((b) => b.qid === x.qid))]
-  }
-  const unisFC = (list: UniPoint[], cityName: string): GeoJSON.FeatureCollection => ({
-    type: 'FeatureCollection',
-    features: list.map((u, i) => ({ type: 'Feature', id: i, geometry: { type: 'Point', coordinates: [u.lon, u.lat] }, properties: { qid: u.qid, name: localName(u, props.current.lang), city: cityName } })),
-  })
-
-  // ------------------------------------------------------------------ popups (one flat card at a time)
-  const showPopup = (map: Map, lngLat: [number, number], html: string) => {
-    popup.current ??= new Popup({ closeButton: false, closeOnClick: false, className: 'cl-popup', offset: 16, maxWidth: '260px' })
-    popup.current.setLngLat(lngLat).setHTML(html).addTo(map)
-  }
-  const hidePopup = () => popup.current?.remove()
-  const uniCard = (u: UniPoint, city: string, sel: boolean) =>
-    `<div class="clp${sel ? ' clp-sel' : ''}"><div class="clp-t">${esc(localName(u, props.current.lang))}</div>` +
-    `<div class="clp-s">${esc(city)}</div><div class="clp-h">${esc(props.current.t('lvl.dblCampus'))}</div></div>`
-  const selectedCard = (_map: Map) => { hidePopup() }  // the selection is shown by the blue in-map card + the side card
-  const selectionOf = (qid: string): UniSelection | null => {
-    const u = unisOf(state.current.city).find((x) => x.qid === qid)
-    return u ? { ...u, cityName: state.current.city?.name, countryIso: state.current.country?.iso } : null
-  }
-  const doSelect = (map: Map, qid: string | null) => {
-    selected.current = qid
-    if (map.getLayer('lvl-uni-selected')) {
-      const f = ['==', ['get', 'qid'], qid ?? '__none__'] as never
-      map.setFilter('lvl-uni-selected', f)
-      map.setFilter('lvl-uni-card-selected', f)
-      map.setFilter('lvl-uni-card', ['!=', ['get', 'qid'], qid ?? '__none__'] as never)
-    }
-    selectedCard(map)
-    props.current.onSelectUni?.(qid ? selectionOf(qid) : null)
-  }
-
-  // ------------------------------------------------------------------ transitions
-  const goPlanet = async () => {
-    const map = mapRef.current
-    if (!map) return
-    busy.current = true
-    doSelect(map, null); hidePopup()
-    const from = state.current.level
-    setVisible(map, (id) => layerVisibleAt(from, id) || layerVisibleAt('planet', id))  // no black gap while flying up
-    report({ level: 'planet', country: null, city: null })
-    await flyCam(map, { center: [map.getCenter().lng, Math.max(-35, Math.min(55, map.getCenter().lat))], zoom: 1.6 }, 1900)
-    setSource(map, 'lvl-cities', EMPTY); setSource(map, 'lvl-unis', EMPTY)
-    extra.current = []
-    setVisible(map, (id) => layerVisibleAt('planet', id))
-    applyLimits(map, PLANET_LIMITS)
-    busy.current = false
-    window.setTimeout(() => { if (state.current.level === 'planet') spinning.current = true }, 2500)
-  }
-
-  const goCountry = async (iso: string) => {
-    const map = mapRef.current
-    const c = countries.current.find((x) => x.iso === iso)
-    if (!map || !c) return
-    busy.current = true
-    spinning.current = false
-    doSelect(map, null); hidePopup()
-    const from = state.current.level
-    const f = await loadCountry(iso).catch(() => null)
-    file.current = f
-    extra.current = []
-    setSource(map, 'lvl-cities', citiesFC(f)); setSource(map, 'lvl-unis', EMPTY)
-    setVisible(map, (id) => (layerVisibleAt(from, id) && !id.startsWith('lvl-')) || layerVisibleAt('country', id))
-    report({ level: 'country', country: c, city: null })
-    const cam = camFor(map, c.bbox, 70)
-    await flyCam(map, cam, from === 'planet' ? 2000 : 1500)
-    setVisible(map, (id) => layerVisibleAt('country', id))
-    applyLimits(map, countryLimits(cam.zoom), padBox(c.bbox, 0.6, 6))
-    busy.current = false
-  }
-
-  const goCity = async (country: CountryInfo | null, city: CityInfo, ms: number | 'spiral' = 1500) => {
-    const map = mapRef.current
-    if (!map) return
-    busy.current = true
-    spinning.current = false
-    hidePopup()
-    const from = state.current.level
-    setSource(map, 'lvl-unis', unisFC(unisOf(city), city.name))
-    report({ level: 'city', country, city })
-    const cam = camFor(map, city.bbox, 90)
-    if (ms === 'spiral') {
-      setVisible(map, (id) => layerVisibleAt('planet', id) && !id.startsWith('lvl-') || layerVisibleAt('city', id))
-      await spiral(map, cam.center, cam.zoom)
-    } else {
-      setVisible(map, (id) => (layerVisibleAt(from, id) && !id.startsWith('lvl-')) || layerVisibleAt('city', id))
-      await flyCam(map, cam, ms)
-    }
-    setVisible(map, (id) => layerVisibleAt('city', id))
-    applyLimits(map, cityLimits(cam.zoom), padBox(city.bbox, 1.5, 0.08))
-    busy.current = false
-  }
-
-  /** planet → city in one continuous move: the globe turns and grows at the same time (no stop in between) */
-  const spiral = (map: Map, center: [number, number], zTarget: number) => new Promise<void>((resolve) => {
-    cancelMotion(); relax(map); map.stop()
-    const [lon, lat] = center
-    const c0 = map.getCenter(), z0 = map.getZoom(), b0 = map.getBearing(), p0 = map.getPitch()
-    const east = (((lon - c0.lng) % 360) + 360) % 360
-    const dLng = z0 > 3.4 ? ((lon - c0.lng + 540) % 360) - 180 : (east < 60 ? east + 360 : east)
-    const spinMs = 900 + Math.abs(dLng) * 3
-    const total = spinMs + 1700
-    const turn = (x: number) => (1 - Math.cos(Math.PI * Math.pow(x, 0.7))) / 2
-    const grow = (u: number) => 0.15 * u + 0.85 * Math.pow(u, 1.7)
-    const t0 = performance.now()
-    const step = (now: number) => {
-      const el = now - t0
-      const e = turn(Math.min(1, el / spinMs))
-      const u = Math.min(1, el / total)
-      const lng = c0.lng + dLng * e
-      map.jumpTo({ center: [((lng + 540) % 360) - 180, c0.lat + (lat - c0.lat) * e], zoom: z0 + (zTarget - z0) * grow(u), bearing: b0 * (1 - e), pitch: p0 * (1 - e) })
-      if (el < total) motion.current = requestAnimationFrame(step)
-      else { motion.current = 0; resolve() }
-    }
-    motion.current = requestAnimationFrame(step)
-  })
-
-  const levelUp = () => {
-    const s = state.current
-    if (s.level === 'city' && s.country) void goCountry(s.country.iso)
-    else if (s.level === 'city' || s.level === 'country') void goPlanet()
-  }
+  const clearResetTimers = () => { resetTimers.current.forEach((id) => window.clearTimeout(id)); resetTimers.current = [] }
 
   useImperativeHandle(ref, () => ({
-    getMap: () => mapRef.current,
-    peekAt: (lat, lon) => {
-      const map = mapRef.current
-      if (!map || motion.current || busy.current || state.current.level !== 'planet') return
-      spinning.current = false
-      map.easeTo({ center: [lon, lat], duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
-      window.clearTimeout(peekTimer.current)
-      peekTimer.current = window.setTimeout(() => { if (state.current.level === 'planet') spinning.current = true }, 9000)
-    },
-    enterPlanet: () => { void goPlanet() },
-    enterCountry: (iso) => goCountry(iso),
-    enterCity: async (iso, cityId) => {
-      const c = countries.current.find((x) => x.iso === iso) ?? null
-      if (!file.current || file.current.iso !== iso) file.current = await loadCountry(iso).catch(() => null)
-      const city = file.current?.cities[cityId]
-      if (city) await goCity(c, city)
-    },
-    levelUp,
-    flyToUniversity: async (u) => {
-      const map = mapRef.current
-      if (!map) return null
-      busy.current = true
-      doSelect(map, null); hidePopup()
-      if (!countries.current.length) countries.current = await loadCountries()
-      const c = countryAt(countries.current, u.lat, u.lon)
-      const f = c ? await loadCountry(c.iso).catch(() => null) : null
-      file.current = f
-      let city = f ? cityOf(f, u.qid, u.lat, u.lon) : null
-      city ??= pointCity(u.city ?? u.name, u.lat, u.lon)
-      extra.current = f?.unis.some((x) => x.qid === u.qid) ? [] : [{ qid: u.qid, name: u.name, lat: u.lat, lon: u.lon, c: city.id }]
-      setSource(map, 'lvl-cities', citiesFC(f))
-      await goCity(c, city, 'spiral')
-      doSelect(map, u.qid)
-      return selectionOf(u.qid)
-    },
-    select: (qid) => { const map = mapRef.current; if (map) doSelect(map, qid) },
-    // ---- campus (level 4): driven by the page's cloud dive
-    diveIntoCampus: (lat, lon, ms) => {
+    setMarkers: (on) => showMarkers(on),
+    // One continuous camera move, so the planet never visibly stops between the turn and the dive:
+    //  · rotation: eastward, half to one and a half revolutions, ease-in-out, ends exactly over the university;
+    //  · zoom: a short pull-back while the rotation speeds up, then one monotonic, accelerating approach that begins
+    //    while the rotation is still decelerating and runs straight into the cloud deck.
+    spinAndApproach: (lat, lon, opts = {}) => {
       const map = mapRef.current
       if (!map) return
-      cancelMotion(); relax(map); map.stop()
-      flattenBuildings(map)
-      hidePopup()
-      map.easeTo({ center: [lon, lat], zoom: Math.min(16, map.getZoom() + 2.5), duration: ms, easing: (x) => x * x, essential: true })
+      // `approachMs` = time from onApproach (cloud dive start) to the end of the move, i.e. the dive's hidden jump
+      const { approachMs = 4588, zoom: zTarget = 11.2, onApproach } = opts
+      cancelMotion()
+      clearResetTimers()            // a quick re-pick right after «back» must not get markers / idle spin mid-flight
+      window.clearTimeout(idleTimer.current)
+      map.stop()
+      spinning.current = false
+      window.clearTimeout(peekTimer.current)
+      showMarkers(false)
+      flattenBuildings(map)  // expensive style change: do it now, while buildings are out of view, not at the jump
+      const b0 = map.getBearing(), p0 = map.getPitch()
+      const plan = planSpiral(map.getCenter(), map.getZoom(), lat, lon, zTarget)
+      const canvas = map.getCanvas()
+      prefetchPath(plan.samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
+      const approachStart = Math.max(0, plan.total - approachMs)
+      let fired = false
+      let t0 = -1
+      const fire = () => { if (!fired) { fired = true; onApproach?.() } }
+      const step = (now: number) => {
+        if (t0 < 0) t0 = now                           // rAF timestamps can precede performance.now(): start here
+        const el = Math.max(0, now - t0)
+        const p = plan.at(el)
+        if (Number.isFinite(p.lng) && Number.isFinite(p.lat) && Number.isFinite(p.zoom)) {
+          try {
+            map.jumpTo({ center: [((p.lng + 540) % 360) - 180, p.lat], zoom: p.zoom, bearing: b0 * (1 - p.e), pitch: p0 * (1 - p.e) })
+          } catch (err) {
+            // never leave the user on a frozen globe with hidden markers: finish the transition without the camera move
+            console.warn('spinAndApproach frame failed', err)
+            motion.current = 0
+            fire()
+            return
+          }
+        }
+        if (el >= approachStart) fire()
+        motion.current = el < plan.total ? requestAnimationFrame(step) : 0
+      }
+      motion.current = requestAnimationFrame(step)
+    },
+    getMap: () => mapRef.current,
+    peekAt: (lat, lon) => {
+      // while the user is still typing, the planet gently turns towards the best match (no zoom, no commitment)
+      const map = mapRef.current
+      if (!map || motion.current || map.getZoom() > 3.4) return
+      spinning.current = false
+      map.easeTo({ center: [lon, lat], duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
+      const canvas = map.getCanvas()
+      prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight }, 260)
+      window.clearTimeout(peekTimer.current)
+      peekTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 9000)
+    },
+    // cinematic sequence, driven by the CloudDive overlay: turn → dive under the clouds → silent jump → rise
+    turnTo: (lat, lon) => new Promise<void>((resolve) => {
+      const map = mapRef.current
+      if (!map) return resolve()
+      spinning.current = false
+      window.clearTimeout(peekTimer.current)
+      showMarkers(false)
+      map.stop()
+      const c0 = map.getCenter(), z0 = map.getZoom(), b0 = map.getBearing(), p0 = map.getPitch()
+      // the planet makes a turn before the approach: eastward like the idle spin, at least half a revolution,
+      // ending exactly over the university (a target already in view gets a full extra revolution)
+      const east = (((lon - c0.lng) % 360) + 360) % 360
+      const dLng = east < 180 ? east + 360 : east
+      const ms = 1400 + dLng * 3.2                      // 180° → 2.0 s, 540° → 3.1 s
+      const zMid = Math.min(z0, 1.6)                    // pull back so the whole globe turns in frame
+      const zEnd = 2.6
+      const t0 = performance.now()
+      const step = (now: number) => {
+        const t = Math.min(1, Math.max(0, now - t0) / ms)
+        const e = easeInOut(t)
+        const lng = c0.lng + dLng * e
+        const zoom = t < 0.5 ? z0 + (zMid - z0) * easeInOut(t * 2) : zMid + (zEnd - zMid) * easeInOut((t - 0.5) * 2)
+        map.jumpTo({ center: [((lng + 540) % 360) - 180, c0.lat + (lat - c0.lat) * e], zoom, bearing: b0 * (1 - e), pitch: p0 * (1 - e) })
+        if (t < 1) requestAnimationFrame(step)
+        else resolve()
+      }
+      requestAnimationFrame(step)
+    }),
+    diveZoom: (lat, lon, ms = 4500, zoom = 11.2) => {
+      const map = mapRef.current
+      if (!map) return
+      // accelerating descent: continent → region → the city itself fills the screen before the cloud deck closes
+      map.easeTo({ center: [lon, lat], zoom, pitch: 0, duration: ms, easing: (x) => x * x * (3 - 2 * x) * 0.35 + x * x * 0.65, essential: true })
     },
     landAt: (lat, lon) => {
       const map = mapRef.current
       if (!map) return
-      cancelMotion(); relax(map); map.stop()
-      flattenBuildings(map)
-      setVisible(map, (id) => layerVisibleAt('campus', id) && (!id.startsWith('lvl-uni') || id === 'lvl-uni-selected'))
+      cancelMotion()
+      map.stop()
+      flattenBuildings(map)  // no-op when spinAndApproach already did it
       map.jumpTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17 })
-      applyLimits(map, CAMPUS_LIMITS, padBox([lat - 0.02, lon - 0.03, lat + 0.02, lon + 0.03], 1, 0.05))
-      report({ level: 'campus' })
     },
     riseBuildings: () => { const map = mapRef.current; if (map) animateBuildings(map) },
-    exitCampus: () => {
-      const s = state.current
-      if (s.city) void goCity(s.country, s.city).then(() => { const map = mapRef.current; if (map) doSelect(map, selected.current) })
-      else void goPlanet()
+    flyToUniversity: (lat, lon) => new Promise<void>((resolve) => {
+      const map = mapRef.current
+      if (!map) return resolve()
+      spinning.current = false
+      flattenBuildings(map)
+      map.once('moveend', () => { animateBuildings(map); resolve() })
+      map.flyTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17, duration: 3400, curve: 1.6, essential: true })
+    }),
+    flyToCountry: (bbox) => {
+      const map = mapRef.current
+      if (!map) return
+      spinning.current = false
+      map.fitBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], { padding: 80, pitch: 25, bearing: 0, duration: 2200, maxZoom: 6.5 })
+    },
+    resetToGlobe: () => {
+      const map = mapRef.current
+      if (!map) return
+      cancelMotion()
+      clearResetTimers()
+      map.flyTo({ center: HOME, zoom: 1.5, pitch: 0, bearing: 0, duration: 2000 })
+      resetTimers.current = [
+        window.setTimeout(() => showMarkers(true, 900), 900),
+        window.setTimeout(() => { spinning.current = true }, 2100),
+      ]
     },
   }))
-
-  // names follow the interface language
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !map.getSource('lvl-countries')) return
-    setSource(map, 'lvl-countries', countriesFC())
-    if (state.current.city) setSource(map, 'lvl-unis', unisFC(unisOf(state.current.city), state.current.city.name))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang])
 
   useEffect(() => {
     if (!container.current) return
@@ -389,229 +290,91 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ lang,
         container: container.current,
         style,
         center: HOME,
-        zoom: 1.6,
+        zoom: 1.5,
         attributionControl: { compact: true },
-        canvasContextAttributes: { antialias: !lite },
-        pixelRatio: Math.min(window.devicePixelRatio || 1, lite ? 1 : 1.5),
-        fadeDuration: 150,
-        maxPitch: 0,
-        minZoom: PLANET_LIMITS.minZoom,
-        maxZoom: PLANET_LIMITS.maxZoom,
-        doubleClickZoom: false,
-        dragRotate: false,
+        canvasContextAttributes: { antialias: true },
+        maxPitch: 70,
       })
       mapRef.current = map
       ;(window as unknown as { __map?: Map }).__map = map
-      ;(window as unknown as { __lvl?: () => unknown }).__lvl = () => ({ busy: busy.current, motion: motion.current, level: state.current.level, selected: selected.current })
-      map.on('error', (e) => console.warn('map error:', (e as { error?: { message?: string } }).error?.message ?? e))
+      const errors: string[] = []
+      ;(window as unknown as { __mapErrors?: string[] }).__mapErrors = errors
+      map.on('error', (e) => { errors.push(String((e as { error?: { message?: string } }).error?.message ?? e)) })
       setup(map)
       window.addEventListener('resize', onResize)
     })
 
     const setup = (map: Map) => {
-      // speed limits: slower wheel/trackpad zoom, a gentle fling when the globe is thrown
-      map.scrollZoom.setWheelZoomRate(1 / 700)
-      map.scrollZoom.setZoomRate(1 / 160)
-      map.dragPan.disable()
-      map.dragPan.enable({ linearity: 0.25, maxSpeed: 700, deceleration: 3200 })
-      map.touchZoomRotate.disableRotation()
+    map.on('style.load', () => {
+      if (map.getSource('unis')) return
+      map.setProjection({ type: 'globe' })
+      prefetchPlanet()
+      map.addSource('unis', { type: 'geojson', data: '/universities.geojson', cluster: true, clusterRadius: 38, clusterMaxZoom: 7 })
+      map.addLayer({ id: 'unis-glow', type: 'circle', source: 'unis', filter: ['!', ['has', 'point_count']],
+        paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 7, 6, 11, 12, 18], 'circle-color': '#9CD3FF', 'circle-opacity': 0.35, 'circle-blur': 0.9 } })
+      map.addLayer({ id: 'unis-point', type: 'circle', source: 'unis', filter: ['!', ['has', 'point_count']],
+        paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 2.4, 6, 4.2, 12, 6.5], 'circle-color': '#FFFFFF', 'circle-stroke-color': '#1D4ED8', 'circle-stroke-width': 1.5 } })
+      map.addLayer({ id: 'unis-cluster', type: 'circle', source: 'unis', filter: ['has', 'point_count'],
+        paint: { 'circle-radius': ['step', ['get', 'point_count'], 11, 20, 15, 100, 20, 500, 26], 'circle-color': '#1D4ED8', 'circle-opacity': 0.88, 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 1.6 } })
+      map.addLayer({ id: 'unis-cluster-count', type: 'symbol', source: 'unis', filter: ['has', 'point_count'],
+        layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 11, 'text-font': ['Noto Sans Bold'] },
+        paint: { 'text-color': '#FFFFFF' } })
+      map.addLayer({ id: 'unis-label', type: 'symbol', source: 'unis', minzoom: 6.5, filter: ['!', ['has', 'point_count']],
+        layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'], 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-max-width': 12 },
+        paint: { 'text-color': '#C7D2FE', 'text-halo-color': '#070B18', 'text-halo-width': 1.2 } })
+      onReady?.()
+    })
 
-      map.on('style.load', async () => {
-        if (map.getSource('lvl-countries')) return
-        map.setProjection({ type: 'globe' })
-        prefetchPlanet(3)
-        map.addImage('cl-card', cardImage('rgba(255,255,255,0.96)', 'rgba(10,10,10,0.14)'), { pixelRatio: 2, stretchX: [[12, 36]], stretchY: [[12, 28]], content: [10, 8, 38, 32] })
-        map.addImage('cl-card-sel', cardImage('#1D4ED8', 'rgba(255,255,255,0.9)'), { pixelRatio: 2, stretchX: [[12, 36]], stretchY: [[12, 28]], content: [10, 8, 38, 32] })
-        const bubble = (id: string, source: string, color: string, rmin: number, rmax: number, cmax: number) => {
-          map.addSource(source, { type: 'geojson', data: EMPTY })
-          map.addLayer({ id: `${id}-halo`, type: 'circle', source, paint: {
-            'circle-radius': ['+', 6, ['interpolate', ['linear'], ['sqrt', ['get', 'count']], 1, rmin, Math.sqrt(cmax), rmax]],
-            'circle-color': color, 'circle-opacity': 0.18, 'circle-blur': 0.6 } })
-          map.addLayer({ id: `${id}-bubble`, type: 'circle', source, paint: {
-            'circle-radius': ['interpolate', ['linear'], ['sqrt', ['get', 'count']], 1, rmin, Math.sqrt(cmax), rmax],
-            'circle-color': color, 'circle-opacity': 0.9, 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 1.4 } })
-          map.addLayer({ id: `${id}-count`, type: 'symbol', source, layout: {
-            'text-field': ['to-string', ['get', 'count']], 'text-size': 11, 'text-font': ['Noto Sans Bold'], 'text-allow-overlap': true, 'text-ignore-placement': true },
-            paint: { 'text-color': '#FFFFFF' } })
-          map.addLayer({ id: `${id}-name`, type: 'symbol', source, layout: {
-            'text-field': ['get', 'name'], 'text-size': 12, 'text-font': ['Noto Sans Regular'], 'text-anchor': 'top',
-            'text-radial-offset': ['+', 0.6, ['/', ['interpolate', ['linear'], ['sqrt', ['get', 'count']], 1, rmin, Math.sqrt(cmax), rmax], 12]],
-            'text-max-width': 9, 'symbol-sort-key': ['-', 0, ['get', 'count']] },
-            paint: { 'text-color': '#FFFFFF', 'text-halo-color': '#07101F', 'text-halo-width': 1.4 } })
-        }
-        bubble('lvl-country', 'lvl-countries', '#1D4ED8', 8, 30, 2700)
-        bubble('lvl-city', 'lvl-cities', '#2563EB', 10, 26, 150)
-        map.addSource('lvl-unis', { type: 'geojson', data: EMPTY })
-        map.addLayer({ id: 'lvl-uni-glow', type: 'circle', source: 'lvl-unis', paint: { 'circle-radius': 13, 'circle-color': '#60A5FA', 'circle-opacity': 0.25, 'circle-blur': 0.7 } })
-        map.addLayer({ id: 'lvl-uni-pin', type: 'circle', source: 'lvl-unis', paint: {
-          'circle-radius': 6.5, 'circle-color': '#FFFFFF', 'circle-stroke-color': '#1D4ED8', 'circle-stroke-width': 3 } })
-        map.addLayer({ id: 'lvl-uni-selected', type: 'circle', source: 'lvl-unis', filter: ['==', ['get', 'qid'], '__none__'], paint: {
-          'circle-radius': 9, 'circle-color': '#1D4ED8', 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 3 } })
-        const cardLayout = (image: string, overlap: boolean) => ({
-          'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'], 'text-max-width': 13,
-          'text-anchor': 'bottom', 'text-offset': [0, -1.6], 'text-allow-overlap': overlap, 'icon-allow-overlap': overlap,
-          'icon-image': image, 'icon-text-fit': 'both', 'icon-text-fit-padding': [5, 9, 5, 9], 'icon-anchor': 'bottom',
-        })
-        map.addLayer({ id: 'lvl-uni-card', type: 'symbol', source: 'lvl-unis', minzoom: 9, layout: cardLayout('cl-card', false) as never,
-          paint: { 'text-color': '#0A0A0A' } })
-        map.addLayer({ id: 'lvl-uni-card-selected', type: 'symbol', source: 'lvl-unis', filter: ['==', ['get', 'qid'], '__none__'],
-          layout: cardLayout('cl-card-sel', true) as never, paint: { 'text-color': '#FFFFFF' } })
-        layerIds.current = map.getLayersOrder()
-        countries.current = await loadCountries()
-        setSource(map, 'lvl-countries', countriesFC())
-        setVisible(map, (id) => layerVisibleAt('planet', id))
-        report({ level: 'planet', country: null, city: null })
-      })
+    const stop = () => { spinning.current = false; window.clearTimeout(idleTimer.current) }
+    const resume = () => { window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 5000) }
+    map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
+    map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
+    map.on('move', () => { onZoom?.(map.getZoom()); drawStars() })
 
-      const stop = () => { spinning.current = false; window.clearTimeout(idleTimer.current) }
-      const resume = () => {
-        window.clearTimeout(idleTimer.current)
-        idleTimer.current = window.setTimeout(() => { if (state.current.level === 'planet' && !motion.current && !busy.current) spinning.current = true }, 5000)
+    map.on('mousemove', 'unis-point', (e: MapMouseEvent) => {
+      const f = e.features?.[0]
+      if (!f || !markersOn.current) return
+      map.getCanvas().style.cursor = 'pointer'
+      const p = f.properties as HoverInfo
+      const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
+      onHover?.({ ...p, x: e.point.x, y: e.point.y, lon, lat })
+    })
+    map.on('mouseleave', 'unis-point', () => { map.getCanvas().style.cursor = ''; onHover?.(null) })
+    map.on('click', 'unis-point', (e: MapMouseEvent) => {
+      const f = e.features?.[0]
+      if (!f || !markersOn.current) return
+      const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
+      onSelect?.({ ...(f.properties as HoverInfo), x: e.point.x, y: e.point.y, lon, lat })
+    })
+    map.on('mouseenter', 'unis-cluster', () => { if (markersOn.current) map.getCanvas().style.cursor = 'pointer' })
+    map.on('mouseleave', 'unis-cluster', () => { map.getCanvas().style.cursor = '' })
+    map.on('click', 'unis-cluster', async (e: MapMouseEvent) => {
+      const f = e.features?.[0]
+      if (!f || !markersOn.current) return
+      const src = map.getSource('unis') as GeoJSONSource
+      const zoom = await src.getClusterExpansionZoom(f.properties!.cluster_id as number)
+      spinning.current = false
+      map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom: Math.min(zoom + 0.3, 9), duration: 900 })
+    })
+
+    let last = performance.now()
+    const spin = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      if (spinning.current && !motion.current && map.getZoom() < 3.2) {
+        const c = map.getCenter()
+        map.setCenter([c.lng + 3.0 * dt, c.lat])
       }
-      map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
-      map.on('mouseup', resume); map.on('touchend', resume)
-
-      // ---- picking: MapLibre's per-layer mouse events miss circles on the globe, so we query a small box ourselves
-      // and take the object nearest to the cursor
-      const PICK: Record<Level, string[]> = {
-        planet: ['lvl-country-bubble'],
-        country: ['lvl-city-bubble'],
-        city: ['lvl-uni-pin', 'lvl-uni-card', 'lvl-uni-card-selected'],
-        campus: [],
-      }
-      const pick = (pt: { x: number; y: number }, r: number) => {
-        const layers = PICK[state.current.level].filter((id) => map.getLayer(id))
-        if (!layers.length) return null
-        const hits = map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers })
-        let best: (typeof hits)[number] | null = null, bestD = Infinity
-        for (const f of hits) {
-          const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
-          const q = map.project([lon, lat])
-          const d = Math.hypot(q.x - pt.x, q.y - pt.y)
-          if (d < bestD) { bestD = d; best = f }
-        }
-        return best
-      }
-      const tr = (k: string) => props.current.t(k)
-      const cardFor = (f: NonNullable<ReturnType<typeof pick>>): { at: [number, number]; html: string } | null => {
-        const p = f.properties as Record<string, unknown>
-        const at = (f.geometry as GeoJSON.Point).coordinates as [number, number]
-        if (state.current.level === 'planet')
-          return { at, html: `<div class="clp"><div class="clp-t">${esc(String(p.name))}</div><div class="clp-s">${p.count} ${esc(tr('lvl.unis'))} · ${p.cities} ${esc(tr('lvl.cities'))}</div><div class="clp-h">${esc(tr('lvl.dblCountry'))}</div></div>` }
-        if (state.current.level === 'country')
-          return { at, html: `<div class="clp"><div class="clp-t">${esc(String(p.name) || '—')}</div><div class="clp-s">${p.count} ${esc(tr('lvl.unis'))}</div><div class="clp-h">${esc(tr('lvl.dblCity'))}</div></div>` }
-        const u = unisOf(state.current.city).find((x) => x.qid === String(p.qid))
-        return u && u.qid !== selected.current ? { at: [u.lon, u.lat], html: uniCard(u, state.current.city?.name ?? '', false) } : null
-      }
-      let hoverKey: string | null = null, hoverRaf = 0
-      let lastPt = { x: 0, y: 0 }
-      const onHover = () => {
-        hoverRaf = 0
-        if (busy.current || motion.current) return
-        const f = pick(lastPt, 7)
-        const key = f ? `${state.current.level}:${String(f.properties?.iso ?? f.properties?.id ?? f.properties?.qid)}` : null
-        map.getCanvas().style.cursor = f ? 'pointer' : ''
-        if (key === hoverKey) return
-        hoverKey = key
-        const card = f ? cardFor(f) : null
-        if (card) showPopup(map, card.at, card.html)
-        else if (selected.current) selectedCard(map)
-        else hidePopup()
-      }
-      map.on('mousemove', (e) => {
-        lastPt = e.point
-        if (state.current.level === 'planet' && spinning.current) { spinning.current = false; resume() }
-        if (!hoverRaf) hoverRaf = requestAnimationFrame(onHover)
-      })
-      map.on('mouseout', () => { hoverKey = null; resume(); map.getCanvas().style.cursor = ''; if (selected.current) selectedCard(map); else hidePopup() })
-      map.on('movestart', () => { hoverKey = null })
-
-      map.on('click', (e) => {
-        if (busy.current || state.current.level !== 'city') return
-        const f = pick(e.point, 9)
-        doSelect(map, f ? String(f.properties?.qid) : null)
-      })
-
-      // double click = one level deeper
-      map.on('dblclick', (e) => {
-        e.preventDefault()
-        if (busy.current || motion.current) return
-        const s = state.current
-        const f = pick(e.point, 12)
-        if (s.level === 'planet') {
-          const iso = (f?.properties?.iso as string | undefined) ?? countryAt(countries.current, e.lngLat.lat, e.lngLat.lng)?.iso
-          if (iso) later(() => void goCountry(iso))
-        } else if (s.level === 'country' && file.current) {
-          let city = f ? file.current.cities[Number(f.properties?.id)] : undefined
-          if (!city) {  // nearest city bubble on screen (≤ 70 px)
-            let best = 70
-            for (const c of file.current.cities) {
-              const p = map.project([c.lon, c.lat])
-              const d = Math.hypot(p.x - e.point.x, p.y - e.point.y)
-              if (d < best) { best = d; city = c }
-            }
-          }
-          if (city) { const target = city; later(() => void goCity(s.country, target)) }
-        } else if (s.level === 'city') {
-          if (!f) return
-          const qid = String(f.properties?.qid)
-          doSelect(map, qid)
-          const sel = selectionOf(qid)
-          if (sel) later(() => props.current.onOpenCampus?.(sel))
-        }
-      })
-
-      // zoom limits: pushing past the top of a level hints at the double click; pushing past the bottom goes up a level.
-      // "At the limit" = the wheel keeps turning but the zoom no longer changes (on the globe the effective limit
-      // depends on latitude, so comparing with getMinZoom() is not reliable).
-      let pushes = 0, pushDir = 0, lastZ = -1, resetTimer = 0, hintTimer = 0, quietUntil = 0
-      map.on('wheel', (e) => {
-        const s = state.current
-        if (busy.current || motion.current || s.level === 'campus') { quietUntil = performance.now() + 900; pushes = 0; return }
-        if (performance.now() < quietUntil) { quietUntil = performance.now() + 250; lastZ = -1; return }  // the same scroll gesture after a level change
-        const dy = (e.originalEvent as WheelEvent).deltaY
-        const dir = Math.sign(dy)
-        const z = map.getZoom()
-        // a free wheel step moves the zoom by ~0.2; at the limit it moves by (almost) nothing, even when bounds jitter it
-        const stuck = lastZ >= 0 && (dir > 0 ? lastZ - z < 0.02 : z - lastZ < 0.02)
-        lastZ = z
-        window.clearTimeout(resetTimer); resetTimer = window.setTimeout(() => { pushes = 0; lastZ = -1 }, 500)
-        if (!stuck || dir !== pushDir) { pushDir = dir; pushes = 0; return }
-        pushes++
-        if (dir < 0 && s.level !== 'city' && pushes >= 2) {
-          props.current.onHint?.('deeper')
-          window.clearTimeout(hintTimer); hintTimer = window.setTimeout(() => props.current.onHint?.(null), 2200)
-        } else if (dir > 0 && s.level !== 'planet') {
-          if (pushes >= 5) { pushes = 0; lastZ = -1; props.current.onHint?.(null); later(levelUp) }
-          else if (pushes >= 2) {
-            props.current.onHint?.('up')
-            window.clearTimeout(hintTimer); hintTimer = window.setTimeout(() => props.current.onHint?.(null), 2200)
-          }
-        }
-      })
-
-      let last = performance.now()
-      const tick = (now: number) => {
-        const dt = Math.min(0.05, (now - last) / 1000)
-        last = now
-        if (state.current.level === 'planet') {
-          if (spinning.current && !motion.current && !busy.current && map.getZoom() < 3.2) {
-            const c = map.getCenter()
-            map.setCenter([c.lng + 3.0 * dt, c.lat])
-          }
-          if (map.getZoom() < 7) drawStars()
-        } else if (map.getZoom() < 7) drawStars()
-        else if (stars.current && stars.current.width) { const g = stars.current.getContext('2d'); g?.clearRect(0, 0, stars.current.width, stars.current.height) }
-        raf = requestAnimationFrame(tick)
-      }
-      raf = requestAnimationFrame(tick)
+      if (map.getZoom() < 7) drawStars()
+      raf = requestAnimationFrame(spin)
+    }
+    raf = requestAnimationFrame(spin)
     }
 
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', onResize)
-      popup.current?.remove()
       map?.remove()
       mapRef.current = null
     }

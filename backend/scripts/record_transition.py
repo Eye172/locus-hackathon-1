@@ -25,13 +25,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--query", default="Назарбаев")
     ap.add_argument("--pick", default="Назарбаев Университет")
-    ap.add_argument("--seconds", type=float, default=12.0)
+    ap.add_argument("--seconds", type=float, default=9.0)
     args = ap.parse_args()
     tmp = OUT / "_rec"
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
+        browser = pw.chromium.launch(channel="chromium", headless=True, args=["--enable-gpu", "--use-angle=d3d11", "--ignore-gpu-blocklist"])
         ctx = browser.new_context(viewport={"width": 1280, "height": 720}, record_video_dir=str(tmp),
                                   record_video_size={"width": 1280, "height": 720}, locale="ru-RU")
         page = ctx.new_page()
@@ -60,12 +60,13 @@ def main() -> None:
     click_at = max(0.0, dur - args.seconds - (time.monotonic() - t_click - args.seconds) * 0)  # click happened `seconds` before the end
     click_at = max(0.0, dur - args.seconds)
     sheet = OUT / "transition_sheet.png"
+    sheet.unlink(missing_ok=True)  # never show a stale sheet when the labelled variant fails
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{click_at:.2f}", "-i", str(final),
-                    "-vf", "fps=2,scale=320:-1,drawtext=text='%{pts\\:hms}':x=6:y=6:fontsize=14:fontcolor=white:box=1:boxcolor=black@0.5,tile=6x4",
+                    "-vf", "fps=4,scale=320:-1,drawtext=text='%{pts\\:hms}':x=6:y=6:fontsize=14:fontcolor=white:box=1:boxcolor=black@0.5,tile=6x4",
                     "-frames:v", "1", str(sheet)], check=False)
     if not sheet.exists():
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{click_at:.2f}", "-i", str(final),
-                        "-vf", "fps=2,scale=320:-1,tile=6x4", "-frames:v", "1", str(sheet)], check=True)
+                        "-vf", "fps=4,scale=320:-1,tile=6x4", "-frames:v", "1", str(sheet)], check=True)
     print(f"video {final} ({dur:.1f}s), click at {click_at:.2f}s, sheet {sheet}; ready→click {t_click - t_ready:.2f}s")
 
 
