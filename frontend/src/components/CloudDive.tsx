@@ -10,14 +10,14 @@ import { useEffect, useRef } from 'react'
  */
 const VS = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`
 const FS = `precision highp float;
-uniform vec2 u_res; uniform float u_t; uniform float u_p0;
+uniform vec2 u_res; uniform float u_t; uniform float u_p0; uniform float u_s;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
 float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.02 + vec2(1.7, 9.2); a *= 0.5; } return v; }
 void main(){
-  float u_p = clamp((u_p0 - 0.34) / 0.66, 0.0, 1.0);   // cloud time starts after the pure approach
-  float gate = smoothstep(0.30, 0.42, u_p0);          // nothing is drawn while the planet is still growing
+  float u_p = clamp((u_p0 - u_s) / (1.0 - u_s), 0.0, 1.0);  // cloud time starts after the pure approach (u_s)
+  float gate = smoothstep(u_s - 0.04, u_s + 0.08, u_p0);      // nothing is drawn before that
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   float r = length(uv);
   vec2 sunp = vec2(0.38, 0.26);
@@ -58,15 +58,15 @@ void main(){
   gl_FragColor = vec4(outc * vig, alpha);
 }`
 
-interface GLState { gl: WebGLRenderingContext; uRes: WebGLUniformLocation | null; uT: WebGLUniformLocation | null; uP: WebGLUniformLocation | null }
+interface GLState { gl: WebGLRenderingContext; uRes: WebGLUniformLocation | null; uT: WebGLUniformLocation | null; uP: WebGLUniformLocation | null; uS: WebGLUniformLocation | null }
 
 /**
  * Always mounted: the shader is compiled (and warmed with a 1×1 draw) when the page loads, so starting a dive costs
  * nothing — the first run used to freeze the page for ~0.6 s exactly when the approach began. `run` > 0 starts a dive;
  * a new value restarts it; 0 stops and hides it.
  */
-export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
-  { run: number; duration?: number; onMid?: () => void; onWhite?: () => void; onDone?: () => void }) {
+export function CloudDive({ run, duration = 6200, cloudStart = 0.34, lite = false, onMid, onWhite, onDone }:
+  { run: number; duration?: number; cloudStart?: number; lite?: boolean; onMid?: () => void; onWhite?: () => void; onDone?: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const glRef = useRef<GLState | null>(null)
@@ -76,7 +76,7 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
   // one-time setup + warm-up
   useEffect(() => {
     const c = ref.current
-    if (!c) return
+    if (!c || lite) return  // weak GPU: no shader, the dive falls back to a white flash
     const gl = c.getContext('webgl', { antialias: false, premultipliedAlpha: false, alpha: true })
     if (!gl) return
     const sh = (t: number, s: string) => { const o = gl.createShader(t)!; gl.shaderSource(o, s); gl.compileShader(o); return o }
@@ -88,7 +88,7 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
     const loc = gl.getAttribLocation(prog, 'a'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-    const st: GLState = { gl, uRes: gl.getUniformLocation(prog, 'u_res'), uT: gl.getUniformLocation(prog, 'u_t'), uP: gl.getUniformLocation(prog, 'u_p0') }
+    const st: GLState = { gl, uRes: gl.getUniformLocation(prog, 'u_res'), uT: gl.getUniformLocation(prog, 'u_t'), uP: gl.getUniformLocation(prog, 'u_p0'), uS: gl.getUniformLocation(prog, 'u_s') }
     // the first full-screen frame (buffer allocation + lazy driver work) froze the page for ~0.4 s when the clouds
     // appeared; do it once now, while the globe is still loading, and keep the buffer sized from then on
     const size = () => {
@@ -97,14 +97,14 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
       gl.viewport(0, 0, c.width, c.height)
     }
     size()
-    gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, 0); gl.uniform1f(st.uP, 0.8)
+    gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, 0); gl.uniform1f(st.uP, 0.8); gl.uniform1f(st.uS, 0.34)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.finish()
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT)
     const ro = 'ResizeObserver' in window ? new ResizeObserver(size) : null
     ro?.observe(c)
     glRef.current = st
     return () => ro?.disconnect()
-  }, [])
+  }, [lite])
 
   // a dive
   useEffect(() => {
@@ -114,7 +114,7 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
     let raf = 0, midDone = false, whiteDone = false, doneDone = false, shown = false
     const t0 = performance.now()
     const finish = () => { if (!doneDone) { doneDone = true; w.style.opacity = '0'; cb.current.onDone?.() } }
-    const st = glRef.current
+    const st = lite ? null : glRef.current
     if (!st) {  // no WebGL: a plain white flash keeps the choreography intact
       w.style.background = '#fff'
       const a = window.setTimeout(() => { w.style.opacity = '1'; cb.current.onMid?.() }, duration * 0.74)
@@ -126,12 +126,12 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
     const draw = () => {
       const el = performance.now() - t0
       const p = Math.min(1, el / duration)
-      if (p >= 0.26) {  // nothing is visible before the clouds arrive: do not spend GPU time during the approach
+      if (p >= cloudStart - 0.08) {  // nothing is visible before the clouds arrive: do not spend GPU time during the approach
         if (!shown) { shown = true; w.style.opacity = '1' }
         const tail = Math.max(0, (el - duration) / 900)          // dissolve after the white-out
         w.style.opacity = String(Math.max(0, 1 - tail))
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT)
-        gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, el / 1000); gl.uniform1f(st.uP, p)
+        gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, el / 1000); gl.uniform1f(st.uP, p); gl.uniform1f(st.uS, cloudStart)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
         if (tail >= 1) { finish(); return }
       }
@@ -141,7 +141,7 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
     }
     raf = requestAnimationFrame(draw)
     return () => { cancelAnimationFrame(raf); w.style.opacity = '0' }
-  }, [run, duration])
+  }, [run, duration, cloudStart, lite])
 
   return (
     <div ref={wrap} className="absolute inset-0 z-30 pointer-events-none" style={{ opacity: 0 }}>
