@@ -28,8 +28,8 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
 export const heroUrl = (qid: string, id: string, src?: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg${src ? `?src=${encodeURIComponent(src)}` : ''}`
 export const depthUrl = (id: string) => `${API_BASE}/api/depth/${id}.png`
 
-export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
-  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void }) {
+export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true }:
+  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean }) {
   const t = useT()
   const lang = useLang()
   const [idx, setIdx] = useState(0)
@@ -46,25 +46,26 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
   }
   useEffect(() => {
     window.clearTimeout(timer.current)
-    if (n > 1) timer.current = window.setTimeout(() => go(idx + 1), HOLD_MS)
+    if (n > 1 && visible) timer.current = window.setTimeout(() => go(idx + 1), HOLD_MS)
     return () => window.clearTimeout(timer.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, n])
+  }, [idx, n, visible])
   useEffect(() => {  // warm the next frame so the cross-fade never waits for the network
     const nx = photos[(idx + 1) % n]
     if (nx) { new Image().src = heroUrl(qid, nx.id, nx.url); new Image().src = depthUrl(nx.id) }
   }, [idx, n, photos, qid])
   useEffect(() => {
+    if (!visible) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'ArrowRight') go(idx + 1); else if (e.key === 'ArrowLeft') go(idx - 1); else if (e.key === 'Escape') onMap() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, n])
+  }, [idx, n, visible])
 
   if (!cur) return null
   return (
-    <div className="absolute inset-0 z-40 bg-black select-none">
-      <div className="absolute inset-0 z-[60] bg-white pointer-events-none reveal-white" />
+    <div className={`absolute inset-0 z-40 bg-black select-none ${visible ? '' : 'opacity-0 pointer-events-none'}`} aria-hidden={!visible}>
+      {visible && <div className="absolute inset-0 z-[60] bg-white pointer-events-none reveal-white" />}
       {prev != null && photos[prev] && (
         <div className="absolute inset-0">
           <DepthPhoto key={`p-${photos[prev].id}`} src={heroUrl(qid, photos[prev].id, photos[prev].url)} depthSrc={depthUrl(photos[prev].id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" />

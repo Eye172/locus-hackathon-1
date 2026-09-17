@@ -19,7 +19,11 @@ void main(){
 }`
 
 function load(src: string): Promise<HTMLImageElement> {
-  return new Promise((res, rej) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = () => rej(new Error('img')); im.src = src })
+  return new Promise((res, rej) => {
+    const im = new Image(); im.crossOrigin = 'anonymous'
+    im.onload = () => { (im.decode ? im.decode() : Promise.resolve()).catch(() => undefined).then(() => res(im)) }  // decode off the main thread
+    im.onerror = () => rej(new Error('img')); im.src = src
+  })
 }
 
 export function DepthPhoto({ src, depthSrc, className, strength = 0.045, alt, cover = false, auto = false, onReady }:

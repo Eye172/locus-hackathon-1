@@ -27,10 +27,12 @@ export default function Globe() {
   const [cutscene, setCutscene] = useState<string | null>(null)
   const [heroPhotos, setHeroPhotos] = useState<Photo[]>([])
   const [reveal, setReveal] = useState(false)
+  const [revealArmed, setRevealArmed] = useState(false)
   const stopStream = useRef<(() => void) | null>(null)
   const [progress, setProgress] = useState<{ sources: number; photos: number; done: boolean } | null>(null)
   const peekSeq = useRef(0)
   const [dive, setDive] = useState(false)
+  const [diveRun, setDiveRun] = useState(0)
   const diveTarget = useRef<[number, number] | null>(null)
   const revealTimer = useRef<number | undefined>(undefined)
   const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
@@ -75,22 +77,26 @@ export default function Globe() {
     // 1. the planet turns to the university (space view)  2. the cloud dive covers the screen while the map zooms
     // 3. inside the white-out the map jumps to the campus  4. clouds clear, buildings rise  5. the arrival scene
     diveTarget.current = [c[1], c[0]]
-    await globe.current?.turnTo(c[1], c[0])
-    setDive(true)
-    globe.current?.diveZoom(c[1], c[0], 4500, 11.2)  // keeps growing until the deck is opaque (0.74 × 6.2 s)
+    // one continuous move: the turn decelerates while the approach already accelerates; the cloud dive starts with it
+    globe.current?.spinAndApproach(c[1], c[0], { approachMs: 4500, zoom: 11.2, onApproach: () => { setDive(true); setDiveRun((n) => n + 1) } })
   }
-  const onDiveMid = useCallback(() => { const d = diveTarget.current; if (d) globe.current?.landAt(d[0], d[1]) }, [])
   const heroRef = useRef<Photo[]>([])
   useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
+  const onDiveMid = useCallback(() => {
+    const d = diveTarget.current
+    if (d) globe.current?.landAt(d[0], d[1])
+    if (heroRef.current.length > 0) setRevealArmed(true)  // mount the scene hidden now: GL setup happens under the clouds
+  }, [])
   // white-out complete: the campus photo takes over directly (the map with its boxes stays behind the «3D map» button);
   // without photos yet, the clouds clear onto the 3D map while the profile keeps collecting
   const onDiveWhite = useCallback(() => {
     setPhase('arrived')
-    if (heroRef.current.length > 0) setReveal(true)
+    if (heroRef.current.length > 0) { setReveal(true); setRevealArmed(false) }
     else globe.current?.riseBuildings()
   }, [])
   const onDiveDone = useCallback(() => {
     setDive(false)
+    setDiveRun(0)
     if (heroRef.current.length === 0) revealTimer.current = window.setTimeout(() => setReveal(true), 900)
   }, [])
   // the planet turns towards the best match while typing — also for universities outside the local index
@@ -112,14 +118,14 @@ export default function Globe() {
     for (const p of heroPhotos.slice(0, 2)) { new Image().src = heroUrl(target.qid, p.id, p.url); new Image().src = depthUrl(p.id) }
   }, [heroPhotos, target])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setReveal(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
 
   return (
     <div className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} />
       <Clouds zoom={dive ? 0 : zoom} />
-      {dive && <CloudDive onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />}
+      <CloudDive run={diveRun} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />
 
       {phase === 'idle' && (
@@ -161,8 +167,8 @@ export default function Globe() {
         </div>
       )}
 
-      {reveal && phase === 'arrived' && target && heroPhotos.length > 0 && (
-        <CampusReveal qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => { setReveal(false); globe.current?.riseBuildings() }} />
+      {((reveal && phase === 'arrived') || revealArmed) && target && heroPhotos.length > 0 && (
+        <CampusReveal visible={reveal && phase === 'arrived'} qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => { setReveal(false); setRevealArmed(false); globe.current?.riseBuildings() }} />
       )}
       {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">

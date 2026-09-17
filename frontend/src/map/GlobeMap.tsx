@@ -10,6 +10,7 @@ export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
   peekAt: (lat: number, lon: number) => void
   turnTo: (lat: number, lon: number) => Promise<void>
+  spinAndApproach: (lat: number, lon: number, opts?: { approachMs?: number; zoom?: number; onApproach?: () => void }) => void
   setMarkers: (on: boolean) => void
   diveZoom: (lat: number, lon: number, ms?: number, zoom?: number) => void
   landAt: (lat: number, lon: number) => void
@@ -43,6 +44,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const mapRef = useRef<Map | null>(null)
   const spinning = useRef(true)
   const markersOn = useRef(true)
+  const motion = useRef(0)  // rAF id of the scripted camera move (turn + approach)
   const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
   const starField = useRef<{ x: number; y: number; r: number; a: number }[]>([])
@@ -77,7 +79,17 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     ctx.globalCompositeOperation = 'source-over'
   }
 
+  const flat = useRef(false)
+  const flattenBuildings = (map: Map) => {
+    if (flat.current || !map.getLayer(BUILDINGS)) return
+    flat.current = true
+    map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', 0)
+    map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', 0)
+    map.setLayerZoomRange(BUILDINGS, 13, 24)
+  }
+
   const animateBuildings = (map: Map) => {
+    flat.current = false
     if (!map.getLayer(BUILDINGS)) return
     const t0 = performance.now()
     const step = () => {
@@ -105,13 +117,53 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     if (!on) { map.getCanvas().style.cursor = ''; onHover?.(null) }
   }
 
+  const cancelMotion = () => { if (motion.current) cancelAnimationFrame(motion.current); motion.current = 0 }
+
   useImperativeHandle(ref, () => ({
     setMarkers: (on) => showMarkers(on),
+    // One continuous camera move, so the planet never visibly stops between the turn and the dive:
+    //  · rotation: eastward, half to one and a half revolutions, ease-in-out, ends exactly over the university;
+    //  · zoom: a short pull-back while the rotation speeds up, then one monotonic, accelerating approach that begins
+    //    while the rotation is still decelerating and runs straight into the cloud deck.
+    spinAndApproach: (lat, lon, opts = {}) => {
+      const map = mapRef.current
+      if (!map) return
+      const { approachMs = 4500, zoom: zTarget = 11.2, onApproach } = opts
+      cancelMotion()
+      map.stop()
+      spinning.current = false
+      window.clearTimeout(peekTimer.current)
+      showMarkers(false)
+      flattenBuildings(map)  // expensive style change: do it now, while buildings are out of view, not at the jump
+      const c0 = map.getCenter(), z0 = map.getZoom(), b0 = map.getBearing(), p0 = map.getPitch()
+      const east = (((lon - c0.lng) % 360) + 360) % 360
+      const dLng = east < 180 ? east + 360 : east
+      const spinMs = 1400 + dLng * 3.2                 // 180° → 2.0 s, 540° → 3.1 s
+      const zMid = Math.min(z0, 1.6)
+      const pullEnd = spinMs * 0.4                     // zoom stops pulling back where the rotation is fastest
+      const approachStart = spinMs * 0.65              // the dive begins while the planet is still turning
+      const total = approachStart + approachMs
+      let fired = false
+      const t0 = performance.now()
+      const step = (now: number) => {
+        const el = now - t0
+        const ts = Math.min(1, el / spinMs)
+        const e = easeInOut(ts)
+        const lng = c0.lng + dLng * e
+        let zoom: number
+        if (el < pullEnd) zoom = z0 + (zMid - z0) * easeInOut(el / pullEnd)
+        else zoom = zMid + (zTarget - zMid) * Math.pow(Math.min(1, (el - pullEnd) / (total - pullEnd)), 1.6)
+        map.jumpTo({ center: [((lng + 540) % 360) - 180, c0.lat + (lat - c0.lat) * e], zoom, bearing: b0 * (1 - e), pitch: p0 * (1 - e) })
+        if (!fired && el >= approachStart) { fired = true; onApproach?.() }
+        motion.current = el < total ? requestAnimationFrame(step) : 0
+      }
+      motion.current = requestAnimationFrame(step)
+    },
     getMap: () => mapRef.current,
     peekAt: (lat, lon) => {
       // while the user is still typing, the planet gently turns towards the best match (no zoom, no commitment)
       const map = mapRef.current
-      if (!map || map.getZoom() > 3.4) return
+      if (!map || motion.current || map.getZoom() > 3.4) return
       spinning.current = false
       map.easeTo({ center: [lon, lat], duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
       window.clearTimeout(peekTimer.current)
@@ -154,12 +206,9 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     landAt: (lat, lon) => {
       const map = mapRef.current
       if (!map) return
+      cancelMotion()
       map.stop()
-      if (map.getLayer(BUILDINGS)) {
-        map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', 0)
-        map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', 0)
-        map.setLayerZoomRange(BUILDINGS, 13, 24)
-      }
+      flattenBuildings(map)  // no-op when spinAndApproach already did it
       map.jumpTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17 })
     },
     riseBuildings: () => { const map = mapRef.current; if (map) animateBuildings(map) },
@@ -167,11 +216,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const map = mapRef.current
       if (!map) return resolve()
       spinning.current = false
-      if (map.getLayer(BUILDINGS)) {
-        map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', 0)
-        map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', 0)
-        map.setLayerZoomRange(BUILDINGS, 13, 24)
-      }
+      flattenBuildings(map)
       map.once('moveend', () => { animateBuildings(map); resolve() })
       map.flyTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17, duration: 3400, curve: 1.6, essential: true })
     }),
@@ -184,6 +229,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     resetToGlobe: () => {
       const map = mapRef.current
       if (!map) return
+      cancelMotion()
       map.flyTo({ center: HOME, zoom: 1.5, pitch: 0, bearing: 0, duration: 2000 })
       window.setTimeout(() => showMarkers(true, 900), 900)
       window.setTimeout(() => { spinning.current = true }, 2100)
