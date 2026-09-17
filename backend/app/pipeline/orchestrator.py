@@ -44,6 +44,7 @@ STAGES = [
     ("inspect", "ИИ-инспектор: проверка каждого фото"),
     ("analyze", "Уверенность, дубли, отбор"),
     ("assemble", "Сборка профиля"),
+    ("deep", "Полный обход соцсетей"),
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
 HARD_CAP_S = 29.0  # the case asks for a useful profile within 30 s: nothing optional may push past this
@@ -70,6 +71,10 @@ class Run:
         self.inspector: Inspector | None = None
         self.ref_emb: np.ndarray | None = None
         self.reference: dict | None = None
+        self.deep = settings.deep_pass
+        self.description = None
+        self.context = None
+        self.collect_deadline = self.deadline
 
     # ---------- helpers ----------
     def ms(self) -> int:
@@ -355,7 +360,7 @@ class Run:
                          "elapsed_ms": self.ms()})
 
         self.campus_task = asyncio.create_task(self.resolve_campus())
-        context_task = asyncio.create_task(context_mod.build(self.uni, self.campus))
+        self.context_task = asyncio.create_task(context_mod.build(self.uni, self.campus))
         asyncio.create_task(vision.warmup())
         if settings.active_llm() != "none":
             self.inspector = Inspector(self.uni, self.describe_for_ai)
@@ -453,6 +458,18 @@ class Run:
         else:
             await self.stage("inspect", "skipped", detail="нет ключа LLM: только CLIP и сигналы источников")
 
+        profile = await self.finalize(final=not self.deep)
+        if self.deep:
+            try:
+                await self.deepen()
+            except Exception as e:  # noqa: BLE001
+                self.logf(f"deep pass failed: {e!r}")
+                await self.stage("deep", "error", detail=f"{type(e).__name__}")
+            profile = await self.finalize(final=True)
+        return profile
+
+    # ---------- assembly (runs once for the fast profile, once more after the deep pass) ----------
+    async def finalize(self, final: bool = True) -> Profile:
         # ---------- analysis over the full set (cross-source signals need everything) ----------
         await self.stage("analyze", "running")
         reps = dedup.merge_exact(self.fetched)
@@ -492,16 +509,20 @@ class Run:
         walk = sorted([p for p in kept + rejected if p.source == "mapillary"
                        and (not p.rejected or (p.reject_reason or "").startswith(("низкая уверенность", "малоинформативный")))],
                       key=lambda p: p.date or "")
-        try:
-            context = await asyncio.wait_for(context_task, timeout=max(0.3, self.until(HARD_CAP_S - 3.0)))
-        except Exception:
-            context = None
+        if self.context is None:
+            try:
+                self.context = await asyncio.wait_for(self.context_task, timeout=max(0.3, self.until(HARD_CAP_S - 3.0)))
+            except Exception:
+                self.context = None
+        context = self.context
         stats = {"verified": n_verified, "likely": sum(s.likely for s in cats.values()),
                  "sources": len({s for p in kept for s in p.sources}),
                  "weak": [c for c in CATEGORIES if coverage[c] in ("weak", "none") and c != "city"],
                  "per_category": {c: {"verified": s.verified, "likely": s.likely} for c, s in cats.items()}}
-        description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
-                                           timeout=min(6.0, self.until(HARD_CAP_S - 0.7)))
+        if self.description is None:
+            self.description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
+                                                    timeout=min(6.0, self.until(HARD_CAP_S - 0.7)))
+        description = self.description
         profile = Profile(
             university=self.uni, campus=self.campus, photos=kept, rejected=rejected, categories=cats,
             coverage=coverage, description=description, context=context, walk=walk,
@@ -515,8 +536,51 @@ class Run:
         profile.elapsed_ms = self.ms()
         await cache.save_profile(profile)
         self.logf(f"profile ready: {len(kept)} photos, {len(rejected)} rejected, {self.ms()} ms")
-        await self.emit({"type": "profile", "profile": profile.model_dump(), "elapsed_ms": self.ms()})
+        await self.emit({"type": "profile", "profile": profile.model_dump(), "final": final, "elapsed_ms": self.ms()})
         return profile
+
+    # ---------- deep pass ----------
+    async def deepen(self) -> None:
+        """Everything the 25-second budget had to leave on the table.
+
+        The fast profile is already on screen, so from here the limits come off: every slideshow photo TikTok's own
+        search returns, frames from many more clips, the university's whole Instagram grid and every post that tags
+        it. New photos stream into the open page as they pass the inspector, and the profile is rebuilt at the end.
+        Nothing is prepared beforehand - this is still the same request, it just keeps going after the first answer."""
+        if "instagram" not in {n for n, st in settings.sources_status().items() if st["enabled"]}:
+            await self.stage("deep", "skipped", detail="нет ключа для соцсетей")
+            return
+        await self.stage("deep", "running")
+        self.deadline = time.monotonic() + settings.deep_budget_s
+        self.collect_deadline = self.deadline - 6.0
+        if self.inspector:
+            # photos that hit the fast pass's cap were dropped without a verdict, and a search hit without one is
+            # not shown at all: with the cap lifted they get their look now
+            self.inspector.cap = settings.inspect_max_photos_deep
+            self.inspector.submit([f for f in self.fetched
+                                   if f.id not in self.inspector.verdicts and self.clf[f.id]["junk_total"] < 0.97])
+        v, n = settings.deep_videos, settings.deep_per_source
+        factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
+            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v), n),
+            "tiktok_hashtag": (lambda: social_api.tiktok_hashtag(self.uni, n, v), n),
+            "tiktok_search": (lambda: social_api.tiktok_search(self.uni, n, v), n),
+        }
+        ig = self.uni.social.get("instagram")
+        if ig:
+            factories["instagram"] = (lambda: social_api.instagram_posts(ig, n), n)
+            factories["instagram_tagged"] = (lambda: social_api.instagram_tagged(ig, n), n)
+        tt = self.uni.social.get("tiktok")
+        if tt:
+            factories["tiktok"] = (lambda: social_api.tiktok_videos(tt, n, v), n)
+        tasks = {asyncio.create_task(self.source_pipeline(f"{name}", f(), lim), name=name): name
+                 for name, (f, lim) in factories.items()}
+        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.collect_deadline + 2.0 - time.monotonic(), 5.0))
+        for t in pending:
+            t.cancel()
+        if self.inspector:
+            await self.inspector.finish(timeout=max(3.0, self.deadline - time.monotonic()))
+            self.logf(f"deep pass: inspector judged {len(self.inspector.verdicts)} photos in total")
+        await self.stage("deep", "done", count=len(self.fetched), detail=f"кандидатов всего: {len(self.fetched)}")
 
 
 async def run(qid: str, emit: Emit) -> Profile:

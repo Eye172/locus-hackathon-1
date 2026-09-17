@@ -40,6 +40,8 @@ export default function Profile() {
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [cached, setCached] = useState(false)
+  // the first profile is the fast one; the pipeline keeps going through the social networks and sends it again
+  const [searching, setSearching] = useState(false)
   const [run, setRun] = useState(0)
   const refresh = params.get('refresh') === '1'
 
@@ -59,15 +61,16 @@ export default function Profile() {
   }, [tab, ctx, profile, qid])
 
   useEffect(() => {
-    setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false)
+    setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false); setSearching(false)
     const close = streamProfile(qid, refresh, {
       onStage: (s, e) => { setStages((st) => ({ ...st, [s.key]: s })); setElapsed(e) },
       onUniversity: (u, c) => { setUni(u); setCampus(c) },
       onCampus: (c, u) => { setCampus(c); setUni(u) },
       onSource: (name, s, e) => { setSources((ss) => ({ ...ss, [name]: s })); setElapsed(e) },
       onPhotos: (_src, photos) => setPrelim((pp) => { const ids = new Set(pp.map((p) => p.id)); return [...pp, ...photos.filter((p) => !ids.has(p.id))] }),
-      onProfile: (p, c) => {
+      onProfile: (p, c, final) => {
         setProfile(p); setUni(p.university); setCampus(p.campus ?? null); setCached(c); setElapsed(p.elapsed_ms)
+        setSearching(!final)
         setStages((st) => (Object.keys(st).length ? st : Object.fromEntries(p.stages.map((s) => [s.key, s]))))
         setSources((ss) => (Object.keys(ss).length ? ss : p.sources_status))
         if (refresh) setParams({})
@@ -161,6 +164,7 @@ export default function Profile() {
                   <CoverageDot level={profile.coverage.overall} />
                   <span>{t('profile.coverage')}: {coverageLabel(profile.coverage.overall, lang)}</span>
                   <span className="mono text-muted">· {(profile.elapsed_ms / 1000).toFixed(1)} s{cached ? ` · ${t('profile.cached')}` : ''}</span>
+                  {searching && <span className="mono text-muted animate-pulse">· {t('profile.searchingMore')}</span>}
                 </div>
               )}
             </div>

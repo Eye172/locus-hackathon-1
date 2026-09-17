@@ -20,6 +20,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
+from itertools import zip_longest
 
 from ... import cache, http
 from ...config import settings
@@ -39,6 +40,9 @@ def handle_of(url: str | None) -> str | None:
 
 
 def _date(ts) -> str | None:
+    """Epoch seconds (feed endpoints) or an ISO timestamp (top search)."""
+    if isinstance(ts, str) and len(ts) >= 10 and ts[:4].isdigit():
+        return ts[:10]
     try:
         return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
     except (TypeError, ValueError, OSError):
@@ -165,7 +169,38 @@ def _page(a: dict) -> tuple[str, str, str]:
     return author, f"https://www.tiktok.com/@{author}/video/{a.get('aweme_id') or a.get('id')}",         " ".join((a.get("desc") or "").split())
 
 
-async def _tiktok_frames(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
+def _photo_posts(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
+    """TikTok's "Photo" tab: slideshow posts. These are already photographs - no cover, no frame extraction - and
+    they are where a student posts a set of stills of the campus instead of a clip."""
+    out: list[PhotoCandidate] = []
+    by_author: dict[str, int] = {}
+    for raw in awemes:
+        a = _aweme(raw)
+        # top search returns a slideshow as plain urls; the feed endpoints wrap them in image_post_info
+        urls = [u for u in (a.get("images") or []) if isinstance(u, str)]
+        if not urls:
+            urls = [u for im in ((a.get("image_post_info") or {}).get("images") or [])
+                    if (u := _jpeg(im.get("display_image")))]
+        author, page, desc = _page(a)
+        if not urls or by_author.get(author, 0) >= PER_AUTHOR * 2:
+            continue
+        for k, u in enumerate(urls[:SLIDES]):
+            by_author[author] = by_author.get(author, 0) + 1
+            out.append(PhotoCandidate(
+                url=u, page_url=page, source=source,
+                title=(f"TikTok @{author}: {desc[:80]}" if desc else f"TikTok @{author}"),
+                text=f"{desc} @{author}", author=f"@{author}",
+                license="© автор публикации в TikTok (превью со ссылкой на пост)",
+                date=_date(a.get("create_time")), date_source="post" if a.get("create_time") else None,
+                collector=f"tiktok:photo{k}",
+            ))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+async def _tiktok_frames(awemes: list[dict], source: str, limit: int,
+                         max_videos: int | None = None) -> list[PhotoCandidate]:
     """Frames from inside the videos. The cover is a designed poster; the footage behind it is the campus."""
     picked: list[dict] = []
     seen_authors: set[str] = set()
@@ -180,7 +215,7 @@ async def _tiktok_frames(awemes: list[dict], source: str, limit: int) -> list[Ph
             continue          # eight different students beat eight clips by one of them
         seen_authors.add(author)
         picked.append(a)
-        if len(picked) >= MAX_VIDEOS:
+        if len(picked) >= (max_videos or MAX_VIDEOS):
             break
     if not picked:
         return []
@@ -231,27 +266,49 @@ def _tiktok_items(awemes: list[dict], source: str, limit: int) -> list[PhotoCand
     return out[:limit]
 
 
-async def _videos_and_frames(awemes: list[dict], source: str, limit: int) -> list[PhotoCandidate]:
-    """Photo carousels as they are, plus frames from the clips; covers only when ffmpeg is missing."""
+async def _videos_and_frames(awemes: list[dict], source: str, limit: int,
+                             max_videos: int | None = None) -> list[PhotoCandidate]:
+    """Slideshow photos first, then frames from inside the clips, then covers as the fallback."""
+    photos = _photo_posts(awemes, source, limit)
     items = _tiktok_items(awemes, source, limit)
     if not video_frames.available():
-        return items
-    frames = await _tiktok_frames(awemes, source, limit)
-    return (frames + items)[:limit] if frames else items
+        return (photos + items)[:limit]
+    frames = await _tiktok_frames(awemes, source, limit, max_videos)
+    # alternate: one long slideshow would otherwise fill the whole quota and no clip would be opened at all
+    mixed: list[PhotoCandidate] = []
+    for a, b in zip_longest(photos, frames):
+        mixed += [c for c in (a, b) if c is not None]
+    return (mixed + items)[:limit]
 
 
-async def tiktok_videos(url: str, limit: int = 16) -> list[PhotoCandidate]:
+async def tiktok_videos(url: str, limit: int = 16, max_videos: int | None = None) -> list[PhotoCandidate]:
     h = handle_of(url)
     j = await _sc("/v3/tiktok/profile/videos", handle=h) if h else None
-    return await _videos_and_frames((j or {}).get("aweme_list") or [], "tiktok", limit)
+    return await _videos_and_frames((j or {}).get("aweme_list") or [], "tiktok", limit, max_videos)
 
 
-async def tiktok_search(uni: University, limit: int = 12) -> list[PhotoCandidate]:
+async def tiktok_search(uni: University, limit: int = 12, max_videos: int | None = None) -> list[PhotoCandidate]:
     q = uni.names.get("en") or uni.name
     if len(q) < 6:
         return []
     j = await _sc("/v1/tiktok/search/keyword", query=q)
-    return await _videos_and_frames((j or {}).get("search_item_list") or [], "tiktok_search", limit)
+    return await _videos_and_frames((j or {}).get("search_item_list") or [], "tiktok_search", limit, max_videos)
+
+
+async def tiktok_top(uni: University, limit: int = 14, max_videos: int | None = None) -> list[PhotoCandidate]:
+    """TikTok's own "Top" search - the ranking a student sees when they type the university, and the only endpoint
+    that also returns the slideshow posts of the Photo tab."""
+    qs = [q for q in dict.fromkeys([uni.names.get("en") or uni.name, uni.names.get("ru") or uni.name]) if len(q) >= 6]
+    found = await asyncio.gather(*[_sc("/v1/tiktok/search/top", query=q) for q in qs[:2]])
+    seen: set[str] = set()
+    uniq: list[dict] = []
+    for j in found:
+        for it in (j or {}).get("items") or []:
+            key = str(it.get("id") or it.get("aweme_id"))
+            if key not in seen:
+                seen.add(key)
+                uniq.append(it)
+    return await _videos_and_frames(uniq, "tiktok_top", limit, max_videos)
 
 
 def _tag(name: str | None) -> str:
@@ -277,13 +334,13 @@ def hashtags(uni: University) -> list[str]:
     return (out[:1] + short[:1]) or out[:2]
 
 
-async def tiktok_hashtag(uni: University, limit: int = 16) -> list[PhotoCandidate]:
+async def tiktok_hashtag(uni: University, limit: int = 16, max_videos: int | None = None) -> list[PhotoCandidate]:
     """Videos under the university's own hashtag - posted by students, not by the press office."""
     tags = hashtags(uni)
     if not tags:
         return []
     found = await asyncio.gather(*[_sc("/v1/tiktok/search/hashtag", hashtag=t) for t in tags])
-    lists = await asyncio.gather(*[_videos_and_frames((j or {}).get("aweme_list") or [], "tiktok_hashtag", limit)
+    lists = await asyncio.gather(*[_videos_and_frames((j or {}).get("aweme_list") or [], "tiktok_hashtag", limit, max_videos)
                                    for j in found if (j or {}).get("aweme_list")])
     # the long form is precise, the abbreviation is where the students are: take from both, not all of the first
     out: list[PhotoCandidate] = []

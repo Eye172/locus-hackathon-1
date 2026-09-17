@@ -85,7 +85,7 @@ export interface StreamHandlers {
   onCampus?: (c: Campus, u: University) => void
   onSource?: (name: string, s: SourceStatus, elapsed: number) => void
   onPhotos?: (source: string, photos: Photo[], rejected: number) => void
-  onProfile?: (p: Profile, cached: boolean) => void
+  onProfile?: (p: Profile, cached: boolean, final: boolean) => void
   onError?: (message: string, log: string[]) => void
 }
 
@@ -101,7 +101,13 @@ export function streamProfile(qid: string, refresh: boolean, h: StreamHandlers):
     h.onSource?.(d.name, { status: d.status, count: d.count, ms: d.ms, detail: d.detail, label: d.label }, d.elapsed_ms)
   })
   es.addEventListener('photos', (e) => { const d = parse(e as MessageEvent); h.onPhotos?.(d.source, d.photos, d.rejected) })
-  es.addEventListener('profile', (e) => { const d = parse(e as MessageEvent); h.onProfile?.(d.profile, !!d.cached); es.close() })
+  // the profile arrives more than once: the cached one (if any), the fast one, then the full one after the
+  // deep pass through the social networks. Only the final event closes the stream.
+  es.addEventListener('profile', (e) => {
+    const d = parse(e as MessageEvent)
+    h.onProfile?.(d.profile, !!d.cached, d.final !== false)
+    if (d.final !== false) es.close()
+  })
   es.addEventListener('error', (e) => {
     const me = e as MessageEvent
     if (me.data) { const d = parse(me); h.onError?.(d.message, d.log ?? []) } else if (es.readyState === EventSource.CLOSED) { h.onError?.('Соединение прервано', []) }

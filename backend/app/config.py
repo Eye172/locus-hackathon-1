@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     fetch_concurrency: int = 10
     max_candidates: int = 90
     max_per_source: int = 40
+    # Second pass. The fast profile answers the case's 30 s; this one keeps collecting from the social
+    # networks afterwards and updates the same profile in the open page.
+    deep_pass: bool = True
+    deep_budget_s: float = 55.0
+    deep_per_source: int = 40
+    deep_videos: int = 10          # clips opened per social source (a download plus two ffmpeg seeks each)
 
     # Vision
     clip_model: str = "ViT-B-32"
@@ -61,6 +67,7 @@ class Settings(BaseSettings):
     inspect_batch: int = 12
     inspect_concurrency: int = 3            # the free Gemini tier answers 429 above ~15 requests a minute
     inspect_max_photos: int = 150
+    inspect_max_photos_deep: int = 400   # the deep pass keeps judging after the fast profile is on screen
     inspect_max_street: int = 10      # Mapillary/Flickr street frames: few are informative, they mostly feed the walk tab
     inspect_timeout_s: float = 12.0
     depth_warmup: bool = True

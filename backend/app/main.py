@@ -125,11 +125,14 @@ def _sse(ev: dict) -> dict:
 @app.get("/api/profile/{qid}/stream")
 async def stream_profile(qid: str, refresh: bool = False):
     async def gen():
+        # A profile is never served as the answer just because it is in the cache: the case is "find it now", and a
+        # university that was opened yesterday has posted since. What the cache is good for is the wait - it goes out
+        # first, marked as the previous run, and the live build replaces it the moment it is ready.
         if not refresh:
             cached = await cache.get_profile(qid)
             if cached:
-                yield _sse({"type": "profile", "profile": cached.model_dump(), "cached": True, "elapsed_ms": 0})
-                return
+                yield _sse({"type": "profile", "profile": cached.model_dump(), "cached": True, "final": False,
+                            "elapsed_ms": 0})
         queue: asyncio.Queue = asyncio.Queue()
 
         async def emit(ev: dict) -> None:
@@ -141,7 +144,9 @@ async def stream_profile(qid: str, refresh: bool = False):
             while True:
                 ev = await queue.get()
                 yield _sse(ev)
-                if ev["type"] in ("profile", "error"):
+                # the pipeline sends the fast profile, then keeps going through the social networks and sends it
+                # again; the stream closes on the one marked final
+                if ev["type"] == "error" or (ev["type"] == "profile" and ev.get("final", True)):
                     break
         finally:
             _running.pop(qid, None)

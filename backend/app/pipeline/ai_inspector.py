@@ -115,6 +115,7 @@ class Inspector:
         self.submitted: set[str] = set()
         self.tasks: set[asyncio.Task] = set()
         self.sem = asyncio.Semaphore(settings.inspect_concurrency)
+        self.cap = settings.inspect_max_photos
         self.ref_b64: str | None = None
         self.ref_ready = asyncio.Event()
         self.calls = self.tokens_in = self.tokens_out = self.errors = self.cached = 0
@@ -129,7 +130,7 @@ class Inspector:
     # ---------- queue ----------
     def submit(self, items: list[Fetched]) -> None:
         new = [f for f in items if f.id not in self.submitted]
-        room = settings.inspect_max_photos - len(self.submitted)
+        room = self.cap - len(self.submitted)
         new = new[:max(0, room)]
         if not new:
             return
