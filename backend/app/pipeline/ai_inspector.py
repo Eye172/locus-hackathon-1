@@ -220,11 +220,16 @@ class Inspector:
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": gen}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         r = None
-        for attempt in range(2):
+        for attempt in range(3):
             r = await http.post(url, json=body, headers={"x-goog-api-key": settings.gemini_api_key},
                                 timeout=settings.inspect_timeout_s)
-            if r.status_code in (429, 500, 503) and attempt == 0:
-                await asyncio.sleep(1.0)
+            if r.status_code in (429, 500, 503) and attempt < 2:
+                # rate limit or overload: wait as asked (free tier) or back off, then try again
+                try:
+                    wait = float(r.headers.get("retry-after", ""))
+                except ValueError:
+                    wait = 2.0 * (attempt + 1)
+                await asyncio.sleep(min(wait, 6.0))
                 continue
             break
         r.raise_for_status()

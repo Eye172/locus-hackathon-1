@@ -29,7 +29,7 @@ from . import enrich as enrich_mod
 from .ai_inspector import Inspector
 from .fetch import Fetched, fetch_all
 from .fetch import photo_id as fetch_id
-from .sources import social, commons, flickr, mapillary, official_site, places, wikipedia
+from .sources import social, social_api, commons, flickr, mapillary, official_site, places, web_images, wikipedia
 from .verify import CITY_SOURCES, REJECT_FLAGS, VerifyContext, score
 
 log = logging.getLogger("campuslens.orchestrator")
@@ -45,7 +45,8 @@ STAGES = [
     ("assemble", "Сборка профиля"),
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
-SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "vk"}  # wait for the official site (links), then fetch
+HARD_CAP_S = 29.0  # the case asks for a useful profile within 30 s: nothing optional may push past this
+SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "tiktok", "vk"}  # wait for the official site (links), then fetch
 
 
 class Run:
@@ -75,6 +76,10 @@ class Run:
 
     def remaining(self) -> float:
         return max(0.0, self.deadline - time.monotonic())
+
+    def until(self, t_s: float) -> float:
+        """Seconds left until t_s after the start (never negative)."""
+        return max(0.0, self.t0 + t_s - time.monotonic())
 
     def logf(self, s: str) -> None:
         self.log.append(f"[{self.ms():>6} ms] {s}")
@@ -164,7 +169,9 @@ class Run:
             geo = ("inside the campus outline" if self.vctx.geom.mode == "polygon" else "within 500 m of the university point") \
                 if d == 0 else f"{d:.0f} m from the campus"
         kind = "city article/category (photo of the city)" if c.is_city or c.source in CITY_SOURCES else SOURCE_LABELS.get(c.source, c.source)
-        return f"source={kind}; caption={cap!r}; page={page}; geotag={geo}; size={f.width}x{f.height}; date={c.date or f.exif_date or '?'}"
+        found = f"; found by image search {c.collector.split(':', 1)[1]!r}" if (c.collector or "").startswith("google:") else ""
+        return (f"source={kind}{found}; caption={cap!r}; page={page}; geotag={geo}; size={f.width}x{f.height}; "
+                f"date={c.date or f.exif_date or '?'}")
 
     async def load_reference(self) -> None:
         """A trusted photo of the main building (Wikidata P18, else the Wikipedia lead image) for the inspector."""
@@ -247,7 +254,10 @@ class Run:
     # ---------- source pipelines ----------
     async def source_pipeline(self, name: str, coro, limit: int) -> None:
         t = time.monotonic()
-        timeout = settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0) + (9.0 if name in SOCIAL_SOURCES else 0)
+        # the official site is the richest source and the slowest (homepage + 8 subpages): it gets 4 s more
+        timeout = (settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
+                   + (9.0 if name in SOCIAL_SOURCES else 0) + (4.0 if name == "official" else 0)
+                   + (6.0 if name in ("web_image", "tiktok_search", "youtube_search") else 0))
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -261,7 +271,7 @@ class Run:
             await self.source_event(name, "done", count=0, ms=int((time.monotonic() - t) * 1000), detail="ничего не найдено")
             return
         await self.source_event(name, "fetching", count=len(cands), ms=int((time.monotonic() - t) * 1000))
-        fetch_deadline = max(self.deadline, time.monotonic() + 5.0)
+        fetch_deadline = self.collect_deadline
         fetched = await fetch_all(cands, deadline=fetch_deadline, limit=limit)
         self.logf(f"{name}: {len(cands)} candidates -> {len(fetched)} usable images")
         if fetched:
@@ -353,26 +363,37 @@ class Run:
         per = settings.max_per_source
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
-            if name in ("mapillary", "flickr", "places", "vk") and not st["enabled"]:
+            if name in ("mapillary", "flickr", "places", "vk", "web_image", "instagram", "tiktok", "tiktok_search",
+                        "youtube_search") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
         def bbox_pad() -> list[float]:
             return self.vctx.geom.bbox(pad_m=120)
 
+        self.collect_deadline = self.deadline - (6.0 if self.inspector else 1.5)
         self.official_done = asyncio.Event()
         factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
             "official": (lambda: self.official_then(official_site.collect(self.uni)), per),
-            "telegram": (lambda: self.after_official("telegram", social.telegram), 30),
-            "youtube": (lambda: self.after_official("youtube", social.youtube), 15),
-            "instagram": (lambda: self.after_official("instagram", social.instagram), 24),
+            "telegram": (lambda: self.after_official("telegram", social.telegram), 20),
+            "youtube": (lambda: self.after_official("youtube", social.youtube), 12),
             "commons_cat": (lambda: self.commons_bundle("commons_cat"), per),
             "commons_depicts": (lambda: self.commons_bundle("commons_depicts"), 20),
             "wikipedia": (lambda: self.commons_bundle("wikipedia"), 20),
             "city_article": (lambda: self.city_bundle(), 14),
-            "commons_geo": (lambda: self.after_campus(self.commons_geo), 30),
+            "commons_geo": (lambda: self.after_campus(self.commons_geo), 20),
+            "commons_search": (lambda: web_images.commons_search(self.uni), 15),
+            "openverse": (lambda: web_images.openverse(self.uni), 10),
         }
+        if "web_image" in enabled:
+            factories["web_image"] = (lambda: web_images.google_images(self.uni), 45)
+        if "instagram" in enabled:
+            factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 16)
+            factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
+            factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 8)
+        if "youtube_search" in enabled:
+            factories["youtube_search"] = (lambda: social_api.youtube_search(self.uni), 8)
         if "mapillary" in enabled:
-            factories["mapillary"] = (lambda: self.after_campus(lambda: mapillary.collect(bbox_pad(), 30)), 30)
+            factories["mapillary"] = (lambda: self.after_campus(lambda: mapillary.collect(bbox_pad(), 20)), 15)
         if "flickr" in enabled:
             factories["flickr"] = (lambda: self.after_campus(lambda: flickr.collect(bbox_pad(), 30)), 30)
         if "places" in enabled:
@@ -387,9 +408,9 @@ class Run:
 
         # CLIP loads lazily inside embed(); at server start it is already warm, so collection begins immediately
         tasks = {asyncio.create_task(self.source_pipeline(n, f(), lim), name=n): n for n, (f, lim) in factories.items()}
-        # sources get the budget minus a reserve for the inspector's last batches and the assembly
-        reserve = 6.0 if self.inspector else 1.5
-        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.remaining() - reserve, 3.0))
+        # downloads stop at collect_deadline (the budget minus a reserve for the inspector and the assembly) and keep
+        # what has arrived; sources then get 2 s to embed and hand their images over before they are cancelled
+        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.collect_deadline + 2.0 - time.monotonic(), 3.0))
         for t in pending:
             t.cancel()
             self.partial = True
@@ -411,7 +432,7 @@ class Run:
             pass
         if self.inspector:
             await self.stage("inspect", "running")
-            await self.inspector.finish(timeout=max(4.0, self.remaining() + 2.0))
+            await self.inspector.finish(timeout=max(2.0, self.until(HARD_CAP_S - 3.5)))
             st = self.inspector.stats()
             self.logf(f"inspector {st['model']}: {st['photos']}/{len(self.fetched)} photos judged "
                       f"({st['cached']} from cache, {st['calls']} calls, {st['tokens_in']}+{st['tokens_out']} tokens, "
@@ -463,7 +484,7 @@ class Run:
                        and (not p.rejected or (p.reject_reason or "").startswith(("низкая уверенность", "малоинформативный")))],
                       key=lambda p: p.date or "")
         try:
-            context = await asyncio.wait_for(context_task, timeout=max(1.0, self.remaining()))
+            context = await asyncio.wait_for(context_task, timeout=max(0.3, self.until(HARD_CAP_S - 3.0)))
         except Exception:
             context = None
         stats = {"verified": n_verified, "likely": sum(s.likely for s in cats.values()),
@@ -471,7 +492,7 @@ class Run:
                  "weak": [c for c in CATEGORIES if coverage[c] in ("weak", "none") and c != "city"],
                  "per_category": {c: {"verified": s.verified, "likely": s.likely} for c, s in cats.items()}}
         description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
-                                           timeout=max(3.0, min(9.0, self.remaining() + 2.0)))
+                                           timeout=min(6.0, self.until(HARD_CAP_S - 0.7)))
         profile = Profile(
             university=self.uni, campus=self.campus, photos=kept, rejected=rejected, categories=cats,
             coverage=coverage, description=description, context=context, walk=walk,

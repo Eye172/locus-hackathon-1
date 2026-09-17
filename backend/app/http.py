@@ -31,7 +31,7 @@ def _make(verify: bool) -> httpx.AsyncClient:
         follow_redirects=True,
         headers=DEFAULT_HEADERS,
         verify=verify,
-        limits=httpx.Limits(max_connections=60, max_keepalive_connections=20),
+        limits=httpx.Limits(max_connections=120, max_keepalive_connections=40),
     )
 
 

@@ -32,7 +32,11 @@ SOURCE_PRIOR: dict[str, float] = {
     "commons_geo": 0.20,
     "city_article": 0.45,
     "city_cat": 0.35,
-    "web_image": 0.10,
+    "web_image": 0.20,
+    "commons_search": 0.20,
+    "openverse": 0.15,
+    "tiktok_search": 0.10,
+    "youtube_search": 0.15,
 }
 SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "commons_depicts": "Structured data Commons: «изображает» этот вуз",
@@ -46,13 +50,18 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "city_article": "Файл используется в статье о городе",
     "city_cat": "Файл в категории города на Commons",
     "telegram": "Пост в официальном Telegram-канале вуза (ссылка с сайта)",
-    "instagram": "Публикация в официальном Instagram вуза",
+    "instagram": "Публикация в официальном Instagram вуза (ссылка с сайта)",
     "vk": "Пост в официальной группе VK вуза",
-    "tiktok": "Видео в официальном TikTok вуза",
+    "tiktok": "Видео в официальном TikTok вуза (ссылка с сайта)",
     "youtube": "Кадр видео с официального YouTube-канала вуза",
-    "web_image": "Найдено поиском картинок",
+    "web_image": "Google Картинки по запросу с названием вуза",
+    "commons_search": "Файл Commons, в описании которого есть название вуза",
+    "openverse": "Фото с открытой лицензией (Openverse) по названию вуза",
+    "tiktok_search": "Видео в TikTok по запросу с названием вуза (автор не обязательно вуз)",
+    "youtube_search": "Кадр видео на YouTube по запросу с названием вуза (автор не обязательно вуз)",
 }
 CITY_SOURCES = {"city_article", "city_cat"}
+SEARCH_SOURCES = {"web_image", "tiktok_search", "youtube_search", "openverse", "commons_search", "external"}
 REJECT_FLAGS = {"illustration", "stock", "screenshot", "logo", "collage"}
 SOFT_FLAGS = {"banner": -0.20, "crop": -0.10, "official_meeting": -0.25, "portrait": -0.08, "text": -0.05}
 CITY_Q_WEIGHT = {3: 0.12, 2: 0.08, 1: -0.12, 0: -0.30}
@@ -204,6 +213,11 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
     # 5. name / alias in caption, alt, page title or path
     if hit and not as_city:
         signals.append(Signal(key="name_match", label="Название вуза в подписи или источнике", weight=0.15, value=hit))
+    elif not hit and not as_city and set(p.sources) <= SEARCH_SOURCES:
+        # a search hit whose page never names the university: abbreviations collide (КГУ = Kokshetau or Kurgan)
+        signals.append(Signal(key="no_name", label="Найдено поиском, но на странице нет названия вуза", weight=-0.15))
+        if verdict is not None and verdict.place == "this_university" and verdict.rel < 3:
+            _reject(p, "найдено поиском: на странице нет названия вуза, и ИИ не узнал в фото именно этот вуз")
 
     # 6. copies in several sources
     if p.sources_count > 1:
@@ -221,6 +235,9 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
 
     if verdict is None and settings.active_llm() != "none":
         signals.append(Signal(key="ai_pending", label="ИИ-инспектор не успел проверить фото", weight=0.0))
+        if set(p.sources) <= SEARCH_SOURCES:
+            # a search hit is only a lead: without the inspector's look it is not shown as the university
+            _reject(p, "найдено поиском, но ИИ-инспектор не успел проверить фото в отведённое время")
 
     conf = max(0.0, min(1.0, sum(s.weight for s in signals)))
     p.signals = signals

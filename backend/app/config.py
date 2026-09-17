@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     vk_service_token: str | None = None      # free service token of a VK app: wall photos of the official group
     higgsfield_api_key: str | None = None   # cutscene generation only, never called by the profile pipeline
+    serper_api_key: str | None = None       # Google Images search (serper.dev, 2500 free queries)
+    scrapecreators_api_key: str | None = None   # Instagram / TikTok posts and TikTok search (scrapecreators.com)
+    youtube_api_key: str | None = None      # YouTube Data API v3: videos about the university from any channel
+    worldlabs_api_key: str | None = None    # World Labs Marble (3D scenes for the walk; not used by the photo pipeline)
     gemini_model: str = "gemini-3.5-flash-lite"  # 2.5 is closed to new keys; 3.x "flash" thinks for 20-60 s, lite answers in ~2 s
     llm_provider: str = "auto"   # auto | claude | gemini | none
 
@@ -54,9 +58,9 @@ class Settings(BaseSettings):
     # 3.5 flash-lite at LOW media resolution = 280 tokens per photo; a batch of 8 answers in ~3 s (≈ $0.002).
     # Small batches in parallel keep the tail latency down: a slow call costs 8 photos, not 16.
     inspect_model: str = "gemini-3.5-flash-lite"
-    inspect_batch: int = 8
-    inspect_concurrency: int = 6
-    inspect_max_photos: int = 112
+    inspect_batch: int = 12
+    inspect_concurrency: int = 3            # the free Gemini tier answers 429 above ~15 requests a minute
+    inspect_max_photos: int = 150
     inspect_max_street: int = 10      # Mapillary/Flickr street frames: few are informative, they mostly feed the walk tab
     inspect_timeout_s: float = 12.0
     depth_warmup: bool = True
@@ -98,7 +102,13 @@ class Settings(BaseSettings):
             "places": {"enabled": bool(self.google_maps_api_key), "needs_key": True, "env": "GOOGLE_MAPS_API_KEY"},
             "telegram": {"enabled": True, "needs_key": False},
             "youtube": {"enabled": True, "needs_key": False},
-            "instagram": {"enabled": True, "needs_key": False},
+            "instagram": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
+            "tiktok": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
+            "tiktok_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
+            "youtube_search": {"enabled": bool(self.youtube_api_key), "needs_key": True, "env": "YOUTUBE_API_KEY"},
+            "web_image": {"enabled": bool(self.serper_api_key), "needs_key": True, "env": "SERPER_API_KEY"},
+            "commons_search": {"enabled": True, "needs_key": False},
+            "openverse": {"enabled": True, "needs_key": False},
             "vk": {"enabled": bool(self.vk_service_token), "needs_key": True, "env": "VK_SERVICE_TOKEN"},
             "llm": {"enabled": self.active_llm() != "none", "needs_key": True,
                     "env": "ANTHROPIC_API_KEY or GEMINI_API_KEY", "provider": self.active_llm()},

@@ -137,5 +137,11 @@ async def fetch_all(cands: list[PhotoCandidate], deadline: float, limit: int | N
             uniq.append(c)
     if limit:
         uniq = uniq[:limit]
-    results = await asyncio.gather(*[fetch_one(c, sem, deadline) for c in uniq], return_exceptions=True)
-    return [r for r in results if isinstance(r, Fetched)]
+    if not uniq:
+        return []
+    # stop at the deadline and keep whatever has arrived: a slow source still contributes its first images
+    tasks = [asyncio.create_task(fetch_one(c, sem, deadline)) for c in uniq]
+    done, pending = await asyncio.wait(tasks, timeout=max(0.1, deadline - time.monotonic()))
+    for t in pending:
+        t.cancel()
+    return [r for t in done if not t.cancelled() and t.exception() is None and isinstance(r := t.result(), Fetched)]

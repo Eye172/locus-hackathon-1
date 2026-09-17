@@ -190,6 +190,8 @@ async def build(uni: University, campus: Campus | None, stats: dict, context: di
                 timeout: float = 9.0) -> Description:
     provider = settings.active_llm()
     d = None
+    if timeout < 1.2:  # no time left in the budget: the cited template is instant
+        provider = "none"
     if provider == "claude":
         d = await claude(uni, campus, stats, context, timeout=timeout)
     elif provider == "gemini":

@@ -112,8 +112,11 @@ TITLE_NEAR = re.compile(r'"title":\{"runs":\[\{"text":"((?:[^"\\\\]|\\\\.){1,200
 LABEL_NEAR = re.compile(r'"title":\{"accessibility":\{"accessibilityData":\{"label":"((?:[^"\\\\]|\\\\.){1,200}?)"')
 
 
-async def youtube(url: str, limit: int = 15) -> list[PhotoCandidate]:
-    """Latest uploads of the channel from its /videos page (the RSS feed is not served to non-browser clients)."""
+async def youtube(url: str, limit: int = 24, per_video: int = 3) -> list[PhotoCandidate]:
+    """Latest uploads of the channel from its /videos page (the RSS feed is not served to non-browser clients).
+
+    Custom thumbnails are mostly designed covers with text, so we take YouTube's own frames from inside each video
+    (maxres1-3 = 1280x720 stills at roughly 25/50/75 % of the video): real views of halls, labs and events."""
     try:
         r = await http.get(url.rstrip("/") + "/videos", headers={"User-Agent": UA, "Accept-Language": "en"}, timeout=6.0,
                            params={"hl": "en"})
@@ -142,10 +145,11 @@ async def youtube(url: str, limit: int = 15) -> list[PhotoCandidate]:
             window = html[max(0, vm.start() - 1200): vm.end() + 1500]
             tm = TITLE_NEAR.search(window) or LABEL_NEAR.search(window)
             title = tm.group(1).encode("utf-8").decode("unicode_escape", "ignore") if tm else ""
-        out.append(PhotoCandidate(
-            url=f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", page_url=f"https://www.youtube.com/watch?v={vid}",
-            source="youtube", title=title[:120] or None, text=f"{title} {channel}", author=channel,
-            license="© YouTube-канал вуза (кадр видео)"))
+        for k in (2, 1, 3)[:per_video]:
+            out.append(PhotoCandidate(
+                url=f"https://i.ytimg.com/vi/{vid}/maxres{k}.jpg", page_url=f"https://www.youtube.com/watch?v={vid}",
+                source="youtube", title=(f"Кадр из видео «{title[:100]}»" if title else None), text=f"{title} {channel}",
+                author=channel, license="© YouTube-канал вуза (кадр видео)", collector=f"youtube:frame{k}"))
         if len(out) >= limit:
             break
     if not out and m:

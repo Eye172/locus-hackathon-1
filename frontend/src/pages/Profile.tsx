@@ -19,7 +19,7 @@ import { store, useStoreVersion } from '../lib/store'
 type Tab = 'photos' | 'bvr' | 'map' | 'climate' | 'city' | 'timeline' | 'walk' | 'rejected' | 'judge'
 const FILTERS: string[] = ['all', ...CATEGORIES]
 
-const PHOTO_NETS = new Set(['telegram', 'youtube', 'vk'])  // networks we actually fetch photos from; the rest are links
+const PHOTO_NETS = new Set(['telegram', 'youtube', 'vk', 'instagram', 'tiktok'])  // networks we actually fetch photos from; the rest are links
 const SOCIAL_NAME: Record<string, string> = { instagram: 'Instagram', telegram: 'Telegram', youtube: 'YouTube', vk: 'VK', facebook: 'Facebook', tiktok: 'TikTok' }
 
 export default function Profile() {

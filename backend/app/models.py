@@ -36,6 +36,12 @@ SOURCE_LABELS: dict[str, str] = {
     "instagram": "Instagram вуза",
     "vk": "Группа VK вуза",
     "external": "Внешний коллектор",
+    "web_image": "Google Картинки (поиск)",
+    "commons_search": "Wikimedia Commons (поиск по названию)",
+    "openverse": "Openverse (открытые лицензии)",
+    "tiktok": "TikTok вуза",
+    "tiktok_search": "TikTok (поиск по названию)",
+    "youtube_search": "YouTube (поиск по названию)",
 }
 BROCHURE_SOURCES = {"official"}
 
