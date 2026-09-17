@@ -1,5 +1,15 @@
 # Деплой
 
+## Самый быстрый путь: один Space на Hugging Face (бэкенд + фронтенд + прогретый кэш)
+
+1. Токен с правом **Write**: https://huggingface.co/settings/tokens → Create new token → тип Write → скопировать.
+2. Добавить в `backend/.env` строку `HF_TOKEN=hf_...` (файл в `.gitignore`).
+3. `python deploy/deploy_hf.py --space campuslens` — соберёт фронтенд, соберёт папку Space, зальёт её и выставит
+   секреты `GEMINI_API_KEY`, `MAPILLARY_TOKEN` из `.env`. Первая сборка образа ~10 минут.
+4. Адрес приложения: `https://<логин>-campuslens.hf.space`; проверка `…/api/health`.
+5. UptimeRobot на `/api/health` каждые 5 минут, чтобы Space не засыпал в дни проверки.
+
+
 ## Backend → Hugging Face Spaces (Docker, бесплатный CPU)
 
 1. Создать Space: тип **Docker**, hardware CPU basic (2 vCPU, 16 ГБ RAM).

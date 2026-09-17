@@ -26,3 +26,4 @@ backend/data/universities.broad.json
 backend/data/prewarm_*.log
 docs/video/*.webm
 frontend/public/cutscenes/*.mp4
+deploy/_stage/
