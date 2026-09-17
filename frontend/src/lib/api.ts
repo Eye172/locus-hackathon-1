@@ -1,10 +1,12 @@
-import type { Candidate, Campus, ClimatePack, ContextPack, CostPack, Photo, Profile, RecentItem, SourceStatus, Stage, University } from './types'
+import type { Candidate, Campus, ClimatePack, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SourceStatus, Stage, University } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
 
 async function getJSON<T>(path: string): Promise<T> {
   const r = await fetch(API_BASE + path)
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+  // an outdated backend (or a proxy) answers unknown API paths with the app's HTML page
+  if (!(r.headers.get('content-type') ?? '').includes('json')) throw new Error(`api-not-json:${path.split('?')[0]}`)
   return r.json() as Promise<T>
 }
 
@@ -18,6 +20,12 @@ export const api = {
   climate: (qid: string) => getJSON<ClimatePack>(`/api/climate/${qid}`),
   cost: (cityQid: string) => getJSON<CostPack>(`/api/cost/${cityQid}`),
   mini: (qid: string) => getJSON<{ qid: string; name: string; names: Record<string, string>; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; logo_url?: string | null; lat?: number | null; lon?: number | null; profile: { coverage: string; generated_at: string; photos_total: number; photos: { id: string; thumb: string; category: string }[] } | null }>(`/api/mini/${qid}`),
+  map3d: (qid: string, lang: string) => getJSON<Map3DPack>(`/api/map3d/${qid}?lang=${lang}`),
+  footprints: async (points: { id: string; lat: number; lon: number }[]) => {
+    const r = await fetch(`${API_BASE}/api/map3d/footprints`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points }) })
+    if (!r.ok) throw new Error(`${r.status}`)
+    return (await r.json() as { items: Record<string, (Map3DBuilding & { elevation: number | null }) | { ring: null; elevation: number | null }> }).items
+  },
   compare: (a: string, b: string) => getJSON<{ a: Profile; b: Profile }>(`/api/compare?a=${a}&b=${b}`),
   compareAi: async (a: string, b: string, prefs: Record<string, boolean>) => {
     const r = await fetch(`${API_BASE}/api/compare/ai`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ a, b, prefs }) })

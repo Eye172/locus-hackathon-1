@@ -1,7 +1,7 @@
 import { Cutscene, hasCutscene } from '../components/Cutscene'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MapPin, Sparkles, ArrowRight, Undo2, Loader2 } from 'lucide-react'
+import { MapPin, ArrowRight, Undo2, Loader2 } from 'lucide-react'
 import { GlobeMap, type GlobeHandle, type HoverInfo } from '../map/GlobeMap'
 import { Clouds } from '../components/Clouds'
 import { CloudDive } from '../components/CloudDive'
@@ -10,6 +10,10 @@ import { api, streamProfile, thumbUrl } from '../lib/api'
 import type { Candidate, Photo } from '../lib/types'
 import { CampusReveal, depthUrl, heroUrl, pickHero } from '../components/CampusReveal'
 import { useLang, useT } from '../lib/i18n'
+import { GOOGLE_3D_KEY } from '../lib/gmaps'
+
+// after the cloud dive: Google photorealistic 3D, an orbit of the campus, then the map locked to the city
+const Campus3D = lazy(() => import('../components/Campus3D'))
 
 interface Country { qid: string; iso: string; ru: string; en: string; kk: string; count: number; center: number[]; bbox: number[] }
 const QUICK = ['KZ', 'KG', 'UZ', 'RU', 'CN', 'US', 'GB', 'DE']
@@ -38,7 +42,31 @@ export default function Globe() {
   const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
   const coords = useRef<Map<string, [number, number]>>(new Map())
+  const [g3d, setG3d] = useState<{ qid: string; active: boolean } | null>(null)
+  const g3dRef = useRef(g3d)
+  useEffect(() => { g3dRef.current = g3d }, [g3d])
   const autoTimer = useRef<number | undefined>(undefined)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
+  const [inset, setInset] = useState<{ top: number; bottom: number }>()
+
+  // the planet is centred in the free band between the title and the search block
+  useLayoutEffect(() => {
+    const page = pageRef.current, title = titleRef.current, search = searchRef.current
+    if (phase !== 'idle' || !page || !title || !search) return
+    const GAP = 16
+    const measure = () => {
+      const r = page.getBoundingClientRect()
+      const top = Math.round(title.getBoundingClientRect().bottom - r.top) + GAP
+      const bottom = Math.round(r.bottom - search.getBoundingClientRect().top) + GAP
+      setInset((o) => (o && o.top === top && o.bottom === bottom ? o : { top, bottom }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    for (const el of [page, title, search]) ro.observe(el)
+    return () => ro.disconnect()
+  }, [phase])
 
   useEffect(() => {
     fetch('/countries.json').then((r) => r.json()).then(setCountries).catch(() => {})
@@ -61,6 +89,10 @@ export default function Globe() {
     setHover(null)
     // the arrival scene needs photos: the cached profile answers at once, otherwise the live stream feeds it as it goes
     stopStream.current?.(); setHeroPhotos([]); setReveal(false); window.clearTimeout(revealTimer.current)
+    // the Google 3D scene mounts hidden right away: its tiles load during the spin and the clouds
+    const next = GOOGLE_3D_KEY ? { qid, active: false } : null
+    g3dRef.current = next
+    setG3d(next)
     setProgress(null)
     api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos))).catch(() => {
       const pool = new Map<string, Photo>()
@@ -78,25 +110,34 @@ export default function Globe() {
     // 3. inside the white-out the map jumps to the campus  4. clouds clear, buildings rise  5. the arrival scene
     diveTarget.current = [c[1], c[0]]
     // one continuous spiral: the planet turns and grows at once; the cloud dive is timed so its hidden jump lands at the end
-    globe.current?.spinAndApproach(c[1], c[0], { approachMs: 4588 /* 0.74 × 6.2 s: the dive's hidden jump */, zoom: 11.2, onApproach: () => { setDive(true); setDiveRun((n) => n + 1) } })
+    globe.current?.spinAndApproach(c[1], c[0], { approachMs: 4588 /* 0.74 × 6.2 s: the dive's hidden jump */, zoom: 11.2, onApproach: () => {
+      setDive(true); setDiveRun((n) => n + 1)
+    } })
   }
   const heroRef = useRef<Photo[]>([])
   useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
   const onDiveMid = useCallback(() => {
     const d = diveTarget.current
     if (d) globe.current?.landAt(d[0], d[1])
-    if (heroRef.current.length > 0) setRevealArmed(true)  // mount the scene hidden now: GL setup happens under the clouds
+    if (heroRef.current.length > 0 && !g3dRef.current) setRevealArmed(true)  // mount the scene hidden now: GL setup happens under the clouds
   }, [])
   // white-out complete: the campus photo takes over directly (the map with its boxes stays behind the «3D map» button);
   // without photos yet, the clouds clear onto the 3D map while the profile keeps collecting
   const onDiveWhite = useCallback(() => {
     setPhase('arrived')
+    if (g3dRef.current) {  // the Google 3D scene takes over: orbit, then the city map
+      const on = { ...g3dRef.current, active: true }
+      g3dRef.current = on
+      setG3d(on)
+      return
+    }
     if (heroRef.current.length > 0) { setReveal(true); setRevealArmed(false) }
     else globe.current?.riseBuildings()
   }, [])
   const onDiveDone = useCallback(() => {
     setDive(false)
     setDiveRun(0)
+    if (g3dRef.current) return
     if (heroRef.current.length === 0) revealTimer.current = window.setTimeout(() => setReveal(true), 900)
   }, [])
   // the planet turns towards the best match while typing — also for universities outside the local index
@@ -117,25 +158,38 @@ export default function Globe() {
     if (!target) return
     for (const p of heroPhotos.slice(0, 2)) { new Image().src = heroUrl(target.qid, p.id, p.url); new Image().src = depthUrl(p.id) }
   }, [heroPhotos, target])
+  const onG3dUnavailable = useCallback(() => {
+    const was = g3dRef.current
+    g3dRef.current = null
+    setG3d(null)
+    if (was?.active) {
+      if (heroRef.current.length > 0) setReveal(true)
+      else globe.current?.riseBuildings()
+    }
+  }, [])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; globe.current?.resetToGlobe() }
 
   return (
-    <div className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
+    <div ref={pageRef} className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
-      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} />
+      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} inset={inset} />
       <Clouds zoom={dive ? 0 : zoom} />
+      {g3d && target && (
+        <Suspense fallback={null}>
+          <Campus3D qid={g3d.qid} variant="arrival" active={g3d.active} onOpenProfile={openProfile} onBack={back}
+            onPhotos={heroPhotos.length > 0 ? () => setReveal(true) : undefined} onUnavailable={onG3dUnavailable} />
+        </Suspense>
+      )}
       <CloudDive run={diveRun} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />
 
       {phase === 'idle' && (
         <>
-          <div className="absolute top-8 left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none">
-            <span className="chip bg-blue-500/15 text-blue-200 border border-blue-300/20 mb-4 pointer-events-auto"><Sparkles size={13} /> LOCUS Hackathon 2026 · кейс 1</span>
-            <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight max-w-3xl drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">{t('home.title')}</h1>
-            <p className="mt-3 text-blue-100/80 max-w-2xl text-sm sm:text-base">{t('home.subtitle')}</p>
+          <div ref={titleRef} className="absolute top-8 left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none">
+            <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight leading-tight drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">CampusLens</h1>
           </div>
-          <div className="absolute left-0 right-0 bottom-10 flex flex-col items-center px-4 gap-3">
+          <div ref={searchRef} className="absolute left-0 right-0 bottom-10 flex flex-col items-center px-4 gap-3">
             <div className="w-full max-w-2xl"><SearchBox onPick={onPick} onCandidates={onCandidates} dark autoFocus direction="up" /></div>
             <div className="flex flex-wrap justify-center gap-2">
               {QUICK.map((iso) => {
@@ -151,9 +205,6 @@ export default function Globe() {
               <button onClick={() => globe.current?.resetToGlobe()} className="chip bg-white/10 border border-white/15 text-white hover:bg-white/20 cursor-pointer">🌍 {t('profile.all')}</button>
             </div>
           </div>
-          <div className="absolute left-4 bottom-4 text-[11px] text-blue-100/60 hidden sm:block">
-            14 467 вузов · 10 045 с координатами · Wikidata · OpenStreetMap · Wikimedia Commons
-          </div>
         </>
       )}
 
@@ -168,9 +219,10 @@ export default function Globe() {
       )}
 
       {((reveal && phase === 'arrived') || revealArmed) && target && heroPhotos.length > 0 && (
-        <CampusReveal visible={reveal && phase === 'arrived'} qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => { setReveal(false); setRevealArmed(false); globe.current?.riseBuildings() }} />
+        <CampusReveal visible={reveal && phase === 'arrived'} qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile}
+          inScene={!!g3d?.active} onMap={() => { setReveal(false); setRevealArmed(false); if (!g3dRef.current) globe.current?.riseBuildings() }} />
       )}
-      {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && (
+      {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && !g3d?.active && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">
           <div className="rounded-2xl bg-[#0B1222]/92 border border-white/10 backdrop-blur-xl p-4 shadow-2xl">
             <div className="flex items-start gap-3">

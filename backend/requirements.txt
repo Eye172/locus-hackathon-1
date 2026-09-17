@@ -10,6 +10,7 @@ lxml>=5.0
 pillow>=10.3
 imagehash>=4.3
 shapely>=2.0
+mapbox-vector-tile>=2.1
 rapidfuzz>=3.9
 numpy>=1.26
 torch>=2.3

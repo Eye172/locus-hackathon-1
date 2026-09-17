@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, Map as MapIcon } from 'lucide-react'
+import { ArrowRight, Box, ChevronLeft, ChevronRight, ExternalLink, Map as MapIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { DepthPhoto } from './DepthPhoto'
 import { API_BASE } from '../lib/api'
 import type { Photo } from '../lib/types'
@@ -29,8 +30,10 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
 export const heroUrl = (qid: string, id: string, src?: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg${src ? `?src=${encodeURIComponent(src)}` : ''}`
 export const depthUrl = (id: string) => `${API_BASE}/api/depth/${id}.png`
 
-export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true }:
-  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean }) {
+export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true, inScene = false }:
+  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean
+    /** opened from the Google 3D scene: «3D map» returns there, no link to the separate page */
+    inScene?: boolean }) {
   const t = useT()
   const lang = useLang()
   const [idx, setIdx] = useState(0)
@@ -85,7 +88,10 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
           <div className="mt-1 text-2xl sm:text-4xl font-extrabold leading-tight drop-shadow-[0_2px_14px_rgba(0,0,0,0.6)] truncate">{name}</div>
           {city && <div className="text-sm text-white/75">{city}</div>}
         </div>
-        <button onClick={onMap} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur shrink-0" title={t('reveal.map')}><MapIcon size={15} /> {t('reveal.map')}</button>
+        <div className="flex gap-2 shrink-0">
+          {!inScene && <Link to={`/map3d/${qid}`} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur" title={t('m3d.open')}><Box size={15} /> <span className="max-sm:hidden">{t('m3d.open')}</span></Link>}
+          <button onClick={onMap} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur" title={t('reveal.map')}><MapIcon size={15} /> <span className="max-sm:hidden">{t('reveal.map')}</span></button>
+        </div>
       </div>
 
       <div className="absolute left-6 right-6 bottom-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4 text-white">

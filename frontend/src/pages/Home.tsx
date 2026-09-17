@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, ArrowRight, MapPin, Clock, Images, KeyRound, Sparkles } from 'lucide-react'
+import { Search, ArrowRight, MapPin, Clock, Images, KeyRound } from 'lucide-react'
 import { api } from '../lib/api'
 import type { Candidate, RecentItem } from '../lib/types'
 import { useT } from '../lib/i18n'
@@ -51,7 +51,6 @@ export default function Home() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:py-16">
       <div className="text-center max-w-3xl mx-auto">
-        <span className="chip bg-brand-soft text-brand mb-4"><Sparkles size={13} /> LOCUS Hackathon 2026 · кейс 1</span>
         <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight">{t('home.title')}</h1>
         <p className="mt-4 text-muted text-base sm:text-lg">{t('home.subtitle')}</p>
       </div>

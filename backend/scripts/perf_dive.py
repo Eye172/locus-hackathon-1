@@ -32,7 +32,7 @@ def run(label: str, args: list[str]) -> None:
         page.goto(BASE, wait_until="networkidle")
         page.wait_for_function("window.__map && window.__map.getLayer('unis-point')", timeout=90000)
         page.wait_for_timeout(4000)
-        box = page.get_by_placeholder("Например").first
+        box = page.get_by_placeholder("Поиск университета").first
         box.click(); box.type("Назарбаев", delay=30)
         item = page.get_by_text("Назарбаев Университет", exact=True).first
         item.wait_for()

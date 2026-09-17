@@ -218,3 +218,30 @@ export interface CostPack {
   total_student_month_dorm: number; total_student_month_rent: number
   sources: { label: string; url: string }[]
 }
+
+/** GET /api/map3d/{qid}: what the Google 3D campus page draws (OSM via OpenFreeMap tiles + Open-Meteo heights). */
+export interface Map3DBuilding {
+  id: string; kind: 'campus' | 'dorm'; ring: [number, number][]; height: number | null; min_height: number
+  lat: number; lon: number; area_m2: number; distance_m: number; main?: boolean; elevation?: number | null
+}
+export interface Map3DDorm {
+  id: string; name: string | null; lat: number; lon: number; distance_m: number
+  ownership: 'campus' | 'name' | 'unknown'; source: 'osm' | 'google'; elevation?: number | null; building?: Map3DBuilding | null
+}
+export interface Map3DPlace { id: string; name: string | null; type: string; lat: number; lon: number; distance_m: number; source: 'osm' }
+export interface Map3DPack {
+  university: { qid: string; name: string; names: Record<string, string>; aliases: string[]; city?: string | null; country?: string | null; website?: string | null; lat: number; lon: number }
+  anchor: { lat: number; lon: number; elevation: number | null }
+  campus: { mode: 'polygon' | 'radius'; outline: [number, number][] | null; area_ha: number | null; osm_url: string | null; buildings: Map3DBuilding[] }
+  dorms: Map3DDorm[]
+  places: Record<string, Map3DPlace[]>
+  center: { name?: string | null; lat: number; lon: number; population?: number | null; distance_km: number; elevation?: number | null } | null
+  /** the city the 3D camera is locked to (plus a directly adjacent big city); rings are [lat, lon] */
+  city_area?: { names: string[]; bounds: [number, number, number, number]; rings: [number, number][][]; area_km2: number; source: string } | null
+  city_status?: 'ok' | 'none' | 'pending'
+  v?: number
+  route_center: { distance_km?: number | null; drive_min?: number | null; walk_min?: number | null; geometry?: GeoJSON.LineString | null } | null
+  photos: { id: string; lat: number; lon: number; thumb?: string | null; category?: string | null; level?: string | null; page_url?: string | null; source_label?: string | null; distance_m: number }[]
+  stats: Record<string, number>
+  sources: { label: string; url: string }[]
+}

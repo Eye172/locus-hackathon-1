@@ -24,9 +24,26 @@ interface Props {
   onSelect?: (h: HoverInfo) => void
   onZoom?: (zoom: number) => void
   onReady?: () => void
+  /** free band for the planet: px taken by the page's title (top) and search block (bottom) */
+  inset?: { top: number; bottom: number }
 }
 
 const HOME: [number, number] = [66, 44]
+const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 }
+const DEG = Math.PI / 180
+// MapLibre sizes the globe as worldSize / 2π / cos(centre lat) and views it in perspective from 0.5 / tan(fov/2) × height
+const camDist = (height: number, fov: number) => 0.5 / Math.tan((fov * DEG) / 2) * height
+/** on-screen radius of the planet's disc */
+function globeRadiusPx(zoom: number, lat: number, height: number, fov: number) {
+  const r = (512 * 2 ** zoom) / (2 * Math.PI) / Math.max(1e-3, Math.cos(lat * DEG))
+  const d = camDist(height, fov), s = r / (d + r)
+  return (d * s) / Math.sqrt(1 - s * s)
+}
+/** the zoom at which the disc has this radius (inverse of globeRadiusPx) */
+function zoomForRadius(px: number, lat: number, height: number, fov: number) {
+  const d = camDist(height, fov), s = px / Math.hypot(d, px)
+  return Math.log2(((d * s) / (1 - s)) * 2 * Math.PI * Math.max(1e-3, Math.cos(lat * DEG)) / 512)
+}
 // university markers: faded out once a university is chosen, back when the user returns to the planet
 const MARKERS: { id: string; props: [string, number][] }[] = [
   { id: 'unis-glow', props: [['circle-opacity', 0.35]] },
@@ -65,7 +82,7 @@ function planSpiral(c0: { lng: number; lat: number }, z0: number, lat: number, l
 }
 const BUILDINGS = 'building-3d'
 
-export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady }, ref) {
+export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady, inset }, ref) {
   const container = useRef<HTMLDivElement>(null)
   const stars = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<Map | null>(null)
@@ -76,6 +93,28 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
   const starField = useRef<{ x: number; y: number; r: number; a: number }[]>([])
+  const insetRef = useRef(inset)
+  const atHome = useRef(true)  // the idle planet view: its size follows the free band; false once the user zooms or flies
+
+  // the whole planet sits in the middle of the band between the title and the search block
+  const homeView = (map: Map, lat: number) => {
+    const { top = 0, bottom = 0 } = insetRef.current ?? {}
+    const c = map.getContainer(), w = c.clientWidth, h = c.clientHeight
+    const room = Math.min((h - top - bottom) / 2, w / 2 - 16)
+    const zoom = room > 40 ? Math.min(2.6, Math.max(0.5, zoomForRadius(room, lat, h, map.getVerticalFieldOfView()))) : 1.5
+    return { zoom, padding: { top, bottom, left: 0, right: 0 } }
+  }
+  const fitHome = () => {
+    const map = mapRef.current
+    if (!map || motion.current || !markersOn.current || map.isMoving()) return
+    const home = homeView(map, map.getCenter().lat)
+    map.jumpTo(atHome.current ? home : { padding: home.padding })
+  }
+  useEffect(() => {
+    insetRef.current = inset
+    fitHome()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inset?.top, inset?.bottom])
 
   const drawStars = () => {
     const c = stars.current, map = mapRef.current
@@ -100,10 +139,11 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       ctx.beginPath(); ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2); ctx.fill()
     }
     // clear the globe disc so stars never overlap the planet
-    const R = (512 * Math.pow(2, z)) / (2 * Math.PI) + 8
+    const R = globeRadiusPx(z, map.getCenter().lat, h, map.getVerticalFieldOfView()) + 8
+    const pad = map.getPadding()
     ctx.globalCompositeOperation = 'destination-out'
     ctx.globalAlpha = 1
-    ctx.beginPath(); ctx.arc(w / 2, h / 2, R, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(pad.left + (w - pad.left - pad.right) / 2, pad.top + (h - pad.top - pad.bottom) / 2, R, 0, Math.PI * 2); ctx.fill()
     ctx.globalCompositeOperation = 'source-over'
   }
 
@@ -164,10 +204,11 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       window.clearTimeout(idleTimer.current)
       map.stop()
       spinning.current = false
+      atHome.current = false
       window.clearTimeout(peekTimer.current)
       showMarkers(false)
       flattenBuildings(map)  // expensive style change: do it now, while buildings are out of view, not at the jump
-      const b0 = map.getBearing(), p0 = map.getPitch()
+      const b0 = map.getBearing(), p0 = map.getPitch(), pad0 = map.getPadding()
       const plan = planSpiral(map.getCenter(), map.getZoom(), lat, lon, zTarget)
       const canvas = map.getCanvas()
       prefetchPath(plan.samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
@@ -181,7 +222,10 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         const p = plan.at(el)
         if (Number.isFinite(p.lng) && Number.isFinite(p.lat) && Number.isFinite(p.zoom)) {
           try {
-            map.jumpTo({ center: [((p.lng + 540) % 360) - 180, p.lat], zoom: p.zoom, bearing: b0 * (1 - p.e), pitch: p0 * (1 - p.e) })
+            // the band offset fades out with the turn: the campus ends up in the true centre of the screen
+            const k = 1 - p.e
+            map.jumpTo({ center: [((p.lng + 540) % 360) - 180, p.lat], zoom: p.zoom, bearing: b0 * k, pitch: p0 * k,
+              padding: { top: pad0.top * k, bottom: pad0.bottom * k, left: pad0.left * k, right: pad0.right * k } })
           } catch (err) {
             // never leave the user on a frozen globe with hidden markers: finish the transition without the camera move
             console.warn('spinAndApproach frame failed', err)
@@ -201,7 +245,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const map = mapRef.current
       if (!map || motion.current || map.getZoom() > 3.4) return
       spinning.current = false
-      map.easeTo({ center: [lon, lat], duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
+      // at home the disc keeps its size (MapLibre would scale it by 1/cos of the new latitude)
+      map.easeTo({ center: [lon, lat], zoom: atHome.current ? homeView(map, lat).zoom : undefined, duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
       const canvas = map.getCanvas()
       prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight }, 260)
       window.clearTimeout(peekTimer.current)
@@ -247,7 +292,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       cancelMotion()
       map.stop()
       flattenBuildings(map)  // no-op when spinAndApproach already did it
-      map.jumpTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17 })
+      map.jumpTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17, padding: NO_PAD })
     },
     riseBuildings: () => { const map = mapRef.current; if (map) animateBuildings(map) },
     flyToUniversity: (lat, lon) => new Promise<void>((resolve) => {
@@ -262,6 +307,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const map = mapRef.current
       if (!map) return
       spinning.current = false
+      atHome.current = false
       map.fitBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], { padding: 80, pitch: 25, bearing: 0, duration: 2200, maxZoom: 6.5 })
     },
     resetToGlobe: () => {
@@ -269,7 +315,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       if (!map) return
       cancelMotion()
       clearResetTimers()
-      map.flyTo({ center: HOME, zoom: 1.5, pitch: 0, bearing: 0, duration: 2000 })
+      atHome.current = true
+      map.flyTo({ center: HOME, ...homeView(map, HOME[1]), pitch: 0, bearing: 0, duration: 2000 })
       resetTimers.current = [
         window.setTimeout(() => showMarkers(true, 900), 900),
         window.setTimeout(() => { spinning.current = true }, 2100),
@@ -291,11 +338,12 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         style,
         center: HOME,
         zoom: 1.5,
-        attributionControl: { compact: true },
+        attributionControl: false,
         canvasContextAttributes: { antialias: true },
         maxPitch: 70,
       })
       mapRef.current = map
+      map.jumpTo(homeView(map, HOME[1]))  // before the first frame
       ;(window as unknown as { __map?: Map }).__map = map
       const errors: string[] = []
       ;(window as unknown as { __mapErrors?: string[] }).__mapErrors = errors
@@ -330,6 +378,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
     map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
     map.on('move', () => { onZoom?.(map.getZoom()); drawStars() })
+    map.on('zoomstart', (e) => { if (e.originalEvent) atHome.current = false })
+    map.on('resize', fitHome)
 
     map.on('mousemove', 'unis-point', (e: MapMouseEvent) => {
       const f = e.features?.[0]
@@ -354,6 +404,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const src = map.getSource('unis') as GeoJSONSource
       const zoom = await src.getClusterExpansionZoom(f.properties!.cluster_id as number)
       spinning.current = false
+      atHome.current = false
       map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom: Math.min(zoom + 0.3, 9), duration: 900 })
     })
 

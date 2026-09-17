@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import { Aperture, GitCompare, Code2 } from 'lucide-react'
 import Home from './pages/Home'
@@ -6,6 +7,9 @@ import Profile from './pages/Profile'
 import Compare from './pages/Compare'
 import Saved from './pages/Saved'
 import { LanguageSwitch } from './components/LanguageSwitch'
+
+// Google Maps 3D page: its own chunk, loaded only when opened
+const Map3D = lazy(() => import('./pages/Map3D'))
 import { useT } from './lib/i18n'
 
 export default function App() {
@@ -40,9 +44,10 @@ export default function App() {
           <Route path="/u/:qid" element={<Profile />} />
           <Route path="/compare" element={<Compare />} />
           <Route path="/saved" element={<Saved />} />
+          <Route path="/map3d/:qid" element={<Suspense fallback={<div className="h-[calc(100dvh-3.5rem)] bg-[#0B0F1A]" />}><Map3D /></Suspense>} />
         </Routes>
       </main>
-      <footer className={`border-t py-6 text-xs ${loc.pathname === '/' ? 'hidden' : 'border-line text-muted'}`}>
+      <footer className={`border-t py-6 text-xs ${loc.pathname === '/' || loc.pathname.startsWith('/map3d/') ? 'hidden' : 'border-line text-muted'}`}>
         <div className="mx-auto max-w-7xl px-4 flex flex-wrap gap-x-6 gap-y-2">
           <span>CampusLens · LOCUS Startup Hackathon 2026 · кейс 1</span>
           <span>{t('footer.sources')}</span>

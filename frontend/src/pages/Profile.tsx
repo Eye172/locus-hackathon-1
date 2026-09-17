@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check } from 'lucide-react'
+import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check, Box } from 'lucide-react'
 import { streamProfile, thumbUrl, API_BASE } from '../lib/api'
 import type { Campus, Photo, Profile as ProfileT, SourceStatus, Stage, University } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
@@ -146,6 +146,7 @@ export default function Profile() {
             </div>
             <div className="flex flex-col items-start lg:items-end gap-3">
               <div className="flex gap-2">
+                <Link to={`/map3d/${qid}`} className="btn-primary !h-10 !py-0" title={t('m3d.open')}><Box size={15} /> {t('m3d.open')}</Link>
                 <button className="btn-icon" onClick={doRefresh} title={t('profile.refresh')} disabled={!profile}><RefreshCw size={15} /></button>
                 <button className="btn-icon" onClick={share} title={t('profile.share')}>{copied ? <Check size={15} className="text-verified" /> : <Share2 size={15} />}</button>
                 <button className="btn-icon" title={saved ? 'Убрать из сохранённых' : 'Сохранить'} disabled={!profile}

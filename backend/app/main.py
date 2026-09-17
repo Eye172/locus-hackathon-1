@@ -268,6 +268,47 @@ def _pack_has_data(pack: dict) -> bool:
     return bool(pack.get("poi")) or bool(pack.get("campus_buildings", {}).get("features"))
 
 
+@app.get("/api/map3d/{qid}")
+async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pattern="^(ru|en|kk)$")):
+    """Everything the Google 3D campus page draws: outline, campus and dorm footprints, OSM places, city centre."""
+    key = f"{qid}:{lang}"
+    if not refresh:
+        c = await cache.kv_get("map3d", key, max_age_s=7 * 86400)
+        from .pipeline.map3d import PACK_VERSION
+        if c and c.get("v") == PACK_VERSION:
+            return c
+    from .pipeline import map3d
+    p = await cache.get_profile(qid)
+    if p:
+        uni, campus = p.university, p.campus
+        photos = [ph.model_dump(include={"id", "lat", "lon", "thumb", "category", "level", "page_url", "source_label", "rejected"})
+                  for ph in p.photos]
+    else:
+        uni, campus = await _facts(qid)
+        photos = []
+    if uni.lat is None:
+        raise HTTPException(404, "no coordinates")
+    try:
+        pack = await asyncio.wait_for(map3d.build(uni, campus, photos, lang), timeout=40)
+    except Exception as e:  # noqa: BLE001
+        log.exception("map3d failed for %s", qid)
+        raise HTTPException(503, f"map3d unavailable: {type(e).__name__}")
+    if pack["stats"]["tiles"] and pack.get("city_status") != "pending":
+        await cache.kv_set("map3d", key, pack)
+    return pack
+
+
+class FootprintsBody(BaseModel):
+    points: list[dict]
+
+
+@app.post("/api/map3d/footprints")
+async def map3d_footprints(body: FootprintsBody):
+    """Building footprint and ground height under each point (dormitories found by Google Places on the client)."""
+    from .pipeline import map3d
+    return {"items": await map3d.footprints(body.points)}
+
+
 @app.get("/api/climate/{qid}")
 async def climate(qid: str, refresh: bool = False):
     from .pipeline import climate as climate_mod
@@ -422,9 +463,12 @@ if _dist.exists():
 
     @app.get("/{path:path}")
     async def spa(path: str, request: Request):
+        # an unknown API path is an API error, never the app's HTML (the client would fail on "<!doctype")
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, f"no such API endpoint: /{path}")
         # One site, not two: while a dev server (FRONTEND_ORIGIN) is running, every page goes there and only /api
         # stays here; in production FRONTEND_ORIGIN is empty and the built app is served from this container.
-        if settings.frontend_origin and not path.startswith("api/"):
+        if settings.frontend_origin:
             q = f"?{request.url.query}" if request.url.query else ""
             return RedirectResponse(f"{settings.frontend_origin}/{path}{q}", status_code=307)
         target = _dist / path

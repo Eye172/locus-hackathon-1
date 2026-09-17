@@ -63,7 +63,7 @@ def main() -> None:
         page.wait_for_timeout(3000)
         runs = RUNS[:int(__import__('os').environ.get('RUNS', len(RUNS)))]
         for i, (query, pick, how, pause) in enumerate(runs, 1):
-            box = page.get_by_placeholder("Например").first
+            box = page.get_by_placeholder("Поиск университета").first
             box.click()
             box.fill("")
             box.type(query, delay=25)

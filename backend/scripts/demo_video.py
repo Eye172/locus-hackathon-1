@@ -60,7 +60,7 @@ def main() -> None:
         page.goto(BASE + "/", wait_until="networkidle")
         cap("14 467 вузов на живой планете. Введите название — даже с опечаткой.", 6)
         # 2. search with a typo
-        box = page.get_by_placeholder("Например").first
+        box = page.get_by_placeholder("Поиск университета").first
         box.click()
         for ch in args.query:
             box.type(ch, delay=70)

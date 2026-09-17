@@ -38,7 +38,7 @@ def main() -> None:
         page.set_default_timeout(60000)
         page.goto(BASE + "/", wait_until="networkidle")
         page.wait_for_timeout(4000)  # globe tiles + idle tile prefetch
-        box = page.get_by_placeholder("Например").first
+        box = page.get_by_placeholder("Поиск университета").first
         box.click()
         box.type(args.query, delay=40)
         page.get_by_text(args.pick, exact=True).first.wait_for()
