@@ -5,17 +5,19 @@ import { useEffect, useRef } from 'react'
  * then layered clouds rush past the camera in perspective and close into a white-out, inside which the map jumps
  * to the campus. Procedural fBm, no assets — works for any point on Earth.
  *
- * Timeline (fractions of `duration`):  0–0.30 planet approach, wisps fade in · 0.30–0.55 clouds thicken ·
- * 0.55 onMid (map jump, hidden) · 0.86 onWhite (white-out complete) · 1.0 onDone (overlay dissolved).
+ * Timeline (fractions of `duration`):  0–0.34 pure approach (the planet grows to city scale, no clouds) ·
+ * 0.34–0.55 wisps · 0.55–0.74 the deck closes · 0.74 onMid (map jump, hidden) · 0.95 onWhite · 1.0 onDone.
  */
 const VS = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`
 const FS = `precision highp float;
-uniform vec2 u_res; uniform float u_t; uniform float u_p;
+uniform vec2 u_res; uniform float u_t; uniform float u_p0;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
 float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 6; i++) { v += a * noise(p); p = p * 2.02 + vec2(1.7, 9.2); a *= 0.5; } return v; }
 void main(){
+  float u_p = clamp((u_p0 - 0.34) / 0.66, 0.0, 1.0);   // cloud time starts after the pure approach
+  float gate = smoothstep(0.30, 0.42, u_p0);          // nothing is drawn while the planet is still growing
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   float r = length(uv);
   vec2 sunp = vec2(0.38, 0.26);
@@ -49,12 +51,12 @@ void main(){
   float alpha = max(bgA, clamp(asum, 0.0, 1.0));       // early: only the wisps are drawn over the planet
   float white = smoothstep(0.66, 0.9, u_p);
   outc = mix(outc, vec3(1.0), white);
-  alpha = max(alpha, white);
+  alpha = max(alpha, white) * gate;
   float vig = 1.0 - smoothstep(0.6, 1.2, r) * 0.3 * (1.0 - white);
   gl_FragColor = vec4(outc * vig, alpha);
 }`
 
-export function CloudDive({ duration = 4600, onMid, onWhite, onDone }:
+export function CloudDive({ duration = 6200, onMid, onWhite, onDone }:
   { duration?: number; onMid?: () => void; onWhite?: () => void; onDone?: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
@@ -67,8 +69,8 @@ export function CloudDive({ duration = 4600, onMid, onWhite, onDone }:
     const finish = () => { if (!doneDone) { doneDone = true; onDone?.() } }
     if (!gl) {  // no WebGL: a plain white flash keeps the choreography intact
       w.style.background = '#fff'; w.style.opacity = '1'
-      const a = window.setTimeout(() => onMid?.(), duration * 0.55)
-      const b = window.setTimeout(() => onWhite?.(), duration * 0.86)
+      const a = window.setTimeout(() => onMid?.(), duration * 0.74)
+      const b = window.setTimeout(() => onWhite?.(), duration * 0.95)
       const d = window.setTimeout(finish, duration + 800)
       return () => { window.clearTimeout(a); window.clearTimeout(b); window.clearTimeout(d) }
     }
@@ -78,7 +80,7 @@ export function CloudDive({ duration = 4600, onMid, onWhite, onDone }:
     const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
     const loc = gl.getAttribLocation(prog, 'a'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
-    const uRes = gl.getUniformLocation(prog, 'u_res'), uT = gl.getUniformLocation(prog, 'u_t'), uP = gl.getUniformLocation(prog, 'u_p')
+    const uRes = gl.getUniformLocation(prog, 'u_res'), uT = gl.getUniformLocation(prog, 'u_t'), uP = gl.getUniformLocation(prog, 'u_p0')
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     const size = () => {
       const dpr = Math.min(1.25, window.devicePixelRatio || 1)  // 6-octave fbm × 7 sheets: keep the pixel count sane
@@ -96,8 +98,8 @@ export function CloudDive({ duration = 4600, onMid, onWhite, onDone }:
       gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT)
       gl.uniform2f(uRes, c.width, c.height); gl.uniform1f(uT, el / 1000); gl.uniform1f(uP, p)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-      if (!midDone && p >= 0.55) { midDone = true; onMid?.() }
-      if (!whiteDone && p >= 0.86) { whiteDone = true; onWhite?.() }
+      if (!midDone && p >= 0.74) { midDone = true; onMid?.() }   // deck is opaque from ~0.7
+      if (!whiteDone && p >= 0.95) { whiteDone = true; onWhite?.() }
       if (tail >= 1) { finish(); return }
       raf = requestAnimationFrame(draw)
     }

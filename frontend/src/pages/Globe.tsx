@@ -77,7 +77,7 @@ export default function Globe() {
     diveTarget.current = [c[1], c[0]]
     await globe.current?.turnTo(c[1], c[0])
     setDive(true)
-    globe.current?.diveZoom(c[1], c[0], 2600)
+    globe.current?.diveZoom(c[1], c[0], 4500, 11.2)  // keeps growing until the deck is opaque (0.74 × 6.2 s)
   }
   const onDiveMid = useCallback(() => { const d = diveTarget.current; if (d) globe.current?.landAt(d[0], d[1]) }, [])
   const heroRef = useRef<Photo[]>([])
