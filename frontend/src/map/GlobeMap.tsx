@@ -9,6 +9,10 @@ export interface HoverInfo { qid: string; name: string; name_en: string; city?: 
 export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
   peekAt: (lat: number, lon: number) => void
+  turnTo: (lat: number, lon: number) => Promise<void>
+  diveZoom: (lat: number, lon: number) => void
+  landAt: (lat: number, lon: number) => void
+  riseBuildings: () => void
   flyToCountry: (bbox: number[]) => void
   resetToGlobe: () => void
   getMap: () => Map | null
@@ -86,6 +90,33 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       window.clearTimeout(peekTimer.current)
       peekTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 9000)
     },
+    // cinematic sequence, driven by the CloudDive overlay: turn → dive under the clouds → silent jump → rise
+    turnTo: (lat, lon) => new Promise<void>((resolve) => {
+      const map = mapRef.current
+      if (!map) return resolve()
+      spinning.current = false
+      window.clearTimeout(peekTimer.current)
+      map.once('moveend', () => resolve())
+      map.easeTo({ center: [lon, lat], zoom: Math.max(2.3, Math.min(map.getZoom(), 3.0)), pitch: 0, bearing: 0, duration: 1500,
+        easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
+    }),
+    diveZoom: (lat, lon) => {
+      const map = mapRef.current
+      if (!map) return
+      map.easeTo({ center: [lon, lat], zoom: 6.5, pitch: 0, duration: 2200, easing: (x) => x * x, essential: true })
+    },
+    landAt: (lat, lon) => {
+      const map = mapRef.current
+      if (!map) return
+      map.stop()
+      if (map.getLayer(BUILDINGS)) {
+        map.setPaintProperty(BUILDINGS, 'fill-extrusion-height', 0)
+        map.setPaintProperty(BUILDINGS, 'fill-extrusion-base', 0)
+        map.setLayerZoomRange(BUILDINGS, 13, 24)
+      }
+      map.jumpTo({ center: [lon, lat], zoom: 16.2, pitch: 60, bearing: -17 })
+    },
+    riseBuildings: () => { const map = mapRef.current; if (map) animateBuildings(map) },
     flyToUniversity: (lat, lon) => new Promise<void>((resolve) => {
       const map = mapRef.current
       if (!map) return resolve()
