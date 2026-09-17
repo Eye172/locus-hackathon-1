@@ -10,6 +10,7 @@ export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
   peekAt: (lat: number, lon: number) => void
   turnTo: (lat: number, lon: number) => Promise<void>
+  setMarkers: (on: boolean) => void
   diveZoom: (lat: number, lon: number, ms?: number, zoom?: number) => void
   landAt: (lat: number, lon: number) => void
   riseBuildings: () => void
@@ -25,6 +26,15 @@ interface Props {
 }
 
 const HOME: [number, number] = [66, 44]
+// university markers: faded out once a university is chosen, back when the user returns to the planet
+const MARKERS: { id: string; props: [string, number][] }[] = [
+  { id: 'unis-glow', props: [['circle-opacity', 0.35]] },
+  { id: 'unis-point', props: [['circle-opacity', 1], ['circle-stroke-opacity', 1]] },
+  { id: 'unis-cluster', props: [['circle-opacity', 0.88], ['circle-stroke-opacity', 1]] },
+  { id: 'unis-cluster-count', props: [['text-opacity', 1]] },
+  { id: 'unis-label', props: [['text-opacity', 1]] },
+]
+const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
 const BUILDINGS = 'building-3d'
 
 export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady }, ref) {
@@ -32,6 +42,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const stars = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<Map | null>(null)
   const spinning = useRef(true)
+  const markersOn = useRef(true)
   const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
   const starField = useRef<{ x: number; y: number; r: number; a: number }[]>([])
@@ -79,7 +90,23 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     requestAnimationFrame(step)
   }
 
+  const showMarkers = (on: boolean, ms = 600) => {
+    const map = mapRef.current
+    markersOn.current = on
+    if (!map) return
+    for (const { id, props } of MARKERS) {
+      if (!map.getLayer(id)) continue
+      for (const [prop, value] of props) {
+        type PaintName = Parameters<Map['setPaintProperty']>[1]
+        map.setPaintProperty(id, `${prop}-transition` as PaintName, { duration: ms, delay: 0 })  // style-spec transition, honoured at runtime
+        map.setPaintProperty(id, prop as PaintName, on ? value : 0)
+      }
+    }
+    if (!on) { map.getCanvas().style.cursor = ''; onHover?.(null) }
+  }
+
   useImperativeHandle(ref, () => ({
+    setMarkers: (on) => showMarkers(on),
     getMap: () => mapRef.current,
     peekAt: (lat, lon) => {
       // while the user is still typing, the planet gently turns towards the best match (no zoom, no commitment)
@@ -96,9 +123,27 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       if (!map) return resolve()
       spinning.current = false
       window.clearTimeout(peekTimer.current)
-      map.once('moveend', () => resolve())
-      map.easeTo({ center: [lon, lat], zoom: Math.max(2.3, Math.min(map.getZoom(), 3.0)), pitch: 0, bearing: 0, duration: 1500,
-        easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
+      showMarkers(false)
+      map.stop()
+      const c0 = map.getCenter(), z0 = map.getZoom(), b0 = map.getBearing(), p0 = map.getPitch()
+      // the planet makes a turn before the approach: eastward like the idle spin, at least half a revolution,
+      // ending exactly over the university (a target already in view gets a full extra revolution)
+      const east = (((lon - c0.lng) % 360) + 360) % 360
+      const dLng = east < 180 ? east + 360 : east
+      const ms = 1400 + dLng * 3.2                      // 180° → 2.0 s, 540° → 3.1 s
+      const zMid = Math.min(z0, 1.6)                    // pull back so the whole globe turns in frame
+      const zEnd = 2.6
+      const t0 = performance.now()
+      const step = (now: number) => {
+        const t = Math.min(1, (now - t0) / ms)
+        const e = easeInOut(t)
+        const lng = c0.lng + dLng * e
+        const zoom = t < 0.5 ? z0 + (zMid - z0) * easeInOut(t * 2) : zMid + (zEnd - zMid) * easeInOut((t - 0.5) * 2)
+        map.jumpTo({ center: [((lng + 540) % 360) - 180, c0.lat + (lat - c0.lat) * e], zoom, bearing: b0 * (1 - e), pitch: p0 * (1 - e) })
+        if (t < 1) requestAnimationFrame(step)
+        else resolve()
+      }
+      requestAnimationFrame(step)
     }),
     diveZoom: (lat, lon, ms = 4500, zoom = 11.2) => {
       const map = mapRef.current
@@ -140,6 +185,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const map = mapRef.current
       if (!map) return
       map.flyTo({ center: HOME, zoom: 1.5, pitch: 0, bearing: 0, duration: 2000 })
+      window.setTimeout(() => showMarkers(true, 900), 900)
       window.setTimeout(() => { spinning.current = true }, 2100)
     },
   }))
@@ -199,7 +245,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
 
     map.on('mousemove', 'unis-point', (e: MapMouseEvent) => {
       const f = e.features?.[0]
-      if (!f) return
+      if (!f || !markersOn.current) return
       map.getCanvas().style.cursor = 'pointer'
       const p = f.properties as HoverInfo
       const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
@@ -208,15 +254,15 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     map.on('mouseleave', 'unis-point', () => { map.getCanvas().style.cursor = ''; onHover?.(null) })
     map.on('click', 'unis-point', (e: MapMouseEvent) => {
       const f = e.features?.[0]
-      if (!f) return
+      if (!f || !markersOn.current) return
       const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
       onSelect?.({ ...(f.properties as HoverInfo), x: e.point.x, y: e.point.y, lon, lat })
     })
-    map.on('mouseenter', 'unis-cluster', () => { map.getCanvas().style.cursor = 'pointer' })
+    map.on('mouseenter', 'unis-cluster', () => { if (markersOn.current) map.getCanvas().style.cursor = 'pointer' })
     map.on('mouseleave', 'unis-cluster', () => { map.getCanvas().style.cursor = '' })
     map.on('click', 'unis-cluster', async (e: MapMouseEvent) => {
       const f = e.features?.[0]
-      if (!f) return
+      if (!f || !markersOn.current) return
       const src = map.getSource('unis') as GeoJSONSource
       const zoom = await src.getClusterExpansionZoom(f.properties!.cluster_id as number)
       spinning.current = false
