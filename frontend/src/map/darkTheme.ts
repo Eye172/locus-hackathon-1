@@ -13,7 +13,24 @@ const SKY_SPACE: SkySpecification = {
   'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 8, 1, 11, 0],
 }
 
-const BLUE_MARBLE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg'
+export const BLUE_MARBLE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg'
+
+/** Warm the HTTP cache with the whole planet at low zoom (1+4+16+64 small JPEGs), so the spiral dive never shows
+ *  an unloaded (black) side of the globe while it turns and grows at the same time. Runs when the browser is idle. */
+export function prefetchPlanet(maxZ = 3): void {
+  const go = () => {
+    for (let z = 0; z <= maxZ; z++) {
+      const n = 1 << z
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const im = new Image()
+        im.crossOrigin = 'anonymous'  // same mode as the map's own requests, so the cache entry is reused
+        im.src = BLUE_MARBLE.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x))
+      }
+    }
+  }
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
+  if (ric) ric(go, { timeout: 2500 }); else window.setTimeout(go, 1200)
+}
 const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 
 /**

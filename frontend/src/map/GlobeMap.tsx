@@ -3,7 +3,7 @@ import { Map as MLMap, type GeoJSONSource, type MapLayerMouseEvent } from 'mapli
 type Map = MLMap
 type MapMouseEvent = MapLayerMouseEvent
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { loadSatelliteStyle } from './darkTheme'
+import { prefetchPlanet, loadSatelliteStyle } from './darkTheme'
 
 export interface HoverInfo { qid: string; name: string; name_en: string; city?: string; c: string; x: number; y: number; lon: number; lat: number }
 export interface GlobeHandle {
@@ -128,7 +128,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     spinAndApproach: (lat, lon, opts = {}) => {
       const map = mapRef.current
       if (!map) return
-      const { approachMs = 4500, zoom: zTarget = 11.2, onApproach } = opts
+      // `approachMs` = time from onApproach (cloud dive start) to the end of the move, i.e. the dive's hidden jump
+      const { approachMs = 4588, zoom: zTarget = 11.2, onApproach } = opts
       cancelMotion()
       map.stop()
       spinning.current = false
@@ -136,23 +137,25 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       showMarkers(false)
       flattenBuildings(map)  // expensive style change: do it now, while buildings are out of view, not at the jump
       const c0 = map.getCenter(), z0 = map.getZoom(), b0 = map.getBearing(), p0 = map.getPitch()
+      // a spiral dive: the planet turns and grows at the same time from the very first frame.
+      // From orbit it makes an eastward turn; if the user had already zoomed in, it takes the short way instead.
       const east = (((lon - c0.lng) % 360) + 360) % 360
-      const dLng = east < 180 ? east + 360 : east
-      const spinMs = 1400 + dLng * 3.2                 // 180° → 2.0 s, 540° → 3.1 s
-      const zMid = Math.min(z0, 1.6)
-      const pullEnd = spinMs * 0.4                     // zoom stops pulling back where the rotation is fastest
-      const approachStart = spinMs * 0.65              // the dive begins while the planet is still turning
-      const total = approachStart + approachMs
+      const dLng = z0 > 3.2 ? ((lon - c0.lng + 540) % 360) - 180 : (east < 180 ? east + 360 : east)
+      const spinMs = 1400 + Math.abs(dLng) * 3.2       // 180° → 2.0 s, 540° → 3.1 s
+      const total = spinMs + 3000                      // the approach keeps going ~3 s after the turn has settled
+      const approachStart = Math.max(0, total - approachMs)
+      // rotation: smooth start, early peak, long soft deceleration (sine ease on a skewed clock)
+      const turn = (t: number) => (1 - Math.cos(Math.PI * Math.pow(t, 0.7))) / 2
+      // zoom: grows from the first frame (non-zero initial speed) and keeps accelerating into the clouds
+      const grow = (u: number) => 0.15 * u + 0.85 * Math.pow(u, 1.8)
       let fired = false
       const t0 = performance.now()
       const step = (now: number) => {
         const el = now - t0
-        const ts = Math.min(1, el / spinMs)
-        const e = easeInOut(ts)
+        const e = turn(Math.min(1, el / spinMs))
+        const u = Math.min(1, el / total)
         const lng = c0.lng + dLng * e
-        let zoom: number
-        if (el < pullEnd) zoom = z0 + (zMid - z0) * easeInOut(el / pullEnd)
-        else zoom = zMid + (zTarget - zMid) * Math.pow(Math.min(1, (el - pullEnd) / (total - pullEnd)), 1.6)
+        const zoom = z0 + (zTarget - z0) * grow(u)
         map.jumpTo({ center: [((lng + 540) % 360) - 180, c0.lat + (lat - c0.lat) * e], zoom, bearing: b0 * (1 - e), pitch: p0 * (1 - e) })
         if (!fired && el >= approachStart) { fired = true; onApproach?.() }
         motion.current = el < total ? requestAnimationFrame(step) : 0
@@ -267,6 +270,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     map.on('style.load', () => {
       if (map.getSource('unis')) return
       map.setProjection({ type: 'globe' })
+      prefetchPlanet(3)
       map.addSource('unis', { type: 'geojson', data: '/universities.geojson', cluster: true, clusterRadius: 38, clusterMaxZoom: 7 })
       map.addLayer({ id: 'unis-glow', type: 'circle', source: 'unis', filter: ['!', ['has', 'point_count']],
         paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 7, 6, 11, 12, 18], 'circle-color': '#9CD3FF', 'circle-opacity': 0.35, 'circle-blur': 0.9 } })

@@ -77,8 +77,8 @@ export default function Globe() {
     // 1. the planet turns to the university (space view)  2. the cloud dive covers the screen while the map zooms
     // 3. inside the white-out the map jumps to the campus  4. clouds clear, buildings rise  5. the arrival scene
     diveTarget.current = [c[1], c[0]]
-    // one continuous move: the turn decelerates while the approach already accelerates; the cloud dive starts with it
-    globe.current?.spinAndApproach(c[1], c[0], { approachMs: 4500, zoom: 11.2, onApproach: () => { setDive(true); setDiveRun((n) => n + 1) } })
+    // one continuous spiral: the planet turns and grows at once; the cloud dive is timed so its hidden jump lands at the end
+    globe.current?.spinAndApproach(c[1], c[0], { approachMs: 4588 /* 0.74 × 6.2 s: the dive's hidden jump */, zoom: 11.2, onApproach: () => { setDive(true); setDiveRun((n) => n + 1) } })
   }
   const heroRef = useRef<Photo[]>([])
   useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
