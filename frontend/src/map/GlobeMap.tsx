@@ -10,7 +10,7 @@ export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
   peekAt: (lat: number, lon: number) => void
   turnTo: (lat: number, lon: number) => Promise<void>
-  diveZoom: (lat: number, lon: number) => void
+  diveZoom: (lat: number, lon: number, ms?: number) => void
   landAt: (lat: number, lon: number) => void
   riseBuildings: () => void
   flyToCountry: (bbox: number[]) => void
@@ -100,10 +100,11 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       map.easeTo({ center: [lon, lat], zoom: Math.max(2.3, Math.min(map.getZoom(), 3.0)), pitch: 0, bearing: 0, duration: 1500,
         easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
     }),
-    diveZoom: (lat, lon) => {
+    diveZoom: (lat, lon, ms = 2600) => {
       const map = mapRef.current
       if (!map) return
-      map.easeTo({ center: [lon, lat], zoom: 6.5, pitch: 0, duration: 2200, easing: (x) => x * x, essential: true })
+      // accelerating descent: the continent, then the region, then the city fill the screen before the deck closes
+      map.easeTo({ center: [lon, lat], zoom: 8.2, pitch: 0, duration: ms, easing: (x) => x * x * (3 - 2 * x) * 0.4 + x * x * 0.6, essential: true })
     },
     landAt: (lat, lon) => {
       const map = mapRef.current

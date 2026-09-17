@@ -85,5 +85,7 @@ h1, h2, h3, .display { font-family: var(--font-display); letter-spacing: -0.02em
 .reveal-fade { animation: revealFade 1.2s ease-out both; }
 @keyframes revealProgress { from { width: 0 } to { width: 100% } }
 .reveal-progress { animation: revealProgress linear both; }
+@keyframes revealWhite { 0% { opacity: 1 } 100% { opacity: 0 } }
+.reveal-white { animation: revealWhite 1.6s cubic-bezier(.4,0,.2,1) both; }
 .pop { animation: pop .25s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .pop, .clouds-a, .clouds-b, .shimmer { animation: none; } }

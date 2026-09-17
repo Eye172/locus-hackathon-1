@@ -17,8 +17,11 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
   const seen = new Set<string>()
   const ok = photos.filter((p) => !(p as { rejected?: boolean }).rejected && HERO_CATS.has(p.category)
     && (p.level === 'verified' || p.level === 'likely') && !p.outdated && p.width >= 500)
-  const score = (p: Photo) => p.confidence + (p.category === 'campus' ? 0.18 : 0) + (p.source === 'official' ? 0.05 : 0)
-    + (p.width > p.height ? 0.08 : -0.1) + (p.level === 'verified' ? 0.1 : 0)
+  // exteriors of the campus first, then dorms/libraries/sport; interiors and street-level car shots last
+  const score = (p: Photo) => p.confidence
+    + ({ campus: 0.35, dormitory: 0.12, library: 0.1, sports: 0.06, student_life: 0.0, classroom: -0.18, lab: -0.2 } as Record<string, number>)[p.category]
+    + (p.source === 'official' || p.source.startsWith('commons') || p.source === 'wikipedia' ? 0.08 : 0) + (p.source === 'mapillary' ? -0.2 : 0)
+    + (p.width > p.height ? 0.1 : -0.12) + (p.width >= 1000 ? 0.08 : 0) + (p.level === 'verified' ? 0.1 : 0) - Math.min(0.2, p.junk_score)
   return ok.sort((a, b) => score(b) - score(a)).filter((p) => !seen.has(p.id) && seen.add(p.id)).slice(0, limit)
 }
 
@@ -60,7 +63,8 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
 
   if (!cur) return null
   return (
-    <div className="absolute inset-0 z-40 bg-black reveal-in select-none">
+    <div className="absolute inset-0 z-40 bg-black select-none">
+      <div className="absolute inset-0 z-[60] bg-white pointer-events-none reveal-white" />
       {prev != null && photos[prev] && (
         <div className="absolute inset-0">
           <DepthPhoto key={`p-${photos[prev].id}`} src={heroUrl(qid, photos[prev].id, photos[prev].url)} depthSrc={depthUrl(photos[prev].id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" />

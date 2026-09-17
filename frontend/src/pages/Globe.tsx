@@ -77,14 +77,21 @@ export default function Globe() {
     diveTarget.current = [c[1], c[0]]
     await globe.current?.turnTo(c[1], c[0])
     setDive(true)
-    globe.current?.diveZoom(c[1], c[0])
+    globe.current?.diveZoom(c[1], c[0], 2600)
   }
   const onDiveMid = useCallback(() => { const d = diveTarget.current; if (d) globe.current?.landAt(d[0], d[1]) }, [])
-  const onDiveClear = useCallback(() => { globe.current?.riseBuildings() }, [])
+  const heroRef = useRef<Photo[]>([])
+  useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
+  // white-out complete: the campus photo takes over directly (the map with its boxes stays behind the «3D map» button);
+  // without photos yet, the clouds clear onto the 3D map while the profile keeps collecting
+  const onDiveWhite = useCallback(() => {
+    setPhase('arrived')
+    if (heroRef.current.length > 0) setReveal(true)
+    else globe.current?.riseBuildings()
+  }, [])
   const onDiveDone = useCallback(() => {
     setDive(false)
-    setPhase('arrived')
-    revealTimer.current = window.setTimeout(() => setReveal(true), 1400)  // let the buildings finish rising
+    if (heroRef.current.length === 0) revealTimer.current = window.setTimeout(() => setReveal(true), 900)
   }, [])
   // the planet turns towards the best match while typing — also for universities outside the local index
   const onCandidates = (cs: Candidate[]) => {
@@ -112,7 +119,7 @@ export default function Globe() {
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} />
       <Clouds zoom={dive ? 0 : zoom} />
-      {dive && <CloudDive onMid={onDiveMid} onClear={onDiveClear} onDone={onDiveDone} />}
+      {dive && <CloudDive onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />}
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />
 
       {phase === 'idle' && (
@@ -155,7 +162,7 @@ export default function Globe() {
       )}
 
       {reveal && phase === 'arrived' && target && heroPhotos.length > 0 && (
-        <CampusReveal qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => setReveal(false)} />
+        <CampusReveal qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => { setReveal(false); globe.current?.riseBuildings() }} />
       )}
       {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">
