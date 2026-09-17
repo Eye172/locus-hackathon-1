@@ -56,6 +56,7 @@ const D: Record<string, Record<Lang, string>> = {
   'reveal.real': { ru: 'Реальные проверенные фото · у каждого источник · объём по карте глубины, ничего не дорисовано', en: 'Real verified photos · each with its source · depth from a depth map, nothing invented', kk: 'Нақты тексерілген фотолар · әрқайсысының дереккөзі бар · тереңдік картасы бойынша көлем' },
   'reveal.map': { ru: '3D-карта', en: '3D map', kk: '3D-карта' },
   'reveal.source': { ru: 'источник фото', en: 'photo source', kk: 'фото дереккөзі' },
+  'reveal.collecting': { ru: 'собираем фото', en: 'collecting photos', kk: 'фотолар жиналуда' },
   'reveal.show': { ru: 'Показать кампус', en: 'Show the campus', kk: 'Кампусты көрсету' },
   'globe.skip': { ru: 'Пропустить', en: 'Skip', kk: 'Өткізіп жіберу' },
   'globe.open': { ru: 'Открыть профиль', en: 'Open profile', kk: 'Профильді ашу' },

@@ -22,7 +22,7 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
   return ok.sort((a, b) => score(b) - score(a)).filter((p) => !seen.has(p.id) && seen.add(p.id)).slice(0, limit)
 }
 
-export const heroUrl = (qid: string, id: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg`
+export const heroUrl = (qid: string, id: string, src?: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg${src ? `?src=${encodeURIComponent(src)}` : ''}`
 export const depthUrl = (id: string) => `${API_BASE}/api/depth/${id}.png`
 
 export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
@@ -49,7 +49,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
   }, [idx, n])
   useEffect(() => {  // warm the next frame so the cross-fade never waits for the network
     const nx = photos[(idx + 1) % n]
-    if (nx) { new Image().src = heroUrl(qid, nx.id); new Image().src = depthUrl(nx.id) }
+    if (nx) { new Image().src = heroUrl(qid, nx.id, nx.url); new Image().src = depthUrl(nx.id) }
   }, [idx, n, photos, qid])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'ArrowRight') go(idx + 1); else if (e.key === 'ArrowLeft') go(idx - 1); else if (e.key === 'Escape') onMap() }
@@ -63,11 +63,11 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap }:
     <div className="absolute inset-0 z-40 bg-black reveal-in select-none">
       {prev != null && photos[prev] && (
         <div className="absolute inset-0">
-          <DepthPhoto key={`p-${photos[prev].id}`} src={heroUrl(qid, photos[prev].id)} depthSrc={depthUrl(photos[prev].id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" />
+          <DepthPhoto key={`p-${photos[prev].id}`} src={heroUrl(qid, photos[prev].id, photos[prev].url)} depthSrc={depthUrl(photos[prev].id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" />
         </div>
       )}
       <div className={`absolute inset-0 ${prev != null ? 'reveal-fade' : ''}`}>
-        <DepthPhoto key={`c-${cur.id}`} src={heroUrl(qid, cur.id)} depthSrc={depthUrl(cur.id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" alt={cur.title ?? name} />
+        <DepthPhoto key={`c-${cur.id}`} src={heroUrl(qid, cur.id, cur.url)} depthSrc={depthUrl(cur.id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" alt={cur.title ?? name} />
       </div>
       {/* legibility gradients, no blur over the photo itself */}
       <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />

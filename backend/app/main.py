@@ -82,6 +82,16 @@ async def mini(qid: str):
     u = p.university if p else None
     lat = (u.lat if u else None) or (row["coord"][0] if row and row.get("coord") else None)
     lon = (u.lon if u else None) or (row["coord"][1] if row and row.get("coord") else None)
+    if lat is None:
+        # an index row without coordinates (Wikidata has none): geocode quickly so the globe can still fly there
+        try:
+            from .pipeline import enrich as enrich_mod
+            uni, _ = await asyncio.wait_for(enrich_mod.facts(qid), timeout=5.0)
+            lat, lon = uni.lat, uni.lon
+            if row is not None and lat is not None:
+                row["coord"] = [lat, lon]  # remember for this process
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "qid": qid,
         "name": (u.name if u else None) or row.get("ru") or row.get("en"),
@@ -328,7 +338,7 @@ async def depth(photo_id: str):
 
 
 @app.get("/api/hero/{qid}/{photo_id}.jpg")
-async def hero(qid: str, photo_id: str):
+async def hero(qid: str, photo_id: str, src: str | None = None):
     """Large copy (≤1600 px) of a profile photo for the arrival scene; fetched from the original once, cached on disk.
     Falls back to the 640 px thumbnail when the original is unavailable or the profile is still being built."""
     hero_dir = settings.hero_dir() if callable(settings.hero_dir) else settings.hero_dir
@@ -337,9 +347,13 @@ async def hero(qid: str, photo_id: str):
     if not path.exists():
         p = await cache.get_profile(qid)
         ph = next((x for x in (p.photos if p else []) if x.id == photo_id), None)
-        if ph:
+        # while the profile is still being built the client knows the original URL from the stream; trust it only
+        # when it hashes to this photo id (ids are sha1(url)[:16]), so nothing foreign can be proxied
+        from .pipeline.fetch import photo_id as _pid
+        url = ph.url if ph else (src if src and src.startswith("http") and _pid(src) == photo_id else None)
+        if url:
             try:
-                r = await http.get(ph.url, timeout=8.0)
+                r = await http.get(url, timeout=8.0)
                 if r.status_code == 200 and r.content:
                     def _make(data: bytes) -> bytes:
                         from io import BytesIO

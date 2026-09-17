@@ -7,7 +7,7 @@ import { Clouds } from '../components/Clouds'
 import { SearchBox } from '../components/SearchBox'
 import { api, streamProfile, thumbUrl } from '../lib/api'
 import type { Candidate, Photo } from '../lib/types'
-import { CampusReveal, pickHero } from '../components/CampusReveal'
+import { CampusReveal, depthUrl, heroUrl, pickHero } from '../components/CampusReveal'
 import { useLang, useT } from '../lib/i18n'
 
 interface Country { qid: string; iso: string; ru: string; en: string; kk: string; count: number; center: number[]; bbox: number[] }
@@ -27,6 +27,8 @@ export default function Globe() {
   const [heroPhotos, setHeroPhotos] = useState<Photo[]>([])
   const [reveal, setReveal] = useState(false)
   const stopStream = useRef<(() => void) | null>(null)
+  const [progress, setProgress] = useState<{ sources: number; photos: number; done: boolean } | null>(null)
+  const peekSeq = useRef(0)
   const revealTimer = useRef<number | undefined>(undefined)
   const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
@@ -54,19 +56,41 @@ export default function Globe() {
     setHover(null)
     // the arrival scene needs photos: the cached profile answers at once, otherwise the live stream feeds it as it goes
     stopStream.current?.(); setHeroPhotos([]); setReveal(false); window.clearTimeout(revealTimer.current)
+    setProgress(null)
     api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos))).catch(() => {
       const pool = new Map<string, Photo>()
+      let sources = 0
+      setProgress({ sources: 0, photos: 0, done: false })
       stopStream.current = streamProfile(qid, false, {
-        onPhotos: (_s, photos) => { for (const p of photos) pool.set(p.id, p); setHeroPhotos(pickHero([...pool.values()])) },
-        onProfile: (p) => setHeroPhotos(pickHero(p.photos)),
+        onSource: (_n, s) => { if (s.status === 'done' || s.status === 'skipped' || s.status === 'error') { sources++; setProgress((p) => p && { ...p, sources }) } },
+        onPhotos: (_s, photos) => { for (const p of photos) pool.set(p.id, p); const hero = pickHero([...pool.values()]); setHeroPhotos(hero); setProgress((p) => p && { ...p, photos: pool.size }) },
+        onProfile: (p) => { setHeroPhotos(pickHero(p.photos)); setProgress((x) => x && { ...x, done: true }) },
+        onError: () => setProgress((x) => x && { ...x, done: true }),
       })
     })
     mini.then((m) => { if (m) setTarget((t) => (t && t.qid === qid ? { ...t, name: m.name || t.name, city: m.city ?? t.city, photos: m.profile?.photos } : t)) })
     await globe.current?.flyToUniversity(c[1], c[0])
     setPhase('arrived')
-    revealTimer.current = window.setTimeout(() => setReveal(true), 1700)  // let the buildings rise first
+    revealTimer.current = window.setTimeout(() => setReveal(true), 1200)  // let the buildings rise first
   }
-  const onCandidates = (cs: Candidate[]) => { const c = cs[0] && coords.current.get(cs[0].qid); if (c) globe.current?.peekAt(c[1], c[0]) }
+  // the planet turns towards the best match while typing — also for universities outside the local index
+  const onCandidates = (cs: Candidate[]) => {
+    const top = cs[0]
+    if (!top) return
+    const my = ++peekSeq.current
+    const c = coords.current.get(top.qid)
+    if (c) { globe.current?.peekAt(c[1], c[0]); return }
+    api.mini(top.qid).then((m) => {
+      if (my !== peekSeq.current || m.lat == null || m.lon == null) return
+      coords.current.set(top.qid, [m.lon, m.lat])
+      globe.current?.peekAt(m.lat, m.lon)
+    }).catch(() => {})
+  }
+  // warm the first frames during the flight so the scene opens without a blank
+  useEffect(() => {
+    if (!target) return
+    for (const p of heroPhotos.slice(0, 2)) { new Image().src = heroUrl(target.qid, p.id, p.url); new Image().src = depthUrl(p.id) }
+  }, [heroPhotos, target])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
   const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setReveal(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
 
@@ -119,7 +143,7 @@ export default function Globe() {
       {reveal && phase === 'arrived' && target && heroPhotos.length > 0 && (
         <CampusReveal qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => setReveal(false)} />
       )}
-      {phase !== 'idle' && target && !reveal && (
+      {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">
           <div className="rounded-2xl bg-[#0B1222]/92 border border-white/10 backdrop-blur-xl p-4 shadow-2xl">
             <div className="flex items-start gap-3">
@@ -140,6 +164,7 @@ export default function Globe() {
             <div className="mt-3 flex items-center gap-2">
               <button onClick={openProfile} className="btn-primary flex-1 justify-center">{t('globe.open')} <ArrowRight size={16} /></button>
             </div>
+            {progress && !progress.done && <div className="mt-2 text-[11px] text-blue-200/70 flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> {t('reveal.collecting')} · {progress.photos} · {progress.sources}/13</div>}
             {phase === 'arrived' && heroPhotos.length > 0 && <button onClick={() => setReveal(true)} className="mt-2 text-[11px] text-blue-200 hover:text-white underline underline-offset-2 cursor-pointer">{t('reveal.show')}</button>}
             {phase === 'arrived' && <div className="mt-2 text-[11px] text-blue-200/50">{t('globe.hint')}</div>}
           </div>
