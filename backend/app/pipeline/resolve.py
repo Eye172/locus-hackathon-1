@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import unicodedata
+from functools import lru_cache
 
 from rapidfuzz import fuzz, process
 
@@ -58,6 +59,9 @@ TRANSLIT = {
 }
 
 
+COUNTRIES_JSON = settings.data_dir.parents[1] / "frontend" / "public" / "countries.json"
+
+
 def normalize(s: str) -> str:
     s = unicodedata.normalize("NFKC", s).lower().replace("ё", "е")
     s = re.sub(r"[^\w\s-]", " ", s)
@@ -98,6 +102,7 @@ class Index:
         self.choice_row: list[int] = []        # cid -> row index
         self.row_choices: list[list[int]] = [] # row index -> cids
         self.city_rows: dict[str, set[int]] = {}   # normalized city alias -> rows in that city
+        self.row_of: dict[str, int] = {}          # qid -> row
         self.city_aliases: list[str] = []
 
     def load(self, path=None) -> None:
@@ -108,8 +113,10 @@ class Index:
         self.rows = json.loads(path.read_text(encoding="utf-8"))
         self.by_id = {}
         self.choice_texts, self.choice_row, self.row_choices, self.city_rows = [], [], [], {}
+        self.row_of = {}
         for i, r in enumerate(self.rows):
             self.by_id[r["id"]] = r
+            self.row_of[r["id"]] = i
             names = [r.get("ru"), r.get("en"), r.get("kk")] + list(r.get("aliases") or [])
             texts: set[str] = set()
             for n in names:
@@ -225,6 +232,31 @@ class Index:
 index = Index()
 
 
+@lru_cache(maxsize=1)
+def country_tokens() -> dict[str, str]:
+    """Words that name a country in a query -> its Wikidata id ("kazakhstan" / "казахстан" / "qazaqstan" -> Q232)."""
+    out: dict[str, str] = {}
+    try:
+        rows = json.loads(COUNTRIES_JSON.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        rows = [{"qid": q, "ru": n} for q, n in COUNTRY_NAMES.items()]
+    for row in rows:
+        for name in (row.get("ru"), row.get("en"), row.get("kk")):
+            for form in {normalize(name or ""), translit(normalize(name or ""))}:
+                if len(form) >= 5:
+                    out[form] = row["qid"]
+    return out
+
+
+def country_in(qn: str) -> str | None:
+    toks = qn.split()
+    tokens = country_tokens()
+    for g in [f"{a} {b}" for a, b in zip(toks, toks[1:])] + toks:
+        if (qid := tokens.get(g)):
+            return qid
+    return None
+
+
 async def resolve(q: str) -> list[Candidate]:
     """Offline index first; live Wikidata search is added unless the index already has a near-exact hit."""
     q = q.strip()
@@ -233,6 +265,22 @@ async def resolve(q: str) -> list[Candidate]:
     local = index.search(q)
     remote: list[Candidate] = []
     qn = normalize(q)
+    # "Cardiff University Astana" is not Cardiff: a place named in the query and contradicted by a candidate means
+    # the index found a similar name somewhere else. Such a hit stops counting as exact, so Wikidata and the web
+    # (where branch campuses live) still get their turn - it stays in the list, it just no longer closes the search.
+    want_city, _rest = index._city_in(qn)
+    want_country = country_in(qn)
+    if want_city or want_country:
+        rows_here = index.city_rows.get(want_city, set()) if want_city else None
+        for c in local:
+            row = index.row_of.get(c.qid)
+            if row is None:
+                continue
+            wrong_country = want_country and index.rows[row].get("country") != want_country
+            wrong_city = rows_here is not None and row not in rows_here
+            if wrong_country or (wrong_city and not want_country):
+                c.score = min(c.score, 0.80 if wrong_country else 0.90)
+        local.sort(key=lambda c: -c.score)
     # a confident local hit (exact stripped/full-label match, or a city-narrowed list) answers instantly;
     # otherwise Wikidata gets a short, hard-capped chance so typing never stalls
     exact_local = bool(local) and local[0].score >= 1.0

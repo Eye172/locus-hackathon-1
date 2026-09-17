@@ -55,6 +55,11 @@ def commons_file_url(filename: str, width: int = 800) -> str:
     return f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(filename.replace(' ', '_'))}?width={width}"
 
 
+# a paper or a proceedings volume named after a university matches any name regex; its description does not
+NOT_INSTITUTION = re.compile(r"proceedings|scientific article|journal article|periodical|encyclopedi|"
+                             r"статья|сборник|журнал|книга|препринт|диссертац", re.I)
+
+
 def is_university(entity: dict) -> bool:
     claims = entity.get("claims", {})
     p31: list[str] = []
@@ -69,6 +74,8 @@ def is_university(entity: dict) -> bool:
         return True
     descs = entity.get("descriptions", {})
     labels = entity.get("labels", {})
+    if any(NOT_INSTITUTION.search(v["value"]) for v in descs.values()):
+        return False
     text = " ".join(v["value"] for v in list(descs.values()) + list(labels.values()))
     return bool(UNI_RE.search(text))
 

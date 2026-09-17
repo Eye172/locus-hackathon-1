@@ -13,9 +13,16 @@ from ..models import Photo
 DIVERSITY_COSINE = 0.86
 
 
+BRANDED = {"banner", "text", "logo"}
+
+
 def rank(p: Photo) -> float:
     q = (p.quality / 3) if p.quality is not None else 0.5
-    return 0.65 * p.confidence + 0.35 * q + (0.04 if p.level == "verified" else 0.0) - (0.12 if p.outdated else 0.0)
+    # a real photo with the university's banner across the bottom is still evidence, but between it and a clean
+    # shot of the same place the clean one goes into the album
+    branded = 0.08 if p.ai and BRANDED.intersection(p.ai.flags) else 0.0
+    return (0.65 * p.confidence + 0.35 * q + (0.04 if p.level == "verified" else 0.0)
+            - (0.12 if p.outdated else 0.0) - branded)
 
 
 def feature(photos: list[Photo], embs: dict[str, np.ndarray]) -> list[Photo]:
