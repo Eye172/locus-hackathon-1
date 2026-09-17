@@ -1,6 +1,9 @@
 # Деплой
 
-## Самый быстрый путь: один Space на Hugging Face (бэкенд + фронтенд + прогретый кэш)
+## Вариант A: один Space на Hugging Face (бэкенд + фронтенд + прогретый кэш)
+
+> С сентября 2026 Docker-Spaces даже на бесплатном CPU требуют PRO-подписку ($9/мес): `deploy_hf.py` получает
+> `402 Payment Required` без неё. Static Spaces бесплатны, но бэкенду нужен Docker.
 
 1. Токен с правом **Write**: https://huggingface.co/settings/tokens → Create new token → тип Write → скопировать.
 2. Добавить в `backend/.env` строку `HF_TOKEN=hf_...` (файл в `.gitignore`).
@@ -10,7 +13,21 @@
 5. UptimeRobot на `/api/health` каждые 5 минут, чтобы Space не засыпал в дни проверки.
 
 
-## Backend → Hugging Face Spaces (Docker, бесплатный CPU)
+## Вариант B: Modal (бесплатные $30/мес, карта не нужна) — `deploy/modal_app.py`
+
+1. `pip install modal` и один раз `modal setup` (откроется браузер, вход через GitHub/Google).
+2. `modal deploy deploy/modal_app.py` — образ с torch + CLIP собирается ~5 мин, дальше стабильный адрес
+   вида `https://<логин>--campuslens-web.modal.run` (бэкенд + фронтенд, один адрес).
+3. Кэш профилей и превью: `modal volume put campuslens-data backend/data/campuslens.sqlite3 /campuslens.sqlite3`
+   и `modal volume put campuslens-data backend/data/thumbs /thumbs`.
+4. На дни проверки поднять `MIN_CONTAINERS=1` в `deploy/modal_app.py`, чтобы не было холодного старта (~30 с).
+
+## Вариант C: ноутбук + туннель (бесплатно, но компьютер должен работать)
+
+Фронтенд на Vercel, бэкенд локально: `ngrok http 8000 --domain <ваш-статичный>.ngrok-free.app`, в `vercel.json`
+подставить этот адрес в rewrite `/api/*` и `/s/*`. Запросы из приложения идут с заголовком, обходящим заставку ngrok.
+
+## Backend → Hugging Face Spaces (Docker) — детали варианта A
 
 1. Создать Space: тип **Docker**, hardware CPU basic (2 vCPU, 16 ГБ RAM).
 2. В корень Space положить содержимое `backend/` (Dockerfile уже настроен на порт 7860 и пользователя `user`).
