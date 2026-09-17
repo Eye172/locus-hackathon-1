@@ -72,6 +72,12 @@ class Settings(BaseSettings):
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    @property
+    def hero_dir(self) -> Path:
+        d = self.data_dir / "hero"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def sources_status(self) -> dict[str, dict]:
         """Which optional sources are enabled. Shown in the UI so a missing key is never a silent failure."""
         return {

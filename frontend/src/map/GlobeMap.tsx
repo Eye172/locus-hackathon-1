@@ -8,6 +8,7 @@ import { loadSatelliteStyle } from './darkTheme'
 export interface HoverInfo { qid: string; name: string; name_en: string; city?: string; c: string; x: number; y: number; lon: number; lat: number }
 export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
+  peekAt: (lat: number, lon: number) => void
   flyToCountry: (bbox: number[]) => void
   resetToGlobe: () => void
   getMap: () => Map | null
@@ -27,6 +28,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const stars = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<Map | null>(null)
   const spinning = useRef(true)
+  const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
   const starField = useRef<{ x: number; y: number; r: number; a: number }[]>([])
 
@@ -75,6 +77,15 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
 
   useImperativeHandle(ref, () => ({
     getMap: () => mapRef.current,
+    peekAt: (lat, lon) => {
+      // while the user is still typing, the planet gently turns towards the best match (no zoom, no commitment)
+      const map = mapRef.current
+      if (!map || map.getZoom() > 3.4) return
+      spinning.current = false
+      map.easeTo({ center: [lon, lat], duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
+      window.clearTimeout(peekTimer.current)
+      peekTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 9000)
+    },
     flyToUniversity: (lat, lon) => new Promise<void>((resolve) => {
       const map = mapRef.current
       if (!map) return resolve()

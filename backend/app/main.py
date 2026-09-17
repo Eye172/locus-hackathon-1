@@ -327,6 +327,36 @@ async def depth(photo_id: str):
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
 
+@app.get("/api/hero/{qid}/{photo_id}.jpg")
+async def hero(qid: str, photo_id: str):
+    """Large copy (≤1600 px) of a profile photo for the arrival scene; fetched from the original once, cached on disk.
+    Falls back to the 640 px thumbnail when the original is unavailable or the profile is still being built."""
+    hero_dir = settings.hero_dir() if callable(settings.hero_dir) else settings.hero_dir
+    path = hero_dir / f"{photo_id}.jpg"
+    thumb_path = settings.thumbs_dir / f"{photo_id}.jpg"
+    if not path.exists():
+        p = await cache.get_profile(qid)
+        ph = next((x for x in (p.photos if p else []) if x.id == photo_id), None)
+        if ph:
+            try:
+                r = await http.get(ph.url, timeout=8.0)
+                if r.status_code == 200 and r.content:
+                    def _make(data: bytes) -> bytes:
+                        from io import BytesIO
+                        from PIL import Image, ImageOps
+                        im = ImageOps.exif_transpose(Image.open(BytesIO(data))).convert("RGB")
+                        im.thumbnail((1600, 1600))
+                        out = BytesIO(); im.save(out, "JPEG", quality=86, optimize=True); return out.getvalue()
+                    path.write_bytes(await asyncio.get_running_loop().run_in_executor(None, _make, r.content))
+            except Exception as e:  # noqa: BLE001
+                log.info("hero fetch failed for %s: %s", photo_id, e)
+    if not path.exists():
+        if not thumb_path.exists():
+            raise HTTPException(404)
+        path = thumb_path
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
+
+
 @app.get("/api/thumb/{photo_id}.jpg")
 async def thumb(photo_id: str):
     path = settings.thumbs_dir / f"{photo_id}.jpg"

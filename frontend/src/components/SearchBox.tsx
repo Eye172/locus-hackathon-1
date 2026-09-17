@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import type { Candidate } from '../lib/types'
 import { useT } from '../lib/i18n'
 
-export function SearchBox({ onPick, dark, autoFocus, size = 'lg', direction = 'down' }: { onPick: (c: Candidate) => void; dark?: boolean; autoFocus?: boolean; size?: 'lg' | 'md'; direction?: 'down' | 'up' }) {
+export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', direction = 'down' }: { onPick: (c: Candidate) => void; onCandidates?: (c: Candidate[]) => void; dark?: boolean; autoFocus?: boolean; size?: 'lg' | 'md'; direction?: 'down' | 'up' }) {
   const t = useT()
   const [q, setQ] = useState('')
   const [cands, setCands] = useState<Candidate[] | null>(null)
@@ -23,7 +23,7 @@ export function SearchBox({ onPick, dark, autoFocus, size = 'lg', direction = 'd
     timer.current = window.setTimeout(async () => {
       const my = ++seq.current
       setLoading(true)
-      try { const r = await api.search(q.trim()); if (my === seq.current) { setCands(r.candidates); setActive(0) } }
+      try { const r = await api.search(q.trim()); if (my === seq.current) { setCands(r.candidates); setActive(0); onCandidates?.(r.candidates) } }
       catch { if (my === seq.current) setCands([]) }
       finally { if (my === seq.current) setLoading(false) }
     }, 220)

@@ -5,8 +5,9 @@ import { MapPin, Sparkles, ArrowRight, Undo2, Loader2 } from 'lucide-react'
 import { GlobeMap, type GlobeHandle, type HoverInfo } from '../map/GlobeMap'
 import { Clouds } from '../components/Clouds'
 import { SearchBox } from '../components/SearchBox'
-import { api, thumbUrl } from '../lib/api'
-import type { Candidate } from '../lib/types'
+import { api, streamProfile, thumbUrl } from '../lib/api'
+import type { Candidate, Photo } from '../lib/types'
+import { CampusReveal, pickHero } from '../components/CampusReveal'
 import { useLang, useT } from '../lib/i18n'
 
 interface Country { qid: string; iso: string; ru: string; en: string; kk: string; count: number; center: number[]; bbox: number[] }
@@ -23,6 +24,10 @@ export default function Globe() {
   const [countries, setCountries] = useState<Country[]>([])
   const [phase, setPhase] = useState<'idle' | 'flying' | 'arrived'>('idle')
   const [cutscene, setCutscene] = useState<string | null>(null)
+  const [heroPhotos, setHeroPhotos] = useState<Photo[]>([])
+  const [reveal, setReveal] = useState(false)
+  const stopStream = useRef<(() => void) | null>(null)
+  const revealTimer = useRef<number | undefined>(undefined)
   const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
   const coords = useRef<Map<string, [number, number]>>(new Map())
@@ -47,12 +52,23 @@ export default function Globe() {
     setTarget({ qid, name, city })
     setPhase('flying')
     setHover(null)
+    // the arrival scene needs photos: the cached profile answers at once, otherwise the live stream feeds it as it goes
+    stopStream.current?.(); setHeroPhotos([]); setReveal(false); window.clearTimeout(revealTimer.current)
+    api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos))).catch(() => {
+      const pool = new Map<string, Photo>()
+      stopStream.current = streamProfile(qid, false, {
+        onPhotos: (_s, photos) => { for (const p of photos) pool.set(p.id, p); setHeroPhotos(pickHero([...pool.values()])) },
+        onProfile: (p) => setHeroPhotos(pickHero(p.photos)),
+      })
+    })
     mini.then((m) => { if (m) setTarget((t) => (t && t.qid === qid ? { ...t, name: m.name || t.name, city: m.city ?? t.city, photos: m.profile?.photos } : t)) })
     await globe.current?.flyToUniversity(c[1], c[0])
     setPhase('arrived')
+    revealTimer.current = window.setTimeout(() => setReveal(true), 1700)  // let the buildings rise first
   }
+  const onCandidates = (cs: Candidate[]) => { const c = cs[0] && coords.current.get(cs[0].qid); if (c) globe.current?.peekAt(c[1], c[0]) }
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setReveal(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); globe.current?.resetToGlobe() }
 
   return (
     <div className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
@@ -69,7 +85,7 @@ export default function Globe() {
             <p className="mt-3 text-blue-100/80 max-w-2xl text-sm sm:text-base">{t('home.subtitle')}</p>
           </div>
           <div className="absolute left-0 right-0 bottom-10 flex flex-col items-center px-4 gap-3">
-            <div className="w-full max-w-2xl"><SearchBox onPick={onPick} dark autoFocus direction="up" /></div>
+            <div className="w-full max-w-2xl"><SearchBox onPick={onPick} onCandidates={onCandidates} dark autoFocus direction="up" /></div>
             <div className="flex flex-wrap justify-center gap-2">
               {QUICK.map((iso) => {
                 const c = countries.find((x) => x.iso === iso)
@@ -100,7 +116,10 @@ export default function Globe() {
         </div>
       )}
 
-      {phase !== 'idle' && target && (
+      {reveal && phase === 'arrived' && target && heroPhotos.length > 0 && (
+        <CampusReveal qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile} onMap={() => setReveal(false)} />
+      )}
+      {phase !== 'idle' && target && !reveal && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">
           <div className="rounded-2xl bg-[#0B1222]/92 border border-white/10 backdrop-blur-xl p-4 shadow-2xl">
             <div className="flex items-start gap-3">
@@ -121,6 +140,7 @@ export default function Globe() {
             <div className="mt-3 flex items-center gap-2">
               <button onClick={openProfile} className="btn-primary flex-1 justify-center">{t('globe.open')} <ArrowRight size={16} /></button>
             </div>
+            {phase === 'arrived' && heroPhotos.length > 0 && <button onClick={() => setReveal(true)} className="mt-2 text-[11px] text-blue-200 hover:text-white underline underline-offset-2 cursor-pointer">{t('reveal.show')}</button>}
             {phase === 'arrived' && <div className="mt-2 text-[11px] text-blue-200/50">{t('globe.hint')}</div>}
           </div>
         </div>
