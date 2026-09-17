@@ -195,6 +195,13 @@ async def entity(qid: str) -> University:
             students = None
     logo = _first(claims, "P154")
     image = _first(claims, "P18")
+    # accounts as Wikidata knows them: many university sites never link their own Instagram from the homepage
+    social = {net: tmpl.format(_first(claims, prop)) for net, prop, tmpl in (
+        ("instagram", "P2003", "https://www.instagram.com/{}"),
+        ("tiktok", "P7085", "https://www.tiktok.com/@{}"),
+        ("telegram", "P3789", "https://t.me/{}"),
+        ("vk", "P3185", "https://vk.com/{}"),
+    ) if isinstance(_first(claims, prop), str)}
     city = _first(claims, "P131")
     country = _first(claims, "P17")
 
@@ -215,6 +222,7 @@ async def entity(qid: str) -> University:
         students=students,
         logo_url=commons_file_url(logo, 200) if isinstance(logo, str) else None,
         image_url=commons_file_url(image, 800) if isinstance(image, str) else None,
+        social=social,
     )
 
     ref_ids = [x for x in [uni.city_qid, country["id"] if country else None] if x]

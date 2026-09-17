@@ -24,6 +24,7 @@ SOURCE_PRIOR: dict[str, float] = {
     "places": 0.35,
     "telegram": 0.35,
     "instagram": 0.35,
+    "instagram_tagged": 0.22,
     "vk": 0.35,
     "tiktok": 0.30,
     "youtube": 0.30,
@@ -53,6 +54,7 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "city_cat": "Файл в категории города на Commons",
     "telegram": "Пост в официальном Telegram-канале вуза (ссылка с сайта)",
     "instagram": "Публикация в официальном Instagram вуза (ссылка с сайта)",
+    "instagram_tagged": "Автор поста отметил в нём официальный аккаунт вуза",
     "vk": "Пост в официальной группе VK вуза",
     "tiktok": "Видео в официальном TikTok вуза (ссылка с сайта)",
     "youtube": "Кадр видео с официального YouTube-канала вуза",
@@ -68,9 +70,29 @@ CITY_SOURCES = {"city_article", "city_cat"}
 # sources anchored by a coordinate, not by a channel of the university: whatever people happened to photograph
 # there, including each other. A close-up of one private person is neither useful to an applicant nor ours to show.
 GEO_CROWD_SOURCES = {"vk_geo"}
+# posted by someone else about the university: the tag or the coordinate points here, the picture still has to
+# be looked at. Nothing from these sources is shown without the inspector's verdict.
+CROWD_SOURCES = GEO_CROWD_SOURCES | {"instagram_tagged"}
 SEARCH_SOURCES = {"web_image", "tiktok_search", "youtube_search", "openverse", "commons_search", "external"}
 REJECT_FLAGS = {"illustration", "stock", "screenshot", "logo", "collage"}
+# almost every photo a university posts carries its logo in a corner and a line of text over the sky. That is
+# branding on a real picture, not a fake one, and the model already tells the two apart: a poster is not useful to
+# an applicant (q<=1), a branded photo of a real lab is (q>=2). So for a photo the model calls useful, the logo
+# stops being a reason to throw it away and the overlay costs a fraction of what it costs on a poster.
+SOFT_WHEN_USEFUL = {"logo"}
 SOFT_FLAGS = {"banner": -0.20, "crop": -0.10, "official_meeting": -0.25, "portrait": -0.08, "text": -0.05}
+BANNER_WHEN_USEFUL = -0.06
+
+
+def useful_photo(v: AiVerdict) -> bool:
+    """The model looked at it and said: this is this university, and the frame actually shows something."""
+    return v.place == "this_university" and v.rel >= 2 and v.q >= 2
+
+
+def hard_flags(v: AiVerdict) -> list[str]:
+    """Flags that reject the photo outright, given what the model said about its usefulness."""
+    ok = useful_photo(v)
+    return [f for f in v.flags if f in REJECT_FLAGS and not (ok and f in SOFT_WHEN_USEFUL)]
 CITY_Q_WEIGHT = {3: 0.12, 2: 0.08, 1: -0.12, 0: -0.30}
 REL_WEIGHT = {3: 0.30, 2: 0.25, 1: -0.15, 0: -0.40}
 
@@ -155,13 +177,18 @@ def _apply_verdict(p: Photo, v: AiVerdict, as_city: bool, name_hit: bool, signal
     else:  # unknown
         signals.append(Signal(key="ai_unknown", label=f"{who}: принадлежность не определить", weight=-0.05, value=v.why or None))
 
-    hard = [f for f in v.flags if f in REJECT_FLAGS]
+    hard = hard_flags(v)
     if hard:
         signals.append(Signal(key="ai_flag_" + hard[0], label=f"{who}: {FLAG_RU[hard[0]]}", weight=-0.5, value=v.why or None))
         _reject(p, f"{FLAG_RU[hard[0]]}{why}")
+    ok = useful_photo(v)
     for f in v.flags:
         if f in SOFT_FLAGS:
-            signals.append(Signal(key=f"ai_flag_{f}", label=f"{who}: {FLAG_RU[f]}", weight=SOFT_FLAGS[f]))
+            w = BANNER_WHEN_USEFUL if (f == "banner" and ok) else SOFT_FLAGS[f]
+            signals.append(Signal(key=f"ai_flag_{f}", label=f"{who}: {FLAG_RU[f]}", weight=w))
+        elif f in SOFT_WHEN_USEFUL and ok:
+            signals.append(Signal(key=f"ai_flag_{f}", label=f"{who}: {FLAG_RU[f]} на кадре, но сам кадр информативный",
+                                  weight=-0.08))
     if v.q == 0:
         signals.append(Signal(key="ai_q0", label=f"{who}: малоинформативный кадр (полоса, фрагмент, размытие)", weight=-0.3))
         _reject(p, f"малоинформативный кадр{why}")
@@ -245,7 +272,7 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
 
     if verdict is None and settings.active_llm() != "none":
         signals.append(Signal(key="ai_pending", label="ИИ-инспектор не успел проверить фото", weight=0.0))
-        if set(p.sources) <= SEARCH_SOURCES | GEO_CROWD_SOURCES:
+        if set(p.sources) <= SEARCH_SOURCES | CROWD_SOURCES:
             # a search hit or a stranger's geotag is only a lead: without the inspector's look it is not shown
             _reject(p, "найдено поиском, но ИИ-инспектор не успел проверить фото в отведённое время")
 

@@ -31,7 +31,7 @@ from .fetch import Fetched, fetch_all
 from .fetch import photo_id as fetch_id
 from .sources import (social, social_api, commons, flickr, map_reviews, mapillary, official_site, places,
                       vk_geo, web_images, wikipedia)
-from .verify import CITY_SOURCES, REJECT_FLAGS, VerifyContext, score
+from .verify import CITY_SOURCES, VerifyContext, hard_flags, score
 
 log = logging.getLogger("campuslens.orchestrator")
 Emit = Callable[[dict], Awaitable[None]]
@@ -47,7 +47,7 @@ STAGES = [
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
 HARD_CAP_S = 29.0  # the case asks for a useful profile within 30 s: nothing optional may push past this
-SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "tiktok", "vk"}  # wait for the official site (links), then fetch
+SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "instagram_tagged", "tiktok", "vk"}  # wait for the site links
 
 
 class Run:
@@ -148,7 +148,7 @@ class Run:
             categorize_mod.categorize(p, self.clf[f.id], self.text_of(f), is_city, buildings)
             v = self.verdict_of(f)
             if v and p.rejected and v.place in ("this_university", "city") and v.q >= 1 \
-                    and not set(v.flags) & REJECT_FLAGS and p.reject_reason and p.reject_reason.startswith("не фотография кампуса"):
+                    and not hard_flags(v) and p.reject_reason and p.reject_reason.startswith("не фотография кампуса"):
                 # CLIP took a real photo (a banner on a building, a stage with text) for junk; the inspector looked closer
                 p.rejected, p.reject_reason, p.junk_soft = False, None, True
             sim = float(np.dot(self.embs[f.id], self.ref_emb)) if self.ref_emb is not None and f.id in self.embs else None
@@ -365,7 +365,7 @@ class Run:
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
             if name in ("mapillary", "flickr", "places", "vk", "vk_geo", "web_image", "map_review", "instagram",
-                        "tiktok", "tiktok_search", "youtube_search") and not st["enabled"]:
+                        "instagram_tagged", "tiktok", "tiktok_search", "youtube_search") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
         def bbox_pad() -> list[float]:
@@ -389,7 +389,8 @@ class Run:
             factories["web_image"] = (lambda: web_images.google_images(self.uni), 45)
             factories["map_review"] = (lambda: map_reviews.collect(self.uni), 24)
         if "instagram" in enabled:
-            factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 16)
+            factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 20)
+            factories["instagram_tagged"] = (lambda: self.after_official("instagram", social_api.instagram_tagged), 20)
             factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
             factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 8)
         if "youtube_search" in enabled:

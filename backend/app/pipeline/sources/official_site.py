@@ -143,7 +143,8 @@ async def collect(uni: University, timeout: float = 6.0, max_subpages: int = 8) 
     if not home:
         return []
     final_url, html = home
-    uni.social = social.discover(html, final_url)  # footer icons: instagram / telegram / youtube / vk…
+    # footer icons: instagram / telegram / youtube / vk… a link on the site wins over the Wikidata handle
+    uni.social = {**uni.social, **social.discover(html, final_url)}
     images, links, title, _ = _extract(final_url, html)  # a homepage date is the date of the page, not of its photos
     pages: list[tuple[str, str, list[dict], str | None]] = [(final_url, title, images, None)]
 

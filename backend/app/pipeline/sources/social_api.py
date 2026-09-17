@@ -1,8 +1,13 @@
 """Social platforms through APIs instead of page scraping.
 
 - ScrapeCreators (SCRAPECREATORS_API_KEY): posts of the university's own Instagram and TikTok accounts (the links
-  come from its website) and a TikTok keyword search for student videos about it. 1 credit per call, responses
-  are cached for 12 h so a rebuilt profile costs nothing.
+  come from its website or Wikidata), posts by *other people* that tag the university's Instagram account, and a
+  TikTok keyword search for student videos about it. 1 credit per call, responses are cached for 12 h so a rebuilt
+  profile costs nothing.
+  The university's own feed is a press office: award ceremonies, posters, officials at a table. The posts that tag
+  it are the other half of the story - a club rehearsal, a dorm kitchen, a queue at the canteen - shot by students
+  who had no reason to stage anything. The tag is an anchor to the university, not a certificate: the photo still
+  goes through the AI inspector, and without its verdict nothing from here is shown.
 - YouTube Data API (YOUTUBE_API_KEY): videos about the university from any channel; we take YouTube's own stills
   from inside each video (maxres1-3), not the designed cover.
 
@@ -11,6 +16,7 @@ expire within days, the profile shows our 640 px preview and the link to the ori
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -22,6 +28,7 @@ from ...models import PhotoCandidate, University
 log = logging.getLogger("campuslens.social_api")
 SC = "https://api.scrapecreators.com"
 HANDLE = re.compile(r"(?:instagram\.com|tiktok\.com)/@?([A-Za-z0-9_.]+)", re.I)
+PER_AUTHOR = 3  # photos kept from one tagging account
 
 
 def handle_of(url: str | None) -> str | None:
@@ -37,13 +44,23 @@ def _date(ts) -> str | None:
         return None
 
 
+_locks: dict[str, asyncio.Lock] = {}
+
+
 async def _sc(path: str, **params) -> dict | None:
     if not settings.scrapecreators_api_key:
         return None
     key = f"{path}?{sorted(params.items())}"
-    hit = await cache.kv_get("social", key, max_age_s=12 * 3600)
-    if hit is not None:
-        return hit
+    # the feed answers both instagram_posts and the id lookup of instagram_tagged, and they run side by side:
+    # without this lock the same page would be bought twice
+    async with _locks.setdefault(key, asyncio.Lock()):
+        hit = await cache.kv_get("social", key, max_age_s=12 * 3600)
+        if hit is not None:
+            return hit
+        return await _sc_fetch(path, key, params)
+
+
+async def _sc_fetch(path: str, key: str, params: dict) -> dict | None:
     r = await http.get(SC + path, params=params, headers={"x-api-key": settings.scrapecreators_api_key}, timeout=12.0)
     if r.status_code != 200:
         log.warning("scrapecreators %s -> %s %s", path, r.status_code, r.text[:160])
@@ -59,7 +76,10 @@ def _best(candidates: list[dict]) -> dict | None:
 
 
 # ---------- Instagram ----------
-async def instagram_posts(url: str, limit: int = 24) -> list[PhotoCandidate]:
+SLIDES = 6      # a carousel runs to 10 slides; past the sixth it is usually the same room from the same angle
+
+
+async def instagram_posts(url: str, limit: int = 30) -> list[PhotoCandidate]:
     h = handle_of(url)
     j = await _sc("/v2/instagram/user/posts", handle=h) if h else None
     out: list[PhotoCandidate] = []
@@ -67,7 +87,7 @@ async def instagram_posts(url: str, limit: int = 24) -> list[PhotoCandidate]:
         cap = it.get("caption")
         text = (cap.get("text") if isinstance(cap, dict) else cap) or ""
         media = it.get("carousel_media") or [it]
-        for k, m in enumerate(media[:3]):
+        for k, m in enumerate(media[:SLIDES]):
             best = _best((m.get("image_versions2") or {}).get("candidates") or [])
             if not best or not best.get("url"):
                 continue
@@ -77,6 +97,49 @@ async def instagram_posts(url: str, limit: int = 24) -> list[PhotoCandidate]:
                 author=f"@{h}", license="© Instagram-аккаунт вуза (превью со ссылкой на пост)",
                 date=_date(it.get("taken_at")), date_source="post" if it.get("taken_at") else None,
                 width=best.get("width"), height=best.get("height"), collector=f"scrapecreators:ig:{k}",
+            ))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+async def _user_pk(handle: str) -> str | None:
+    """The numeric id behind a handle. It rides along in the feed response we fetch anyway (cached, so free)."""
+    j = await _sc("/v2/instagram/user/posts", handle=handle)
+    for it in (j or {}).get("items", []):
+        pk = (it.get("user") or {}).get("pk")
+        if pk:
+            return str(pk)
+    return None
+
+
+async def instagram_tagged(url: str, limit: int = 24) -> list[PhotoCandidate]:
+    """Posts by other accounts that tagged the university - student clubs, teams, graduates."""
+    h = handle_of(url)
+    pk = await _user_pk(h) if h else None
+    j = await _sc("/v1/instagram/user/tagged-posts", user_id=pk) if pk else None
+    out: list[PhotoCandidate] = []
+    by_author: dict[str, int] = {}
+    for it in (j or {}).get("posts", []):
+        it = it.get("media", it)
+        author = (it.get("user") or {}).get("username") or ""
+        if by_author.get(author, 0) >= PER_AUTHOR:
+            continue          # one active club would otherwise fill the whole album with its own season
+        cap = it.get("caption")
+        text = (cap.get("text") if isinstance(cap, dict) else cap) or ""
+        media = it.get("carousel_media") or [it]
+        for k, m in enumerate(media[:SLIDES]):
+            best = _best((m.get("image_versions2") or {}).get("candidates") or [])
+            if not best or not best.get("url"):
+                continue
+            by_author[author] = by_author.get(author, 0) + 1
+            out.append(PhotoCandidate(
+                url=best["url"], page_url=f"https://www.instagram.com/p/{it.get('code')}/",
+                source="instagram_tagged", title=(" ".join(text.split())[:110] or None), text=f"{text} @{author} @{h}",
+                author=f"@{author}" if author else None,
+                license="© автор публикации в Instagram (превью со ссылкой на пост)",
+                date=_date(it.get("taken_at")), date_source="post" if it.get("taken_at") else None,
+                width=best.get("width"), height=best.get("height"), collector=f"scrapecreators:ig_tagged:{k}",
             ))
         if len(out) >= limit:
             break

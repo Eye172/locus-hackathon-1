@@ -34,6 +34,7 @@ SOURCE_LABELS: dict[str, str] = {
     "telegram": "Telegram-канал вуза",
     "youtube": "YouTube-канал вуза (кадры видео)",
     "instagram": "Instagram вуза",
+    "instagram_tagged": "Instagram: посты, где отметили вуз",
     "vk": "Группа VK вуза",
     "vk_geo": "ВКонтакте: фото с геометкой у кампуса",
     "external": "Внешний коллектор",
