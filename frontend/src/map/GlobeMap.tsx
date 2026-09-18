@@ -65,6 +65,7 @@ const INTRO_TURN = 9  // degrees the planet turns during the pull-back: about th
 // camera, and raster tiles stop at 85° - a black cap on top of the dome. From 16° it sits at the limb, edge-on.
 const INTRO_LAT = 16
 const INTRO_DROP = 0.07  // share of the screen height between the title and the top of the big planet
+const TITLE_SLACK = 26   // px the planet may reach up into the title before it fades
 
 /** The spiral dive as a pure function of time, shared by the flight itself and by tile prefetching.
  *  The planet turns (eastward from orbit, the short way when already zoomed in) and comes closer at the same time:
@@ -269,7 +270,9 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     const h = map.getContainer().clientHeight, pad = map.getPadding()
     const r = globeRadiusPx(map.getZoom(), map.getCenter().lat, h, map.getVerticalFieldOfView())
     const cy = Math.min(h, Math.max(0, (pad.top ?? 0) + (h - (pad.top ?? 0) - (pad.bottom ?? 0)) / 2))
-    const over = cy - r < inset.top - 16 + 6   // 6 px before the rim meets the letters
+    // the planet may overlap the bottom of the letters a little before the title gives way: it fades later on the way
+    // in and comes back earlier on the way out
+    const over = cy - r < inset.top - 16 - TITLE_SLACK
     if (over !== titleOverlap.current) { titleOverlap.current = over; onTitleOverlap(over) }
   }
 
