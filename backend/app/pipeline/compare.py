@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .. import cache, http
 from ..config import settings
+from .ai_inspector import gemini_models, gemini_post
 from ..models import CATEGORIES, CATEGORY_LABELS, Profile
 
 log = logging.getLogger("campuslens.compare")
@@ -122,15 +123,13 @@ async def ai_compare(a: dict, b: dict, prefs: dict) -> tuple[Comparison, str]:
                                                output_config={"effort": "low"}, messages=[{"role": "user", "content": prompt}],
                                                output_format=Comparison)
             return resp.parsed_output, f"claude/{settings.claude_model}"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
         schema = {"type": "OBJECT", "properties": {
             **{k: {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "refs": {"type": "ARRAY", "items": {"type": "STRING"}}}, "required": ["text", "refs"]}} for k in ("pros_a", "pros_b", "watch_out")},
             "summary": {"type": "STRING"}}, "required": ["pros_a", "pros_b", "watch_out", "summary"]}
-        r = await http.post(url, json={"systemInstruction": {"parts": [{"text": SYSTEM}]}, "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                                       "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0.2}},
-                            headers={"x-goog-api-key": settings.gemini_api_key}, timeout=20.0)
-        r.raise_for_status()
-        return Comparison.model_validate_json(r.json()["candidates"][0]["content"]["parts"][0]["text"]), f"gemini/{settings.gemini_model}"
+        j, model = await gemini_post({"systemInstruction": {"parts": [{"text": SYSTEM}]}, "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                                      "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0.2}},
+                                     20.0)
+        return Comparison.model_validate_json(j["candidates"][0]["content"]["parts"][0]["text"]), f"gemini/{model}"
     except Exception as e:  # noqa: BLE001
         log.warning("ai compare failed, using rules: %s", e)
         return _rules(a, b, prefs), "rules"
@@ -153,7 +152,7 @@ async def chat(a: dict, b: dict, prefs: dict, messages: list[dict]) -> AsyncIter
             async for text in stream.text_stream:
                 yield text
         return
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model()}:generateContent"
     contents = [{"role": "user", "parts": [{"text": context}]}, {"role": "model", "parts": [{"text": "Понял. Отвечаю только по этим данным."}]}]
     for m in messages:
         contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
@@ -161,3 +160,8 @@ async def chat(a: dict, b: dict, prefs: dict, messages: list[dict]) -> AsyncIter
                         headers={"x-goog-api-key": settings.gemini_api_key}, timeout=30.0)
     r.raise_for_status()
     yield r.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def gemini_model() -> str:
+    """The first model whose daily quota is not spent (the inspector keeps that list)."""
+    return (gemini_models() or [settings.gemini_model])[0]

@@ -103,6 +103,43 @@ def _clip(v: int) -> int:
     return max(0, min(3, int(v)))
 
 
+class QuotaExhausted(RuntimeError):
+    """Every model's daily quota is spent: retrying in smaller halves would only spend more time."""
+
+
+# model -> monotonic time until which it is not asked again (a spent daily quota; failed calls are not billed)
+_spent: dict[str, float] = {}
+SPENT_S = 3600.0
+
+
+def gemini_models() -> list[str]:
+    """Inspector models in order of preference, minus the ones whose daily quota ran out within the last hour."""
+    now = time.monotonic()
+    models = list(dict.fromkeys([settings.inspect_model, *settings.inspect_models]))
+    return [m for m in models if _spent.get(m, 0.0) <= now]
+
+
+async def gemini_post(body: dict, timeout: float) -> tuple[dict, str]:
+    """One generateContent call for the description and the comparison, on the first model with quota left.
+    Returns (response json, model). A spent daily quota moves on to the next model instead of failing."""
+    for model in gemini_models():
+        r = await http.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                            json=body, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=timeout)
+        if r.status_code == 429 and _daily_quota(r):
+            _spent[model] = time.monotonic() + SPENT_S
+            continue
+        r.raise_for_status()
+        return r.json(), model
+    raise QuotaExhausted("daily quota spent on every model")
+
+
+def _daily_quota(r) -> bool:
+    try:
+        return "PerDay" in r.text
+    except Exception:  # noqa: BLE001
+        return False
+
+
 class Inspector:
     """One per profile build. `submit()` is non-blocking; `finish()` waits for the outstanding batches."""
 
@@ -119,6 +156,9 @@ class Inspector:
         self.ref_b64: str | None = None
         self.ref_ready = asyncio.Event()
         self.calls = self.tokens_in = self.tokens_out = self.errors = self.cached = 0
+        self.used: dict[str, int] = {}          # model -> answered requests in this build
+        self.last_model: str | None = None
+        self.quota_out = False                  # every model's daily quota was spent during this build
         self.ms = 0
 
     # ---------- reference ----------
@@ -165,6 +205,9 @@ class Inspector:
             t = time.monotonic()
             try:
                 got = await (self._gemini(items) if self.provider == "gemini" else self._claude(items))
+            except QuotaExhausted:
+                self.errors += 1
+                return  # no model can answer today: splitting the batch would only fail twice more
             except Exception as e:  # noqa: BLE001
                 self.errors += 1
                 log.warning("inspector batch failed (%d photos): %r", len(items), e)
@@ -181,7 +224,8 @@ class Inspector:
                 continue
             f = items[it.n - 1]
             v = AiVerdict(place=it.place, rel=_clip(it.rel), cat=it.cat, q=_clip(it.q),
-                          flags=list(dict.fromkeys(it.flags)), era=it.era, why=(it.why or "").strip()[:80], model=self.model)
+                          flags=list(dict.fromkeys(it.flags)), era=it.era, why=(it.why or "").strip()[:80],
+                          model=self.last_model or self.model)
             self.verdicts[f.id] = v
             await cache.kv_set("inspect", self._key(f), v.model_dump())
 
@@ -196,7 +240,8 @@ class Inspector:
     def stats(self) -> dict:
         return {"provider": self.provider, "model": self.model, "photos": len(self.verdicts), "submitted": len(self.submitted),
                 "cached": self.cached, "calls": self.calls, "tokens_in": self.tokens_in, "tokens_out": self.tokens_out,
-                "ms": self.ms, "errors": self.errors, "reference": self.ref_b64 is not None}
+                "ms": self.ms, "errors": self.errors, "reference": self.ref_b64 is not None,
+                "models": self.used, "quota_out": self.quota_out}
 
     # ---------- prompt ----------
     def _prompt(self, items: list[Fetched]) -> str:
@@ -209,6 +254,20 @@ class Inspector:
 
     # ---------- providers ----------
     async def _gemini(self, items: list[Fetched]) -> list[_Item]:
+        models = gemini_models()
+        if not models:
+            self.quota_out = True
+            raise QuotaExhausted("daily quota spent on every inspector model")
+        for model in models:
+            try:
+                return await self._gemini_one(items, model)
+            except QuotaExhausted:
+                _spent[model] = time.monotonic() + SPENT_S
+                log.warning("inspector: daily quota of %s is spent, moving to the next model", model)
+        self.quota_out = True
+        raise QuotaExhausted("daily quota spent on every inspector model")
+
+    async def _gemini_one(self, items: list[Fetched], model: str) -> list[_Item]:
         parts: list[dict] = [{"text": self._prompt(items)}]
         if self.ref_b64:
             parts += [{"text": "R:"}, {"inline_data": {"mime_type": "image/jpeg", "data": self.ref_b64}}]
@@ -216,14 +275,17 @@ class Inspector:
             parts += [{"text": f"{n}:"}, {"inline_data": {"mime_type": "image/jpeg", "data": jpeg_b64(f.image)}}]
         gen: dict = {"responseMimeType": "application/json", "responseSchema": SCHEMA, "temperature": 0.1,
                      "mediaResolution": "MEDIA_RESOLUTION_LOW"}
-        if self.model.startswith("gemini-3"):
+        if model.startswith("gemini-3"):
             gen["thinkingConfig"] = {"thinkingLevel": "minimal"}
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": gen}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         r = None
         for attempt in range(3):
             r = await http.post(url, json=body, headers={"x-goog-api-key": settings.gemini_api_key},
                                 timeout=settings.inspect_timeout_s)
+            if r.status_code == 429 and _daily_quota(r):
+                # the day's requests are gone: waiting a few seconds changes nothing, the next model might answer
+                raise QuotaExhausted(model)
             if r.status_code in (429, 500, 503) and attempt < 2:
                 # rate limit or overload: wait as asked (free tier) or back off, then try again
                 try:
@@ -239,6 +301,8 @@ class Inspector:
         usage = j.get("usageMetadata") or {}
         self.tokens_in += usage.get("promptTokenCount", 0)
         self.tokens_out += usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
+        self.used[model] = self.used.get(model, 0) + 1
+        self.last_model = model
         return _Batch.model_validate_json(j["candidates"][0]["content"]["parts"][0]["text"]).items
 
     async def _claude(self, items: list[Fetched]) -> list[_Item]:

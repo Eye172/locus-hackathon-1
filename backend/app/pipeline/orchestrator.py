@@ -265,7 +265,8 @@ class Run:
                    + (9.0 if name in SOCIAL_SOURCES else 0) + (4.0 if name == "official" else 0)
                    + (6.0 if name in ("web_image", "map_review", "youtube_search") else 0)
                    # these open the videos themselves: a download plus two ffmpeg seeks per clip
-                   + (10.0 if name in ("tiktok", "tiktok_search", "tiktok_hashtag") else 0))
+                   + (10.0 if name in ("tiktok", "tiktok_search", "tiktok_hashtag", "tiktok_top",
+                                       "instagram_search") else 0))
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -372,7 +373,8 @@ class Run:
         enabled = {n for n, s in settings.sources_status().items() if s["enabled"]}
         for name, st in settings.sources_status().items():
             if name in ("mapillary", "flickr", "places", "vk", "vk_geo", "web_image", "map_review", "instagram",
-                        "instagram_tagged", "tiktok", "tiktok_search", "tiktok_hashtag",
+                        "instagram_tagged", "instagram_search", "tiktok", "tiktok_search", "tiktok_hashtag",
+                        "tiktok_top",
                         "youtube_search") and not st["enabled"]:
                 await self.source_event(name, "disabled", detail=f"нет ключа {st.get('env')}")
 
@@ -402,6 +404,10 @@ class Run:
             factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
             factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 10)
             factories["tiktok_hashtag"] = (lambda: social_api.tiktok_hashtag(self.uni), 12)
+            # what a student sees typing the university into TikTok and Instagram: the Photo tab's slideshows
+            # cost no video download, so they come in the fast profile; reels and more pages come in the deep pass
+            factories["tiktok_top"] = (lambda: social_api.tiktok_top(self.uni, 16, 2), 16)
+            factories["instagram_search"] = (lambda: social_api.instagram_search(self.uni, 12, 3), 12)
         if "youtube_search" in enabled:
             factories["youtube_search"] = (lambda: social_api.youtube_search(self.uni), 8)
         if "mapillary" in enabled:
@@ -452,9 +458,12 @@ class Run:
                       f"({st['cached']} from cache, {st['calls']} calls, {st['tokens_in']}+{st['tokens_out']} tokens, "
                       f"{st['errors']} errors)")
             status = "done" if st["photos"] else "error"
+            models = " + ".join(st["models"]) or st["model"]
             await self.stage("inspect", status, count=st["photos"],
-                             detail=f"проверено ИИ: {st['photos']} из {len(self.fetched)} · {st['model']}"
-                                    + (f" · ошибок: {st['errors']}" if st["errors"] else ""))
+                             detail=f"проверено ИИ: {st['photos']} из {len(self.fetched)} · {models}"
+                                    # said out loud: the photos it could not look at are rejected, not trusted
+                                    + (" · суточный лимит ИИ исчерпан, непроверенные фото из поиска не показаны"
+                                       if st["quota_out"] else f" · ошибок: {st['errors']}" if st["errors"] else ""))
         else:
             await self.stage("inspect", "skipped", detail="нет ключа LLM: только CLIP и сигналы источников")
 
@@ -561,7 +570,8 @@ class Run:
                                    if f.id not in self.inspector.verdicts and self.clf[f.id]["junk_total"] < 0.97])
         v, n = settings.deep_videos, settings.deep_per_source
         factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
-            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v), n),
+            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v, pages=3), n),
+            "instagram_search": (lambda: social_api.instagram_search(self.uni, n, v, pages=2), n),
             "tiktok_hashtag": (lambda: social_api.tiktok_hashtag(self.uni, n, v), n),
             "tiktok_search": (lambda: social_api.tiktok_search(self.uni, n, v), n),
         }

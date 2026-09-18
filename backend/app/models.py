@@ -45,6 +45,8 @@ SOURCE_LABELS: dict[str, str] = {
     "tiktok": "TikTok вуза",
     "tiktok_search": "TikTok (поиск по названию)",
     "tiktok_hashtag": "TikTok (хэштег вуза)",
+    "tiktok_top": "TikTok (поиск по названию: видео и фото)",
+    "instagram_search": "Instagram (поиск по названию и хэштегу)",
     "youtube_search": "YouTube (поиск по названию)",
 }
 BROCHURE_SOURCES = {"official"}

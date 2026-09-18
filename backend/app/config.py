@@ -64,12 +64,17 @@ class Settings(BaseSettings):
     # 3.5 flash-lite at LOW media resolution = 280 tokens per photo; a batch of 8 answers in ~3 s (≈ $0.002).
     # Small batches in parallel keep the tail latency down: a slow call costs 8 photos, not 16.
     inspect_model: str = "gemini-3.5-flash-lite"
-    inspect_batch: int = 12
+    # each model has its own daily request quota (500 a day on the free tier); when one is spent the inspector moves
+    # to the next instead of rejecting every photo it could not look at. Order = measured quality on the labelled
+    # photos (same photos for all three): 3.5 lite precision 0.90 / recall 0.93, 3.1 lite preview 0.86 / 0.78,
+    # 3.1 lite 0.82 / 0.69 - the fallbacks err towards rejecting, which is the safe side
+    inspect_models: list[str] = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite"]
+    inspect_batch: int = 16                 # photos per request: the daily quota counts requests, not photos
     inspect_concurrency: int = 3            # the free Gemini tier answers 429 above ~15 requests a minute
     inspect_max_photos: int = 150
     inspect_max_photos_deep: int = 400   # the deep pass keeps judging after the fast profile is on screen
     inspect_max_street: int = 10      # Mapillary/Flickr street frames: few are informative, they mostly feed the walk tab
-    inspect_timeout_s: float = 12.0
+    inspect_timeout_s: float = 15.0          # 3.1 lite needs ~12 s for 16 photos
     depth_warmup: bool = True
     outdated_years: int = 8
     curate_quota: dict[str, int] = {"campus": 8, "dormitory": 6, "classroom": 6, "library": 6, "lab": 6,
@@ -114,6 +119,10 @@ class Settings(BaseSettings):
                                  "env": "SCRAPECREATORS_API_KEY"},
             "tiktok": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
             "tiktok_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True, "env": "SCRAPECREATORS_API_KEY"},
+            "tiktok_top": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
+                           "env": "SCRAPECREATORS_API_KEY"},
+            "instagram_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
+                                 "env": "SCRAPECREATORS_API_KEY"},
             "tiktok_hashtag": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
                                "env": "SCRAPECREATORS_API_KEY"},
             "youtube_search": {"enabled": bool(self.youtube_api_key), "needs_key": True, "env": "YOUTUBE_API_KEY"},

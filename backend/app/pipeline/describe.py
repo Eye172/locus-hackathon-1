@@ -12,6 +12,7 @@ import logging
 from pydantic import BaseModel, Field
 
 from ..config import settings
+from .ai_inspector import gemini_models, gemini_post
 from ..models import Campus, Description, DescriptionSource, Sentence, University, CATEGORY_LABELS
 
 log = logging.getLogger("campuslens.describe")
@@ -159,7 +160,6 @@ async def gemini(uni: University, campus: Campus | None, stats: dict, context: d
     """Gemini via REST with a JSON response schema; the reply is validated with pydantic (the Zod equivalent)."""
     from .. import http
     prompt, sources = _prompt(uni, campus, stats, context)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -176,11 +176,10 @@ async def gemini(uni: University, campus: Campus | None, stats: dict, context: d
         },
     }
     try:
-        r = await http.post(url, json=body, headers={"x-goog-api-key": settings.gemini_api_key}, timeout=timeout)
-        r.raise_for_status()
-        text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        j, model = await gemini_post(body, timeout)
+        text = j["candidates"][0]["content"]["parts"][0]["text"]
         parsed = _DescriptionOut.model_validate_json(text)
-        return _finish(parsed, sources, f"gemini/{settings.gemini_model}")
+        return _finish(parsed, sources, f"gemini/{model}")
     except Exception as e:  # noqa: BLE001
         log.warning("Gemini description failed: %s", e)
         return None
@@ -197,3 +196,8 @@ async def build(uni: University, campus: Campus | None, stats: dict, context: di
     elif provider == "gemini":
         d = await gemini(uni, campus, stats, context, timeout=timeout)
     return d or template(uni, campus, stats, context)
+
+
+def gemini_model() -> str:
+    """The first model whose daily quota is not spent (the inspector keeps that list)."""
+    return (gemini_models() or [settings.gemini_model])[0]

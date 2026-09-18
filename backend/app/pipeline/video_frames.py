@@ -29,7 +29,13 @@ FFMPEG = shutil.which("ffmpeg")
 FRACTIONS = (0.35, 0.7)     # a third in, two thirds in: past the intro, before the call to subscribe
 MAX_BYTES = 8_000_000       # a 60 s vertical clip is ~3 MB; anything larger is not worth the budget
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/128.0 Safari/537.36", "Referer": "https://www.tiktok.com/"}
+                    "Chrome/128.0 Safari/537.36"}
+
+
+def _headers(url: str) -> dict:
+    # TikTok's CDN wants to see its own site as the referrer; Instagram's CDN does not care and must not be told
+    # it is TikTok
+    return {**UA, "Referer": "https://www.tiktok.com/"} if "tiktok" in url else UA
 
 
 def frames_dir() -> Path:
@@ -86,7 +92,7 @@ async def frames(url: str, duration_s: float, key: str | None = None, timeout: f
 
 async def _download(url: str, duration_s: float, dests: list[Path], key: str, timeout: float) -> list[Path]:
     try:
-        r = await http.get(url, headers=UA, timeout=timeout)
+        r = await http.get(url, headers=_headers(url), timeout=timeout)
     except Exception as e:  # noqa: BLE001
         log.debug("video download failed: %r", e)
         return []

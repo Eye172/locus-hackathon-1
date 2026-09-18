@@ -295,20 +295,131 @@ async def tiktok_search(uni: University, limit: int = 12, max_videos: int | None
     return await _videos_and_frames((j or {}).get("search_item_list") or [], "tiktok_search", limit, max_videos)
 
 
-async def tiktok_top(uni: University, limit: int = 14, max_videos: int | None = None) -> list[PhotoCandidate]:
+def short_names(uni: University) -> list[str]:
+    """Abbreviations from the aliases, the one that spells the current name first.
+
+    Wikidata keeps old names next to new ones: КазГУ (Государственный, until 1991) sits beside КазНУ (Национальный).
+    The capitals of an abbreviation are the initials of the words it stands for, so the alias whose capitals are
+    the initials of today's name is today's abbreviation - for any university, without a list of them."""
+    initials = {w[0].lower() for n in (uni.names.get("ru"), uni.names.get("en"), uni.names.get("kk"), uni.name) if n
+                for w in re.split(r"[\s\-]+", n) if w}
+    cands = {a.strip() for a in uni.aliases if 4 <= len(_tag(a)) <= 8 and " " not in a.strip()}
+
+    def fit(a: str) -> float:
+        caps = [c.lower() for c in a if c.isupper()]
+        return sum(c in initials for c in caps) / len(caps) if caps else 0.0
+
+    return sorted(cands, key=lambda a: (-fit(a), not a.isascii(), len(a), a))
+
+
+def search_queries(uni: University) -> list[str]:
+    """What a person types into a social network's search box to find this university.
+
+    The official Russian name ("Казахстанско-Британский технический университет") returns nothing at all on TikTok:
+    nobody types it. What people type is the English name and the short name everyone uses - KBTU, KazNU, AITU.
+    Built from the university's own names and aliases, so it works the same for any university in the index or on
+    the map, not for a hand-picked list."""
+    out: list[str] = []
+    en, ru = uni.names.get("en"), uni.names.get("ru") or uni.name
+    if en and len(en) >= 6:
+        out.append(en)
+    shorts = short_names(uni)
+    if shorts:
+        out.append(shorts[0])
+    if ru and len(ru) <= 32 and ru not in out:
+        out.append(ru)
+    return list(dict.fromkeys(out))[:3] or [uni.name]
+
+
+async def _paged(path: str, pages: int, key: str = "cursor", items: str = "items", **params) -> list[dict]:
+    """Up to `pages` pages of one search; each page is one credit and cached like any other call."""
+    out: list[dict] = []
+    cursor = None
+    for _ in range(max(1, pages)):
+        j = await _sc(path, **params, **({key: cursor} if cursor else {}))
+        out += (j or {}).get(items) or []
+        cursor = (j or {}).get("cursor")
+        if not cursor or (j or {}).get("has_more") is False:
+            break
+    return out
+
+
+async def tiktok_top(uni: University, limit: int = 14, max_videos: int | None = None,
+                     pages: int = 1) -> list[PhotoCandidate]:
     """TikTok's own "Top" search - the ranking a student sees when they type the university, and the only endpoint
     that also returns the slideshow posts of the Photo tab."""
-    qs = [q for q in dict.fromkeys([uni.names.get("en") or uni.name, uni.names.get("ru") or uni.name]) if len(q) >= 6]
-    found = await asyncio.gather(*[_sc("/v1/tiktok/search/top", query=q) for q in qs[:2]])
+    qs = search_queries(uni)
+    found = await asyncio.gather(*[_paged("/v1/tiktok/search/top", pages if i == 0 else 1, query=q)
+                                   for i, q in enumerate(qs)])
     seen: set[str] = set()
     uniq: list[dict] = []
-    for j in found:
-        for it in (j or {}).get("items") or []:
+    for page in found:
+        for it in page:
             key = str(it.get("id") or it.get("aweme_id"))
             if key not in seen:
                 seen.add(key)
                 uniq.append(it)
     return await _videos_and_frames(uniq, "tiktok_top", limit, max_videos)
+
+
+# ---------- Instagram search ----------
+async def instagram_search(uni: University, limit: int = 16, max_videos: int = 4,
+                           pages: int = 1) -> list[PhotoCandidate]:
+    """What Instagram shows when you type the university into its search: the Popular page for the name and the
+    posts under its hashtag. Students' reels, club posts, move-in days - and, because a name is only a name, also
+    posts about Nazarbayev Intellectual Schools when you asked for Nazarbayev University. That is why these are
+    search hits (verify.SEARCH_SOURCES): the inspector has to recognise the campus, a matching caption is not enough.
+
+    Almost every post here is a reel whose cover is a title card, so the reel is opened and two frames are taken from
+    inside it, as with TikTok; a plain photo post is used as it is."""
+    qs = search_queries(uni)
+    tags = hashtags(uni)
+    found = await asyncio.gather(
+        *[_paged("/v1/instagram/search/popular", pages if i == 0 else 1, items="posts", query=q) for i, q in enumerate(qs)],
+        *[_paged("/v1/instagram/search/hashtag", 1, items="posts", hashtag=t, media_type="all") for t in tags])
+    posts: list[dict] = []
+    seen: set[str] = set()
+    for page in found:
+        for p in page:
+            code = p.get("shortcode") or p.get("id")
+            if code and code not in seen:
+                seen.add(code)
+                posts.append(p)
+    by_author: dict[str, int] = {}
+    picked: list[dict] = []
+    for p in posts:
+        owner = ((p.get("owner") or {}).get("username") or "").lower()
+        if by_author.get(owner, 0) >= PER_AUTHOR:
+            continue
+        by_author[owner] = by_author.get(owner, 0) + 1
+        picked.append(p)
+    videos = [p for p in picked if p.get("video_url")][:max_videos] if video_frames.available() else []
+    frames = await video_frames.many([(p["video_url"], float(p.get("video_duration") or 12.0), f"ig_{p.get('shortcode')}")
+                                      for p in videos])
+    frame_of = {id(p): paths for p, paths in zip(videos, frames)}
+    out: list[PhotoCandidate] = []
+    for p in picked:
+        owner = (p.get("owner") or {}).get("username") or ""
+        cap = p.get("caption")
+        text = " ".join(((cap.get("text") if isinstance(cap, dict) else cap) or "").split())
+        page = p.get("url") or f"https://www.instagram.com/p/{p.get('shortcode')}/"
+        base = dict(page_url=page, source="instagram_search", text=f"{text} @{owner}", author=f"@{owner}",
+                    date=_date(p.get("taken_at")), date_source="post" if p.get("taken_at") else None)
+        paths = frame_of.get(id(p))
+        if paths:
+            for k, path in enumerate(paths):
+                out.append(PhotoCandidate(url=f"file:{path}", title=f"Кадр из рилса @{owner}: {text[:80]}".strip(": "),
+                                          license="© автор публикации в Instagram (кадр со ссылкой на пост)",
+                                          collector=f"instagram:frame{k}", **base))
+        elif p.get("display_url"):
+            # a photo post is the picture itself; for a reel we did not open it is the cover - often a title card,
+            # which the inspector rejects, sometimes a plain shot of the campus, which it keeps
+            out.append(PhotoCandidate(url=p["display_url"], title=f"Instagram @{owner}: {text[:80]}".strip(": "),
+                                      license="© автор публикации в Instagram (превью со ссылкой на пост)",
+                                      collector="instagram:cover" if p.get("video_url") else "instagram:photo", **base))
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def _tag(name: str | None) -> str:
@@ -329,8 +440,7 @@ def hashtags(uni: University) -> list[str]:
             out.append(t)
     # latin first (TikTok tags are mostly transliterated), then shortest, then alphabetically so the choice
     # is the same on every run
-    short = sorted({t for a in uni.aliases if 4 <= len(t := _tag(a)) <= 8},
-                   key=lambda t: (not t.isascii(), len(t), t))
+    short = [_tag(a) for a in short_names(uni)]
     return (out[:1] + short[:1]) or out[:2]
 
 
