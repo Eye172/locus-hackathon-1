@@ -62,6 +62,7 @@ const INTRO_TURN = 9  // degrees the planet turns during the pull-back: about th
 // the opening frame looks at a lower latitude: seen from below with the home latitude (44°) the North Pole faces the
 // camera, and raster tiles stop at 85° - a black cap on top of the dome. From 16° it sits at the limb, edge-on.
 const INTRO_LAT = 16
+const INTRO_DROP = 0.07  // share of the screen height between the title and the top of the big planet
 
 /** The spiral dive as a pure function of time, shared by the flight itself and by tile prefetching.
  *  The planet turns (eastward from orbit, the short way when already zoomed in) and comes closer at the same time:
@@ -120,7 +121,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const introView = (map: Map, lat: number) => {
     const c = map.getContainer(), w = c.clientWidth, h = c.clientHeight
     const fov = map.getVerticalFieldOfView()
-    const top = insetRef.current?.top ?? Math.round(0.2 * h)   // the title's bottom edge + a gap (measured in Globe)
+    // the title's bottom edge + a gap (measured in Globe), and a little air below it so the dome does not crowd the title
+    const top = (insetRef.current?.top ?? Math.round(0.2 * h)) + Math.round(INTRO_DROP * h)
     const zoom = Math.min(3.65, zoomForRadius(Math.min(h - top, 0.62 * w), lat, h, fov))
     const r = globeRadiusPx(zoom, lat, h, fov)
     const cy = Math.min(h, top + r)   // where the planet's centre goes on screen
@@ -203,7 +205,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     }
     // clear the globe disc so stars never overlap the planet
     const R = globeRadiusPx(z, map.getCenter().lat, h, map.getVerticalFieldOfView()) + 8
-    const pad = map.getPadding()
+    const { top = 0, bottom = 0, left = 0, right = 0 } = map.getPadding()
+    const pad = { top, bottom, left, right }
     ctx.globalCompositeOperation = 'destination-out'
     ctx.globalAlpha = 1
     ctx.beginPath(); ctx.arc(pad.left + (w - pad.left - pad.right) / 2, pad.top + (h - pad.top - pad.bottom) / 2, R, 0, Math.PI * 2); ctx.fill()
@@ -271,7 +274,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       window.clearTimeout(peekTimer.current)
       showMarkers(false)
       flattenBuildings(map)  // expensive style change: do it now, while buildings are out of view, not at the jump
-      const b0 = map.getBearing(), p0 = map.getPitch(), pad0 = map.getPadding()
+      const b0 = map.getBearing(), p0 = map.getPitch()
+      const { top = 0, bottom = 0, left = 0, right = 0 } = map.getPadding(), pad0 = { top, bottom, left, right }
       const plan = planSpiral(map.getCenter(), map.getZoom(), lat, lon, zTarget)
       const canvas = map.getCanvas()
       prefetchPath(plan.samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
@@ -432,9 +436,13 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
 
     const setup = (map: Map) => {
     map.on('style.load', () => {
+      // MapLibre 6 bug: with a globe style object it resizes only the camera (not the canvas) at style load, and its
+      // ResizeObserver then skips the first callback as "already that size". A container that changed size between
+      // `new Map` and this point (a scrollbar, the window or pane resizing) left a stale canvas: an empty black planet.
+      map.resize()
       if (map.getSource('unis')) return
       map.setProjection({ type: 'globe' })
-      prefetchPlanet()
+      map.once('idle', prefetchPlanet)  // after the first view is in: the prefetch must not compete with its tiles
       map.addSource('unis', { type: 'geojson', data: '/universities.geojson', cluster: true, clusterRadius: 38, clusterMaxZoom: 7 })
       map.addLayer({ id: 'unis-glow', type: 'circle', source: 'unis', filter: ['!', ['has', 'point_count']],
         paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 7, 6, 11, 12, 18], 'circle-color': '#9CD3FF', 'circle-opacity': 0.35, 'circle-blur': 0.9 } })
