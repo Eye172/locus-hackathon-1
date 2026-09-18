@@ -24,14 +24,14 @@ from ..models import (BROCHURE_SOURCES, CATEGORIES, Campus, CategoryStats, Photo
                       SOURCE_LABELS, Stage, University)
 from . import categorize as categorize_mod
 from . import context as context_mod
-from . import curate, dedup, describe, vision
+from . import crossdup, curate, dedup, describe, video_frames, vision
 from . import enrich as enrich_mod
 from .ai_inspector import Inspector
 from .fetch import Fetched, fetch_all
 from .fetch import photo_id as fetch_id
 from .sources import (social, social_api, commons, flickr, map_reviews, mapillary, official_site, places,
                       vk_geo, web_images, wikipedia)
-from .verify import CITY_SOURCES, VerifyContext, hard_flags, score
+from .verify import CITY_SOURCES, CROWD_SOURCES, SEARCH_SOURCES, VerifyContext, hard_flags, score
 
 log = logging.getLogger("campuslens.orchestrator")
 Emit = Callable[[dict], Awaitable[None]]
@@ -48,6 +48,8 @@ STAGES = [
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
 HARD_CAP_S = 29.0  # the case asks for a useful profile within 30 s: nothing optional may push past this
+# with the deep pass on, the first profile does not have to wait for stragglers - they arrive in the second one
+FAST_TARGET_S = 24.0
 SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "instagram_tagged", "tiktok", "vk"}  # wait for the site links
 
 
@@ -77,6 +79,10 @@ class Run:
         self.collect_deadline = self.deadline
 
     # ---------- helpers ----------
+    @property
+    def cap_s(self) -> float:
+        return FAST_TARGET_S if self.deep else HARD_CAP_S
+
     def ms(self) -> int:
         return int((time.monotonic() - self.t0) * 1000)
 
@@ -157,9 +163,22 @@ class Run:
                 # CLIP took a real photo (a banner on a building, a stage with text) for junk; the inspector looked closer
                 p.rejected, p.reject_reason, p.junk_soft = False, None, True
             sim = float(np.dot(self.embs[f.id], self.ref_emb)) if self.ref_emb is not None and f.id in self.embs else None
-            score(p, self.vctx, self.text_of(f), is_city, verdict=v, ref_sim=sim)
+            other = crossdup.elsewhere(p.phash, self.uni.qid, self.uni.lat or self.uni.city_lat,
+                                       self.uni.lon or self.uni.city_lon)
+            score(p, self.vctx, self.text_of(f), is_city, verdict=v, ref_sim=sim, elsewhere=other)
             photos.append(p)
         return photos
+
+    def ai_priority(self, f: Fetched) -> float:
+        """Which photos the inspector looks at first. Cheap signals only: how much CLIP thinks it is a photograph
+        rather than a poster, map or screenshot; how much it resembles the reference photo of the main building; and
+        whether the source needs the verdict at all - a search or crowd photo without one is never shown, an
+        official one still is, with less confidence."""
+        c = self.clf.get(f.id) or {}
+        photo_like = 1.0 - float(c.get("junk_total", 0.5))
+        ref = float(np.dot(self.embs[f.id], self.ref_emb)) if self.ref_emb is not None and f.id in self.embs else 0.0
+        needs = 0.15 if f.cand.source in SEARCH_SOURCES | CROWD_SOURCES else 0.0
+        return photo_like + 0.3 * max(0.0, ref - 0.6) + needs
 
     def describe_for_ai(self, f: Fetched) -> str:
         """One metadata line per candidate for the inspector prompt."""
@@ -258,15 +277,17 @@ class Run:
         return await factory()
 
     # ---------- source pipelines ----------
-    async def source_pipeline(self, name: str, coro, limit: int) -> None:
+    async def source_pipeline(self, name: str, coro, limit: int, timeout: float | None = None) -> None:
         t = time.monotonic()
         # the official site is the richest source and the slowest (homepage + 8 subpages): it gets 4 s more
-        timeout = (settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
+        timeout = timeout or (settings.source_timeout_s + (settings.campus_budget_s if name in GEO_SOURCES else 0)
                    + (9.0 if name in SOCIAL_SOURCES else 0) + (4.0 if name == "official" else 0)
                    + (6.0 if name in ("web_image", "map_review", "youtube_search") else 0)
                    # these open the videos themselves: a download plus two ffmpeg seeks per clip
                    + (10.0 if name in ("tiktok", "tiktok_search", "tiktok_hashtag", "tiktok_top",
                                        "instagram_search") else 0))
+        # searches read this and hand back what they have a little before the hard timeout
+        token = video_frames.DEADLINE.set(t + timeout - 1.0)
         try:
             cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
@@ -276,6 +297,8 @@ class Run:
             self.logf(f"{name} failed: {e!r}")
             await self.source_event(name, "error", detail=f"{type(e).__name__}", ms=int((time.monotonic() - t) * 1000))
             return
+        finally:
+            video_frames.DEADLINE.reset(token)
         if not cands:
             await self.source_event(name, "done", count=0, ms=int((time.monotonic() - t) * 1000), detail="ничего не найдено")
             return
@@ -291,7 +314,7 @@ class Run:
                 todo = [f for f in fetched if self.clf[f.id]["junk_total"] < 0.97]
                 if name in ("mapillary", "flickr"):
                     todo = todo[:settings.inspect_max_street]
-                self.inspector.submit(todo)
+                self.inspector.submit(todo, self.ai_priority)
             prelim = self.analyze(fetched)
             for p in prelim:
                 p.preliminary = True
@@ -361,6 +384,7 @@ class Run:
                          "elapsed_ms": self.ms()})
 
         self.campus_task = asyncio.create_task(self.resolve_campus())
+        asyncio.create_task(crossdup.refresh())   # every other profile's photos, for the stock check
         self.context_task = asyncio.create_task(context_mod.build(self.uni, self.campus))
         asyncio.create_task(vision.warmup())
         if settings.active_llm() != "none":
@@ -406,8 +430,8 @@ class Run:
             factories["tiktok_hashtag"] = (lambda: social_api.tiktok_hashtag(self.uni), 12)
             # what a student sees typing the university into TikTok and Instagram: the Photo tab's slideshows
             # cost no video download, so they come in the fast profile; reels and more pages come in the deep pass
-            factories["tiktok_top"] = (lambda: social_api.tiktok_top(self.uni, 16, 2), 16)
-            factories["instagram_search"] = (lambda: social_api.instagram_search(self.uni, 12, 3), 12)
+            factories["tiktok_top"] = (lambda: social_api.tiktok_top(self.uni, 24, 2), 24)
+            factories["instagram_search"] = (lambda: social_api.instagram_search(self.uni, 16, 3), 16)
         if "youtube_search" in enabled:
             factories["youtube_search"] = (lambda: social_api.youtube_search(self.uni), 8)
         if "mapillary" in enabled:
@@ -452,7 +476,7 @@ class Run:
             pass
         if self.inspector:
             await self.stage("inspect", "running")
-            await self.inspector.finish(timeout=max(2.0, self.until(HARD_CAP_S - 3.5)))
+            await self.inspector.finish(timeout=max(2.0, self.until(self.cap_s - 3.5)))
             st = self.inspector.stats()
             self.logf(f"inspector {st['model']}: {st['photos']}/{len(self.fetched)} photos judged "
                       f"({st['cached']} from cache, {st['calls']} calls, {st['tokens_in']}+{st['tokens_out']} tokens, "
@@ -520,7 +544,7 @@ class Run:
                       key=lambda p: p.date or "")
         if self.context is None:
             try:
-                self.context = await asyncio.wait_for(self.context_task, timeout=max(0.3, self.until(HARD_CAP_S - 3.0)))
+                self.context = await asyncio.wait_for(self.context_task, timeout=max(0.3, self.until(self.cap_s - 3.0)))
             except Exception:
                 self.context = None
         context = self.context
@@ -530,7 +554,7 @@ class Run:
                  "per_category": {c: {"verified": s.verified, "likely": s.likely} for c, s in cats.items()}}
         if self.description is None:
             self.description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
-                                                    timeout=min(6.0, self.until(HARD_CAP_S - 0.7)))
+                                                    timeout=min(6.0, self.until(self.cap_s - 0.7)))
         description = self.description
         profile = Profile(
             university=self.uni, campus=self.campus, photos=kept, rejected=rejected, categories=cats,
@@ -567,14 +591,18 @@ class Run:
             # not shown at all: with the cap lifted they get their look now
             self.inspector.cap = settings.inspect_max_photos_deep
             self.inspector.submit([f for f in self.fetched
-                                   if f.id not in self.inspector.verdicts and self.clf[f.id]["junk_total"] < 0.97])
+                                   if f.id not in self.inspector.verdicts and self.clf[f.id]["junk_total"] < 0.97],
+                                  self.ai_priority)
+            self.inspector._kick()   # what the fast pass left in the queue continues from where it stopped
         v, n = settings.deep_videos, settings.deep_per_source
         factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
-            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v, pages=3), n),
-            "instagram_search": (lambda: social_api.instagram_search(self.uni, n, v, pages=2), n),
+            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v, pages=3, deep=True), n),
+            "instagram_search": (lambda: social_api.instagram_search(self.uni, n, v, pages=2, deep=True), n),
             "tiktok_hashtag": (lambda: social_api.tiktok_hashtag(self.uni, n, v), n),
             "tiktok_search": (lambda: social_api.tiktok_search(self.uni, n, v), n),
         }
+        if "web_image" in {k for k, st in settings.sources_status().items() if st["enabled"]}:
+            factories["web_image"] = (lambda: web_images.google_images(self.uni, deep=True), n)
         ig = self.uni.social.get("instagram")
         if ig:
             factories["instagram"] = (lambda: social_api.instagram_posts(ig, n), n)
@@ -582,7 +610,9 @@ class Run:
         tt = self.uni.social.get("tiktok")
         if tt:
             factories["tiktok"] = (lambda: social_api.tiktok_videos(tt, n, v), n)
-        tasks = {asyncio.create_task(self.source_pipeline(f"{name}", f(), lim), name=name): name
+        # the fast profile is on screen: a source may use the whole deep budget, minus time to fetch and inspect
+        room = max(10.0, self.collect_deadline - 8.0 - time.monotonic())
+        tasks = {asyncio.create_task(self.source_pipeline(f"{name}", f(), lim, timeout=room), name=name): name
                  for name, (f, lim) in factories.items()}
         done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.collect_deadline + 2.0 - time.monotonic(), 5.0))
         for t in pending:

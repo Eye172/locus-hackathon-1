@@ -212,7 +212,7 @@ def _apply_verdict(p: Photo, v: AiVerdict, as_city: bool, name_hit: bool, signal
 
 
 def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVerdict | None = None,
-          ref_sim: float | None = None) -> None:
+          ref_sim: float | None = None, elsewhere: tuple[str, int] | None = None) -> None:
     signals: list[Signal] = []
     as_city = is_city or p.source in CITY_SOURCES
     if as_city:
@@ -262,6 +262,14 @@ def score(p: Photo, ctx: VerifyContext, text: str, is_city: bool, verdict: AiVer
 
     if verdict is not None and p.source in GEO_CROWD_SOURCES and "portrait" in verdict.flags:
         _reject(p, "личное фото человека рядом с кампусом, а не сам кампус")
+
+    # the same pixels already sit in the profile of a university in another city (pipeline/crossdup.py): a search
+    # find like that is a stock picture or somebody else's campus, however plausible it looks
+    if elsewhere and not as_city and set(p.sources) <= SEARCH_SOURCES | CROWD_SOURCES:
+        other, dist = elsewhere
+        signals.append(Signal(key="elsewhere", label="Это же изображение есть в профиле другого вуза в другом городе",
+                              weight=-0.5, value=f"{other} (отличие {dist}/64)"))
+        _reject(p, f"то же фото найдено у другого вуза ({other}) — сток или чужой кампус")
 
     # 6. copies in several sources
     if p.sources_count > 1:

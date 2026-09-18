@@ -166,14 +166,21 @@ async def search(q: str) -> list[Candidate]:
 
 
 async def entity(qid: str) -> University:
-    ents = await get_entities([qid], props="labels|aliases|descriptions|claims|sitelinks")
+    from ..langs import LANG_BY_ISO, WIKIDATA_LANGS, iso_of_country_qid
+    ents = await get_entities([qid], props="labels|aliases|descriptions|claims|sitelinks",
+                              languages="|".join(WIKIDATA_LANGS))
     e = ents.get(qid)
     if not e or "missing" in e:
         raise ValueError(f"Wikidata item {qid} not found")
     claims = e.get("claims", {})
-    labels = {l: v["value"] for l, v in e.get("labels", {}).items() if l in LANGS}
+    # names in ru / en / kk for the interface, plus the university's own language for social search and captions:
+    # a German student writes "TUM", a Japanese one "東大", and the caption matching has to know those too
+    country0 = _first(claims, "P17")
+    local = LANG_BY_ISO.get(iso_of_country_qid(country0.get("id") if isinstance(country0, dict) else None) or "", "en")
+    langs = list(dict.fromkeys([*LANGS, local]))
+    labels = {l: v["value"] for l, v in e.get("labels", {}).items() if l in langs}
     aliases: list[str] = []
-    for l in LANGS:
+    for l in langs:
         aliases += [a["value"] for a in e.get("aliases", {}).get(l, [])]
     for v in labels.values():
         if v not in aliases:

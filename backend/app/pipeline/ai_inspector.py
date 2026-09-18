@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import heapq
 import io
 import logging
 import time
@@ -150,8 +151,9 @@ class Inspector:
         self.model = settings.inspect_model if self.provider == "gemini" else settings.claude_model
         self.verdicts: dict[str, AiVerdict] = {}
         self.submitted: set[str] = set()
-        self.tasks: set[asyncio.Task] = set()
-        self.sem = asyncio.Semaphore(settings.inspect_concurrency)
+        self.tasks: set[asyncio.Task] = set()      # the workers
+        self.queue: list[tuple[float, int, Fetched]] = []   # heap of (-priority, order, photo)
+        self.seq = 0
         self.cap = settings.inspect_max_photos
         self.ref_b64: str | None = None
         self.ref_ready = asyncio.Event()
@@ -168,28 +170,63 @@ class Inspector:
         self.ref_ready.set()
 
     # ---------- queue ----------
-    def submit(self, items: list[Fetched]) -> None:
-        new = [f for f in items if f.id not in self.submitted]
-        room = self.cap - len(self.submitted)
-        new = new[:max(0, room)]
-        if not new:
-            return
-        self.submitted.update(f.id for f in new)
-        t = asyncio.create_task(self._handle(new))
-        self.tasks.add(t)
-        t.add_done_callback(self.tasks.discard)
-
-    async def _handle(self, items: list[Fetched]) -> None:
-        todo: list[Fetched] = []
+    # The inspector's attention is the scarce resource: a few requests a second, a daily quota, a time budget. With
+    # the broad search it gets several hundred candidates, most of them posters and screenshots. So it is a priority
+    # queue, not a first-come line: the most promising photos are looked at first, and whatever is still waiting when
+    # time runs out is the least promising - rejected unseen if it came from a search, which is the safe side.
+    def submit(self, items: list[Fetched], priority: Callable[[Fetched], float] | None = None) -> None:
         for f in items:
-            hit = await cache.kv_get("inspect", self._key(f))
-            if hit:
-                self.verdicts[f.id] = AiVerdict.model_validate(hit)
-                self.cached += 1
-            else:
-                todo.append(f)
+            if f.id in self.submitted or len(self.submitted) >= self.cap:
+                continue
+            self.submitted.add(f.id)
+            self.seq += 1
+            heapq.heappush(self.queue, (-(priority(f) if priority else 0.0), self.seq, f))
+        self._kick()
+
+    def _kick(self) -> None:
+        while self.queue and len(self.tasks) < settings.inspect_concurrency:
+            t = asyncio.create_task(self._worker())
+            self.tasks.add(t)
+            t.add_done_callback(self.tasks.discard)
+
+    async def _worker(self) -> None:
         size = settings.inspect_batch
-        await asyncio.gather(*[self._batch(todo[i:i + size]) for i in range(0, len(todo), size)])
+        batch: list[Fetched] = []
+        try:
+            while self.queue:
+                batch = []
+                while self.queue and len(batch) < size:
+                    batch.append(heapq.heappop(self.queue)[2])
+                todo: list[Fetched] = []
+                for f in batch:
+                    hit = await cache.kv_get("inspect", self._key(f))
+                    if hit:
+                        self.verdicts[f.id] = AiVerdict.model_validate(hit)
+                        self.cached += 1
+                    else:
+                        todo.append(f)
+                if todo:
+                    await self._batch(todo)
+                batch = []
+                if self.quota_out:
+                    return
+        except asyncio.CancelledError:
+            # the fast profile's deadline: what this worker held goes back in line, and the deep pass picks it up
+            for f in batch:
+                if f.id not in self.verdicts:
+                    self.seq += 1
+                    heapq.heappush(self.queue, (0.0, self.seq, f))
+            raise
+
+    async def finish(self, timeout: float) -> None:
+        """Waits for the queue to drain; at the deadline the workers stop and the rest stays queued (see _worker)."""
+        end = time.monotonic() + timeout
+        while self.tasks and time.monotonic() < end:
+            await asyncio.wait(list(self.tasks), timeout=max(0.0, end - time.monotonic()))
+            self._kick()   # a worker that returned while photos were still arriving
+        for t in list(self.tasks):
+            t.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
 
     def _key(self, f: Fetched) -> str:
         return f"{self.uni.qid}:{f.sha1 or f.id}"
@@ -201,19 +238,18 @@ class Inspector:
             await asyncio.wait_for(self.ref_ready.wait(), timeout=4.0)
         except asyncio.TimeoutError:
             pass
-        async with self.sem:
-            t = time.monotonic()
-            try:
-                got = await (self._gemini(items) if self.provider == "gemini" else self._claude(items))
-            except QuotaExhausted:
-                self.errors += 1
-                return  # no model can answer today: splitting the batch would only fail twice more
-            except Exception as e:  # noqa: BLE001
-                self.errors += 1
-                log.warning("inspector batch failed (%d photos): %r", len(items), e)
-                got = None
-            finally:
-                self.ms += int((time.monotonic() - t) * 1000)
+        t = time.monotonic()   # concurrency is the number of workers (see _kick)
+        try:
+            got = await (self._gemini(items) if self.provider == "gemini" else self._claude(items))
+        except QuotaExhausted:
+            self.errors += 1
+            return  # no model can answer today: splitting the batch would only fail twice more
+        except Exception as e:  # noqa: BLE001
+            self.errors += 1
+            log.warning("inspector batch failed (%d photos): %r", len(items), e)
+            got = None
+        finally:
+            self.ms += int((time.monotonic() - t) * 1000)
         if got is None:
             if retry:  # transient 503/timeouts and the odd malformed answer: try again in two smaller halves
                 half = max(1, len(items) // 2)
@@ -228,14 +264,6 @@ class Inspector:
                           model=self.last_model or self.model)
             self.verdicts[f.id] = v
             await cache.kv_set("inspect", self._key(f), v.model_dump())
-
-    async def finish(self, timeout: float) -> None:
-        pending = [t for t in self.tasks if not t.done()]
-        if not pending:
-            return
-        done, still = await asyncio.wait(pending, timeout=timeout)
-        for t in still:
-            t.cancel()
 
     def stats(self) -> dict:
         return {"provider": self.provider, "model": self.model, "photos": len(self.verdicts), "submitted": len(self.submitted),

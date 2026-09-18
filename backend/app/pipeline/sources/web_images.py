@@ -68,30 +68,48 @@ def _short_name(uni: University, lang: str) -> str:
 
 
 # ---------- Google Images (Serper) ----------
+_serper_sem = asyncio.Semaphore(4)   # the account allows 5 requests a second; a burst of ten gets some refused
+
+
 async def _serper(q: str, gl: str | None, hl: str, num: int = 10) -> list[dict]:
-    body = {"q": q, "hl": hl, "num": num}
+    body = {"q": q, "hl": {"nb": "no"}.get(hl, hl), "num": num}
     if gl:
         body["gl"] = gl.lower()
-    r = await http.post("https://google.serper.dev/images", json=body,
-                        headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"}, timeout=6.0)
+    async with _serper_sem:
+        r = await http.post("https://google.serper.dev/images", json=body,
+                            headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"},
+                            timeout=6.0)
     r.raise_for_status()
     return r.json().get("images", [])
 
 
-async def google_images(uni: University) -> list[PhotoCandidate]:
+async def google_images(uni: University, deep: bool = False) -> list[PhotoCandidate]:
+    """One query per place an applicant wants to see. The fast profile asks the seven core categories in the main
+    language (Russian in the CIS, English elsewhere). The deep pass, while the profile is already on screen, adds
+    assembly halls and canteens and repeats the search in the university's own language, where its students and the
+    local press write ("東京大学 学生寮", "Technische Universität München Wohnheim")."""
     if not settings.serper_api_key:
         return []
+    from ..langs import CONCEPTS, local_lang
     cc = country_code(uni)
     lang = "ru" if cc in CIS else "en"
     name = _short_name(uni, lang)
-    queries = [(cat, f"{name} {word}") for cat, word in QUERY_WORDS[lang]]
-    if lang == "ru" and uni.names.get("en"):
-        queries.append(("campus", f"{uni.names['en']} campus"))
-    results = await asyncio.gather(*[_serper(q, cc, lang) for _, q in queries], return_exceptions=True)
+    if not deep:
+        queries = [(cat, f"{name} {word}", lang) for cat, word in QUERY_WORDS[lang]]
+        if lang == "ru" and uni.names.get("en"):
+            queries.append(("campus", f"{uni.names['en']} campus", "en"))
+    else:
+        queries = [(c, f"{name} {CONCEPTS[lang][c]}", lang) for c in ("assembly_hall", "canteen")]
+        local = local_lang(uni)
+        native = uni.names.get(local)
+        if local not in (lang, "en") and local in CONCEPTS and native:
+            queries += [(c, f"{native} {CONCEPTS[local][c]}", local)
+                        for c in ("campus", "dormitory", "classroom", "assembly_hall", "student_life")]
+    results = await asyncio.gather(*[_serper(q, cc, hl) for _, q, hl in queries], return_exceptions=True)
     site = _domain(uni.website)
     seen: set[str] = set()
     out: list[PhotoCandidate] = []
-    for (cat, q), res in zip(queries, results):
+    for (cat, q, _hl), res in zip(queries, results):
         if isinstance(res, Exception):
             log.warning("serper %r failed: %r", q, res)
             continue

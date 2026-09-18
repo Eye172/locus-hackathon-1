@@ -13,7 +13,9 @@ Without ffmpeg on the machine this module quietly returns nothing and the source
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
+import time
 import logging
 import shutil
 import subprocess
@@ -26,6 +28,23 @@ from ..config import settings
 log = logging.getLogger("campuslens.frames")
 
 FFMPEG = shutil.which("ffmpeg")
+
+# set by the orchestrator around each source: the moment its results are due. Searches fan out to many queries and
+# clips; whatever has finished by then is returned, the rest is dropped - a source that runs long still contributes.
+DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("search_deadline", default=None)
+
+
+async def until_deadline(coros: list, margin: float = 0.0) -> list:
+    """Runs coroutines side by side; results of the ones done by DEADLINE - margin, None for the rest."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    if not tasks:
+        return []
+    dl = DEADLINE.get()
+    timeout = None if dl is None else max(0.5, dl - margin - time.monotonic())
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for t in pending:
+        t.cancel()
+    return [t.result() if t in done and not t.cancelled() and t.exception() is None else None for t in tasks]
 FRACTIONS = (0.35, 0.7)     # a third in, two thirds in: past the intro, before the call to subscribe
 MAX_BYTES = 8_000_000       # a 60 s vertical clip is ~3 MB; anything larger is not worth the budget
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -118,4 +137,5 @@ async def many(videos: list[tuple[str, float, str]], concurrency: int = 4) -> li
                 log.debug("frames failed: %r", e)
                 return []
 
-    return await asyncio.gather(*[one(v) for v in videos])
+    # clips still downloading when the source is due are dropped; the ones already cut are kept
+    return [r or [] for r in await until_deadline([one(v) for v in videos], margin=1.0)]

@@ -301,9 +301,9 @@ def short_names(uni: University) -> list[str]:
     Wikidata keeps old names next to new ones: КазГУ (Государственный, until 1991) sits beside КазНУ (Национальный).
     The capitals of an abbreviation are the initials of the words it stands for, so the alias whose capitals are
     the initials of today's name is today's abbreviation - for any university, without a list of them."""
-    initials = {w[0].lower() for n in (uni.names.get("ru"), uni.names.get("en"), uni.names.get("kk"), uni.name) if n
-                for w in re.split(r"[\s\-]+", n) if w}
-    cands = {a.strip() for a in uni.aliases if 4 <= len(_tag(a)) <= 8 and " " not in a.strip()}
+    initials = {w[0].lower() for n in [*uni.names.values(), uni.name] if n for w in re.split(r"[\s\-]+", n) if w}
+    cands = {a.strip() for a in uni.aliases
+             if 4 <= len(_tag(a)) <= 8 and " " not in a.strip() and not re.search(r"[./@]", a)}  # not "ucm.es"
 
     def fit(a: str) -> float:
         caps = [c.lower() for c in a if c.isupper()]
@@ -319,16 +319,63 @@ def search_queries(uni: University) -> list[str]:
     nobody types it. What people type is the English name and the short name everyone uses - KBTU, KazNU, AITU.
     Built from the university's own names and aliases, so it works the same for any university in the index or on
     the map, not for a hand-picked list."""
+    from ..langs import local_lang
     out: list[str] = []
-    en, ru = uni.names.get("en"), uni.names.get("ru") or uni.name
+    en = uni.names.get("en")
+    native = uni.names.get(local_lang(uni)) or uni.name   # the name in the university's own language
     if en and len(en) >= 6:
         out.append(en)
     shorts = short_names(uni)
     if shorts:
         out.append(shorts[0])
-    if ru and len(ru) <= 32 and ru not in out:
-        out.append(ru)
+    if native and len(native) <= 40 and native not in out:
+        out.append(native)
     return list(dict.fromkeys(out))[:3] or [uni.name]
+
+
+def _latin_ext(text: str) -> bool:
+    """Latin script, accents included (Atmosphäre, życie, öğrenci)."""
+    return all(ord(c) < 0x250 or not c.isalpha() for c in text)
+
+
+def social_queries(uni: University, deep: bool = False) -> list[str]:
+    """Every query CampusLens itself sends to TikTok and Instagram for this university - any university in the world.
+
+    The bare name finds the university's own posts and videos about admission. The photos that show what it is like
+    to be there come from queries about the place - "<name> campus", "<name> student life", "<name> dorm",
+    "<name> atmosphere" - in English for everyone, and again in the language its students write in: "TUM
+    Studentenleben", "東京大学 大学生活", "KBTU общежитие". Whatever comes back is only a candidate: the inspector
+    decides, as for every other source.
+    The fast pass sends the names and the two most productive place queries per language; the deep pass all of them."""
+    from ..langs import CONCEPTS, FAST_EN, FAST_LOCAL, local_lang
+    base = search_queries(uni)
+    en = uni.names.get("en") or base[0]
+    en_words = list(CONCEPTS["en"].values()) if deep else [CONCEPTS["en"][c] for c in FAST_EN]
+    out = base + [f"{en} {w}" for w in en_words]
+    lang = local_lang(uni)
+    if lang != "en" and lang in CONCEPTS:
+        # with the abbreviation if people use one in that script (КБТУ общежитие, TUM Studentenleben), else with the
+        # name in that language (東京大学 キャンパス): a latin abbreviation next to Japanese words is nobody's query
+        words = list(CONCEPTS[lang].values()) if deep else [CONCEPTS[lang][c] for c in FAST_LOCAL]
+        latin = all(_latin_ext(w) for w in words)
+        head = next((a for a in short_names(uni) if _latin_ext(a) == latin), None) or uni.names.get(lang) or uni.name
+        out += [f"{head} {w}" for w in words]
+    return list(dict.fromkeys(q for q in out if q))
+
+
+def _round_robin(lists: list[list[dict]], key) -> list[dict]:
+    """One from each query in turn, so a per-source limit samples every query instead of exhausting the first."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in zip_longest(*lists):
+        for it in row:
+            if it is None:
+                continue
+            k = key(it)
+            if k and k not in seen:
+                seen.add(k)
+                out.append(it)
+    return out
 
 
 async def _paged(path: str, pages: int, key: str = "cursor", items: str = "items", **params) -> list[dict]:
@@ -345,26 +392,19 @@ async def _paged(path: str, pages: int, key: str = "cursor", items: str = "items
 
 
 async def tiktok_top(uni: University, limit: int = 14, max_videos: int | None = None,
-                     pages: int = 1) -> list[PhotoCandidate]:
-    """TikTok's own "Top" search - the ranking a student sees when they type the university, and the only endpoint
-    that also returns the slideshow posts of the Photo tab."""
-    qs = search_queries(uni)
-    found = await asyncio.gather(*[_paged("/v1/tiktok/search/top", pages if i == 0 else 1, query=q)
-                                   for i, q in enumerate(qs)])
-    seen: set[str] = set()
-    uniq: list[dict] = []
-    for page in found:
-        for it in page:
-            key = str(it.get("id") or it.get("aweme_id"))
-            if key not in seen:
-                seen.add(key)
-                uniq.append(it)
+                     pages: int = 1, deep: bool = False) -> list[PhotoCandidate]:
+    """TikTok's "Top" search, run by CampusLens for the name and for the place queries (campus, student life,
+    atmosphere, dorm). It is the only endpoint that also returns the slideshow posts of the Photo tab."""
+    qs = social_queries(uni, deep)
+    found = await video_frames.until_deadline([_paged("/v1/tiktok/search/top", pages if i == 0 else 1, query=q)
+                                               for i, q in enumerate(qs)], margin=6.0)
+    uniq = _round_robin([f or [] for f in found], lambda it: str(it.get("id") or it.get("aweme_id") or ""))
     return await _videos_and_frames(uniq, "tiktok_top", limit, max_videos)
 
 
 # ---------- Instagram search ----------
 async def instagram_search(uni: University, limit: int = 16, max_videos: int = 4,
-                           pages: int = 1) -> list[PhotoCandidate]:
+                           pages: int = 1, deep: bool = False) -> list[PhotoCandidate]:
     """What Instagram shows when you type the university into its search: the Popular page for the name and the
     posts under its hashtag. Students' reels, club posts, move-in days - and, because a name is only a name, also
     posts about Nazarbayev Intellectual Schools when you asked for Nazarbayev University. That is why these are
@@ -372,19 +412,13 @@ async def instagram_search(uni: University, limit: int = 16, max_videos: int = 4
 
     Almost every post here is a reel whose cover is a title card, so the reel is opened and two frames are taken from
     inside it, as with TikTok; a plain photo post is used as it is."""
-    qs = search_queries(uni)
+    qs = social_queries(uni, deep)
     tags = hashtags(uni)
-    found = await asyncio.gather(
-        *[_paged("/v1/instagram/search/popular", pages if i == 0 else 1, items="posts", query=q) for i, q in enumerate(qs)],
-        *[_paged("/v1/instagram/search/hashtag", 1, items="posts", hashtag=t, media_type="all") for t in tags])
-    posts: list[dict] = []
-    seen: set[str] = set()
-    for page in found:
-        for p in page:
-            code = p.get("shortcode") or p.get("id")
-            if code and code not in seen:
-                seen.add(code)
-                posts.append(p)
+    found = await video_frames.until_deadline(
+        [*[_paged("/v1/instagram/search/popular", pages if i == 0 else 1, items="posts", query=q) for i, q in enumerate(qs)],
+         *[_paged("/v1/instagram/search/hashtag", 1, items="posts", hashtag=t, media_type="all") for t in tags]],
+        margin=6.0)
+    posts = _round_robin([f or [] for f in found], lambda p: p.get("shortcode") or p.get("id"))
     by_author: dict[str, int] = {}
     picked: list[dict] = []
     for p in posts:
