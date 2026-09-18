@@ -108,13 +108,25 @@ function satellitePaint(layer: LayerSpecification): { paint?: Record<string, unk
 
 /** Fetches the OpenFreeMap Liberty style and turns it into: colour planet (NASA Blue Marble) → satellite (Esri) → roads/labels/3D. */
 export async function loadSatelliteStyle(globe = true): Promise<StyleSpecification> {
-  const r = await fetch(STYLE_URL)
-  const style = (await r.json()) as StyleSpecification
+  // a snapshot of the Liberty style ships with the site: the planet should not wait for a third-party round trip
+  let style: StyleSpecification
+  try {
+    const local = await fetch('/liberty.json')
+    if (!local.ok) throw new Error(String(local.status))
+    style = (await local.json()) as StyleSpecification
+  } catch {
+    style = (await (await fetch(STYLE_URL)).json()) as StyleSpecification
+  }
   style.layers = style.layers.filter((l) => l.type !== 'raster')
   for (const src of Object.keys(style.sources)) if (style.sources[src].type === 'raster') delete style.sources[src]
+  // the same Blue Marble at levels 0–3, served from this site: NASA's server needs ~2.5 s for the first view, and
+  // until then the planet was a black disc. These are same-origin and small, so the globe is textured from the first
+  // frame; the sharper NASA tiles draw over them as they arrive.
+  style.sources.planet = { type: 'raster', tiles: ['/planet/{z}/{x}/{y}.jpg'], tileSize: 256, maxzoom: 3, attribution: 'NASA GIBS Blue Marble' }
   style.sources.bluemarble = { type: 'raster', tiles: [BLUE_MARBLE], tileSize: 256, maxzoom: 8, attribution: 'NASA GIBS Blue Marble' }
   style.sources.esri = { type: 'raster', tiles: [ESRI_IMAGERY], tileSize: 256, maxzoom: 19, attribution: 'Esri, Maxar, Earthstar Geographics' }
   const rasters: LayerSpecification[] = [
+    { id: 'planet', type: 'raster', source: 'planet', maxzoom: 7.5, paint: { 'raster-fade-duration': 0, 'raster-saturation': 0.05 } },
     { id: 'bluemarble', type: 'raster', source: 'bluemarble', paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 0, 1, 5.5, 1, 7.5, 0], 'raster-fade-duration': 0, 'raster-saturation': 0.05 } },
     { id: 'esri', type: 'raster', source: 'esri', minzoom: 4, paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 4, 0, 6.5, 1], 'raster-saturation': -0.08, 'raster-brightness-max': 0.96, 'raster-fade-duration': 150 } },
   ]

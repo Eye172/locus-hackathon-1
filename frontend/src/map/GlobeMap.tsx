@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { Map as MLMap, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 type Map = MLMap
 type MapMouseEvent = MapLayerMouseEvent
@@ -57,7 +57,7 @@ const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x 
 // Once per page load - coming back to the planet from a profile should not replay it.
 let introPlayed = false
 const INTRO_MS = 2600
-const REVEAL_MS = 700   // the planet fades in from the dark once its tiles are in: no patchwork of loading squares
+const INTRO_HOLD_MS = 900   // the big planet on screen before the camera pulls back
 const INTRO_TURN = 9  // degrees the planet turns during the pull-back: about the idle spin's speed, so it hands over
 // the opening frame looks at a lower latitude: seen from below with the home latitude (44°) the North Pole faces the
 // camera, and raster tiles stop at 85° - a black cap on top of the dome. From 16° it sits at the limb, edge-on.
@@ -127,7 +127,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     return { zoom, padding: { top: Math.max(0, 2 * cy - h), bottom: 0, left: 0, right: 0 } }
   }
   const introRef = useRef<'pending' | 'running' | 'done'>(introPlayed ? 'done' : 'pending')
-  const [revealed, setRevealed] = useState(introPlayed)
+
   const pullBack = (map: Map) => {
     if (introRef.current !== 'pending') return
     introRef.current = 'running'
@@ -164,7 +164,6 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     if (introRef.current === 'done') return
     if (introRef.current === 'running') { cancelAnimationFrame(motion.current); motion.current = 0 }
     introRef.current = 'done'
-    setRevealed(true)
     showMarkers(true, 400)
   }
 
@@ -411,22 +410,16 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       if (introRef.current === 'pending' && !still) {
         introPlayed = true
         map.jumpTo({ ...introView(map, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })  // before the first frame
-        // the canvas stays dark until the dome has its satellite texture (or 2.5 s after load on a slow connection),
-        // fades in, holds for a beat, and the camera pulls back
-        let shown = false
-        const reveal = () => {
-          if (shown || cancelled) return
-          shown = true
+        // the planet is textured from the first frame (local tiles, see loadSatelliteStyle): no waiting on the
+        // network - a beat to take in the big planet, then the camera pulls back
+        map.once('style.load', () => window.setTimeout(() => {
+          if (cancelled || !map) return
           // the title may have moved since (web fonts): frame the dome against where it is now
-          map!.jumpTo({ ...introView(map!, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })
-          setRevealed(true)
-          window.setTimeout(() => { if (!cancelled && map) pullBack(map) }, REVEAL_MS + 350)
-        }
-        map.once('idle', reveal)
-        map.once('load', () => window.setTimeout(reveal, 2500))
+          if (introRef.current === 'pending') map.jumpTo({ ...introView(map, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })
+          pullBack(map)
+        }, INTRO_HOLD_MS))
       } else {
         introRef.current = 'done'
-        setRevealed(true)
         map.jumpTo(homeView(map, HOME[1]))  // before the first frame
       }
       ;(window as unknown as { __map?: Map }).__map = map
@@ -521,8 +514,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
 
   return (
     <div className="absolute inset-0 bg-[#05070F]">
-      <div ref={container} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
-        opacity: revealed ? 1 : 0, transition: `opacity ${REVEAL_MS}ms ease-out` }} />
+      <div ref={container} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
       <canvas ref={stars} className="absolute inset-0 w-full h-full pointer-events-none" />
     </div>
   )
