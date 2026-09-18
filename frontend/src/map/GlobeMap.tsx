@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Map as MLMap, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 type Map = MLMap
 type MapMouseEvent = MapLayerMouseEvent
@@ -53,6 +53,15 @@ const MARKERS: { id: string; props: [string, number][] }[] = [
   { id: 'unis-label', props: [['text-opacity', 1]] },
 ]
 const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
+// opening shot: the planet rises large from the bottom edge, then the camera pulls back to the home view.
+// Once per page load - coming back to the planet from a profile should not replay it.
+let introPlayed = false
+const INTRO_MS = 2600
+const REVEAL_MS = 700   // the planet fades in from the dark once its tiles are in: no patchwork of loading squares
+const INTRO_TURN = 9  // degrees the planet turns during the pull-back: about the idle spin's speed, so it hands over
+// the opening frame looks at a lower latitude: seen from below with the home latitude (44°) the North Pole faces the
+// camera, and raster tiles stop at 85° - a black cap on top of the dome. From 16° it sits at the limb, edge-on.
+const INTRO_LAT = 16
 
 /** The spiral dive as a pure function of time, shared by the flight itself and by tile prefetching.
  *  The planet turns (eastward from orbit, the short way when already zoomed in) and comes closer at the same time:
@@ -104,9 +113,59 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     const zoom = room > 40 ? Math.min(2.6, Math.max(0.5, zoomForRadius(room, lat, h, map.getVerticalFieldOfView()))) : 1.5
     return { zoom, padding: { top, bottom, left: 0, right: 0 } }
   }
+  // the opening frame: the planet's centre on the bottom edge (MapLibre clamps the padded centre to the canvas, so
+  // this is as low as it goes) and its top a fifth of the way down - a big dome rising from below
+  const introView = (map: Map, lat: number) => {
+    const c = map.getContainer(), w = c.clientWidth, h = c.clientHeight
+    const fov = map.getVerticalFieldOfView()
+    const zoom = Math.min(3.3, zoomForRadius(Math.min(0.8 * h, 0.62 * w), lat, h, fov))  // clouds start at 3.5
+    return { zoom, padding: { top: h, bottom: 0, left: 0, right: 0 } }
+  }
+  const introRef = useRef<'pending' | 'running' | 'done'>(introPlayed ? 'done' : 'pending')
+  const [revealed, setRevealed] = useState(introPlayed)
+  const pullBack = (map: Map) => {
+    if (introRef.current !== 'pending') return
+    introRef.current = 'running'
+    const h = map.getContainer().clientHeight, fov = map.getVerticalFieldOfView()
+    const c0 = map.getCenter(), pad = map.getPadding()
+    const p0 = { top: pad.top ?? 0, bottom: pad.bottom ?? 0 }
+    const r0 = globeRadiusPx(map.getZoom(), c0.lat, h, fov)
+    let t0 = -1
+    const step = (now: number) => {
+      if (introRef.current !== 'running') return
+      if (t0 < 0) t0 = now
+      const u = Math.min(1, Math.max(0, (now - t0) / INTRO_MS))
+      const e = easeInOut(u)
+      // the target is re-read every frame: the title and search block may still be settling their layout
+      const lat = c0.lat + (HOME[1] - c0.lat) * e   // the camera rises over the planet to the home latitude
+      const home = homeView(map, lat)
+      const r1 = globeRadiusPx(home.zoom, lat, h, fov)
+      // shrink the disc's radius (not the zoom) evenly: zoom is logarithmic and would make the end drag
+      const zoom = zoomForRadius(r0 + (r1 - r0) * e, lat, h, fov)
+      map.jumpTo({ center: [c0.lng + INTRO_TURN * u, lat], zoom,
+        padding: { top: p0.top + (home.padding.top - p0.top) * e, bottom: p0.bottom + (home.padding.bottom - p0.bottom) * e,
+                   left: 0, right: 0 } })
+      if (u < 1) { motion.current = requestAnimationFrame(step); return }
+      motion.current = 0
+      introRef.current = 'done'
+      atHome.current = true
+      spinning.current = true
+      showMarkers(true, 900)   // the universities appear once the planet has settled
+    }
+    spinning.current = false
+    motion.current = requestAnimationFrame(step)
+  }
+  const cancelIntro = () => {
+    if (introRef.current === 'done') return
+    if (introRef.current === 'running') { cancelAnimationFrame(motion.current); motion.current = 0 }
+    introRef.current = 'done'
+    setRevealed(true)
+    showMarkers(true, 400)
+  }
+
   const fitHome = () => {
     const map = mapRef.current
-    if (!map || motion.current || !markersOn.current || map.isMoving()) return
+    if (!map || motion.current || !markersOn.current || map.isMoving() || introRef.current !== 'done') return
     const home = homeView(map, map.getCenter().lat)
     map.jumpTo(atHome.current ? home : { padding: home.padding })
   }
@@ -343,7 +402,26 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         maxPitch: 70,
       })
       mapRef.current = map
-      map.jumpTo(homeView(map, HOME[1]))  // before the first frame
+      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      if (introRef.current === 'pending' && !still) {
+        introPlayed = true
+        map.jumpTo({ ...introView(map, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })  // before the first frame
+        // the canvas stays dark until the dome has its satellite texture (or 2.5 s after load on a slow connection),
+        // fades in, holds for a beat, and the camera pulls back
+        let shown = false
+        const reveal = () => {
+          if (shown || cancelled) return
+          shown = true
+          setRevealed(true)
+          window.setTimeout(() => { if (!cancelled && map) pullBack(map) }, REVEAL_MS + 350)
+        }
+        map.once('idle', reveal)
+        map.once('load', () => window.setTimeout(reveal, 2500))
+      } else {
+        introRef.current = 'done'
+        setRevealed(true)
+        map.jumpTo(homeView(map, HOME[1]))  // before the first frame
+      }
       ;(window as unknown as { __map?: Map }).__map = map
       const errors: string[] = []
       ;(window as unknown as { __mapErrors?: string[] }).__mapErrors = errors
@@ -370,10 +448,12 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       map.addLayer({ id: 'unis-label', type: 'symbol', source: 'unis', minzoom: 6.5, filter: ['!', ['has', 'point_count']],
         layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'], 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-max-width': 12 },
         paint: { 'text-color': '#C7D2FE', 'text-halo-color': '#070B18', 'text-halo-width': 1.2 } })
+      // the opening shot is the planet alone: a dome covered in hundreds of blue dots reads as noise
+      if (introRef.current !== 'done') showMarkers(false, 0)
       onReady?.()
     })
 
-    const stop = () => { spinning.current = false; window.clearTimeout(idleTimer.current) }
+    const stop = () => { cancelIntro(); spinning.current = false; window.clearTimeout(idleTimer.current) }
     const resume = () => { window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 5000) }
     map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
     map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
@@ -434,7 +514,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
 
   return (
     <div className="absolute inset-0 bg-[#05070F]">
-      <div ref={container} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+      <div ref={container} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
+        opacity: revealed ? 1 : 0, transition: `opacity ${REVEAL_MS}ms ease-out` }} />
       <canvas ref={stars} className="absolute inset-0 w-full h-full pointer-events-none" />
     </div>
   )
