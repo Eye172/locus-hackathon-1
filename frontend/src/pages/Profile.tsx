@@ -1,27 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check, Box } from 'lucide-react'
+import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check, Map as MapIcon, CalendarDays, Users, MapPin, Globe, Database, SearchCheck, Camera, type LucideIcon } from 'lucide-react'
 import { streamProfile, thumbUrl, API_BASE } from '../lib/api'
 import type { Campus, Photo, Profile as ProfileT, SourceStatus, Stage, University } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
 import { catLabel, useLang, useT } from '../lib/i18n'
-import { CoverageDot, coverageLabel } from '../components/Badges'
 import { AgentsStrip, CoverageMatrix, DescriptionBlock, ContextCards, Timeline, JudgePanel, VisitPlan } from '../components/ProfileParts'
 import { PhotoGrid, PhotoAlbums, PhotoPassport, BrochureVsReality, EmptyState } from '../components/Photos'
-import { CampusMap3D } from '../components/CampusMap3D'
 import { ClimateTab } from '../components/ClimateTab'
 import { CityTab } from '../components/CityTab'
 import { WalkTab } from '../components/WalkTab'
+import { CollageTab } from '../components/CollageTab'
+import { AboutCampus } from '../components/AboutCampus'
 import { SourceLink } from '../components/SourceLink'
 import { api } from '../lib/api'
 import type { ContextPack } from '../lib/types'
 import { store, useStoreVersion } from '../lib/store'
 
-type Tab = 'photos' | 'bvr' | 'map' | 'climate' | 'city' | 'timeline' | 'walk' | 'rejected' | 'judge'
+type Tab = 'collage' | 'about' | 'photos' | 'bvr' | 'climate' | 'city' | 'timeline' | 'walk' | 'rejected' | 'judge'
 const FILTERS: string[] = ['all', ...CATEGORIES]
 
 const PHOTO_NETS = new Set(['telegram', 'youtube', 'vk', 'instagram', 'tiktok'])  // networks we actually fetch photos from; the rest are links
 const SOCIAL_NAME: Record<string, string> = { instagram: 'Instagram', telegram: 'Telegram', youtube: 'YouTube', vk: 'VK', facebook: 'Facebook', tiktok: 'TikTok' }
+type Fact = { key: string; icon: LucideIcon; label: string; value: ReactNode }
 
 export default function Profile() {
   const { qid = '' } = useParams()
@@ -40,13 +41,12 @@ export default function Profile() {
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [cached, setCached] = useState(false)
-  // the first profile is the fast one; the pipeline keeps going through the social networks and sends it again
-  const [searching, setSearching] = useState(false)
   const [run, setRun] = useState(0)
   const refresh = params.get('refresh') === '1'
 
-  const [tab, setTabState] = useState<Tab>((params.get('tab') as Tab) || 'photos')
-  const setTab = (next: Tab) => { setTabState(next); setParams((prev) => { const n = new URLSearchParams(prev); if (next === 'photos') n.delete('tab'); else n.set('tab', next); return n }, { replace: true }) }
+  // the collage ("what is this university like") opens first; every other view is one click away
+  const [tab, setTabState] = useState<Tab>((params.get('tab') as Tab) || 'collage')
+  const setTab = (next: Tab) => { setTabState(next); setParams((prev) => { const n = new URLSearchParams(prev); if (next === 'collage') n.delete('tab'); else n.set('tab', next); return n }, { replace: true }) }
   const [view, setView] = useState<'grid' | 'album'>('album')
   const [filter, setFilter] = useState<string>('all')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
@@ -57,22 +57,23 @@ export default function Profile() {
   const [ctx, setCtx] = useState<ContextPack | null>(null)
   useEffect(() => { setCtx(null) }, [qid])
   useEffect(() => {
-    if ((tab === 'map' || tab === 'city') && !ctx && profile) api.context(qid).then(setCtx).catch(() => {})
+    if (tab === 'city' && !ctx && profile) api.context(qid).then(setCtx).catch(() => {})
   }, [tab, ctx, profile, qid])
 
   useEffect(() => {
-    setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false); setSearching(false)
+    setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false)
     const close = streamProfile(qid, refresh, {
       onStage: (s, e) => { setStages((st) => ({ ...st, [s.key]: s })); setElapsed(e) },
       onUniversity: (u, c) => { setUni(u); setCampus(c) },
       onCampus: (c, u) => { setCampus(c); setUni(u) },
       onSource: (name, s, e) => { setSources((ss) => ({ ...ss, [name]: s })); setElapsed(e) },
       onPhotos: (_src, photos) => setPrelim((pp) => { const ids = new Set(pp.map((p) => p.id)); return [...pp, ...photos.filter((p) => !ids.has(p.id))] }),
-      onProfile: (p, c, final) => {
+      // the first live profile comes at ~24 s; the build then keeps collecting without a clock and sends it again
+      // as it grows - silently: the status line stays "built in N s", only the photos and the details change
+      onProfile: (p, c) => {
         setProfile(p); setUni(p.university); setCampus(p.campus ?? null); setCached(c); setElapsed(p.elapsed_ms)
-        setSearching(!final)
-        setStages((st) => (Object.keys(st).length ? st : Object.fromEntries(p.stages.map((s) => [s.key, s]))))
-        setSources((ss) => (Object.keys(ss).length ? ss : p.sources_status))
+        setStages((st) => (c && Object.keys(st).length ? st : Object.fromEntries(p.stages.map((s) => [s.key, s]))))
+        setSources((ss) => (c && Object.keys(ss).length ? ss : p.sources_status))
         if (refresh) setParams({})
       },
       onError: (m) => setError(m),
@@ -104,9 +105,10 @@ export default function Profile() {
   const doneSources = Object.entries(sources).filter(([, s]) => s.status === 'done').map(([, s]) => s.label)
 
   const tabs: { key: Tab; label: string; badge?: number; hide?: boolean }[] = [
+    { key: 'collage', label: t('profile.collage'), badge: profile?.collage?.reduce((n, s) => n + s.photos.length, 0) },
+    { key: 'about', label: t('profile.about') },
     { key: 'photos', label: t('profile.photos'), badge: photos.length },
     { key: 'bvr', label: t('profile.bvr') },
-    { key: 'map', label: t('profile.map') },
     { key: 'walk', label: t('profile.walk') },
     { key: 'climate', label: t('profile.climateTab') },
     { key: 'city', label: t('profile.cityTab') },
@@ -117,59 +119,87 @@ export default function Profile() {
   const name = uni ? (uni.names[lang] || uni.name) : ''
   // a city view must never stand in for the university in the header
   const hero = profile?.photos.find((p) => p.category === 'campus' && p.level === 'verified') ?? profile?.photos.find((p) => p.category !== 'city')
+  const subtitle = uni ? [uni.names.en && uni.names.en !== name ? uni.names.en : null, uni.description].filter(Boolean).join(' · ') : ''
+  const facts: Fact[] = !uni ? [] : ([
+    uni.founded ? { key: 'founded', icon: CalendarDays, label: t('profile.founded'), value: <span className="tabular-nums">{uni.founded}</span> } : null,
+    uni.students ? { key: 'students', icon: Users, label: t('profile.students'), value: <span className="tabular-nums">{uni.students.toLocaleString('ru-RU')}</span> } : null,
+    uni.city ? { key: 'city', icon: MapPin, label: t('profile.city'), value: `${uni.city}${uni.country ? `, ${uni.country}` : ''}` } : null,
+    uni.website ? { key: 'site', icon: Globe, label: t('profile.site'), value: (
+      <a href={uni.website} target="_blank" rel="noreferrer" title={uni.website} className="inline-flex items-center gap-1 max-w-full hover:text-brand">
+        <span className="truncate">{uni.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}</span><ExternalLink size={12} className="shrink-0 text-muted" />
+      </a>) } : null,
+    uni.qid.startsWith('Q')
+      ? { key: 'wikidata', icon: Database, label: 'Wikidata', value: <a href={`https://www.wikidata.org/wiki/${uni.qid}`} target="_blank" rel="noreferrer" className="mono hover:text-brand">{uni.qid}</a> }
+      : { key: 'via', icon: SearchCheck, label: t('profile.foundVia'), value: t('search.webLong') },
+  ] as (Fact | null)[]).filter((f): f is Fact => f !== null)
+  const social = Object.entries(uni?.social ?? {})
 
   return (
     <div>
-      {/* header */}
+      {/* header: who (name + actions) → key facts → how the profile was built */}
       <div className="bg-surface border-b border-line topo-soft">
         <div className="relative mx-auto max-w-7xl px-4 pt-5 pb-4">
           <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> Планета</Link>
-          <div className="mt-3 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-start">
-            <div className="min-w-0 flex gap-5">
-              <div className="w-20 h-20 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-line grid place-items-center">
-                {uni?.logo_url ? <img src={uni.logo_url} alt="" className="w-20 h-20 object-contain p-1.5" /> : hero ? <img src={thumbUrl(hero)} alt="" className="w-20 h-20 object-cover" /> : <div className="shimmer w-20 h-20" />}
+
+          <div className="mt-3 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
+            <div className="min-w-0 flex-1 flex items-center gap-4">
+              <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-line grid place-items-center">
+                {uni?.logo_url ? <img src={uni.logo_url} alt="" className="w-full h-full object-contain p-1.5" /> : hero ? <img src={thumbUrl(hero)} alt="" className="w-full h-full object-cover" /> : <div className="shimmer w-full h-full" />}
               </div>
               <div className="min-w-0">
                 {uni ? (
                   <>
-                    <h1 className="text-[28px] sm:text-[34px] leading-[1.1] font-extrabold">{name}</h1>
-                    <div className="mt-1 text-sm text-ink-2">{[uni.names.en && uni.names.en !== name ? uni.names.en : null, uni.description].filter(Boolean).join(' · ')}</div>
-                    <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
-                      {uni.founded && <div><dt className="caps text-muted">основан</dt><dd className="mono">{uni.founded}</dd></div>}
-                      {uni.students && <div><dt className="caps text-muted">студентов</dt><dd className="mono">{uni.students.toLocaleString('ru-RU')}</dd></div>}
-                      {uni.city && <div><dt className="caps text-muted">город</dt><dd>{uni.city}{uni.country ? `, ${uni.country}` : ''}</dd></div>}
-                      {uni.website && <div><dt className="caps text-muted">сайт</dt><dd><a href={uni.website} target="_blank" rel="noreferrer" className="hover:text-brand inline-flex items-center gap-1">{uni.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}<ExternalLink size={11} /></a></dd></div>}
-                      {uni.qid.startsWith('Q') ? <div><dt className="caps text-muted">wikidata</dt><dd><a href={`https://www.wikidata.org/wiki/${uni.qid}`} target="_blank" rel="noreferrer" className="mono hover:text-brand">{uni.qid}</a></dd></div>
-                        : <div><dt className="caps text-muted">{t('profile.foundVia')}</dt><dd>{t('search.webLong')}</dd></div>}
-                      {uni.social && Object.keys(uni.social).length > 0 && <div className="basis-full"><dt className="caps text-muted">{t('profile.social')}</dt><dd className="flex flex-wrap gap-1.5 mt-1">{Object.entries(uni.social).map(([net, url]) => <a key={net} href={url} target="_blank" rel="noreferrer" className="chip hover:border-brand hover:text-brand" title={PHOTO_NETS.has(net) ? t('profile.socialPhotos') : undefined}>{SOCIAL_NAME[net] ?? net}{PHOTO_NETS.has(net) && <span className="ml-1 text-[10px] text-brand">· {t('profile.socialPhotos')}</span>}</a>)}</dd></div>}
-                    </dl>
+                    <h1 className="text-[26px] sm:text-[32px] leading-[1.1] font-extrabold">{name}</h1>
+                    {subtitle && <div className="mt-1.5 text-sm text-muted">{subtitle}</div>}
                   </>
-                ) : <div className="space-y-2"><div className="shimmer h-8 w-2/3 rounded" /><div className="shimmer h-4 w-1/3 rounded" /><div className="shimmer h-4 w-1/2 rounded" /></div>}
+                ) : <div className="space-y-2 w-72 max-w-full"><div className="shimmer h-8 w-full rounded" /><div className="shimmer h-4 w-2/3 rounded" /></div>}
               </div>
             </div>
-            <div className="flex flex-col items-start lg:items-end gap-3">
-              <div className="flex gap-2">
-                <Link to={`/map3d/${qid}`} className="btn-primary !h-10 !py-0" title={t('m3d.open')}><Box size={15} /> {t('m3d.open')}</Link>
-                <button className="btn-icon" onClick={doRefresh} title={t('profile.refresh')} disabled={!profile}><RefreshCw size={15} /></button>
-                <button className="btn-icon" onClick={share} title={t('profile.share')}>{copied ? <Check size={15} className="text-verified" /> : <Share2 size={15} />}</button>
-                <button className="btn-icon" title={saved ? 'Убрать из сохранённых' : 'Сохранить'} disabled={!profile}
+            <div className="flex items-center gap-2 shrink-0 w-full lg:w-auto">
+              {/* one map for the whole app: the campus scene of the main page, not a map of its own here */}
+              <Link to={`/?u=${qid}`} className="btn-primary !h-10 !py-0 whitespace-nowrap justify-center flex-1 lg:flex-none"><MapIcon size={15} /> {t('profile.map')}</Link>
+              <div className="inline-flex h-10 rounded-lg border border-line-2 bg-surface divide-x divide-line-2 overflow-hidden">
+                <button className="tool" onClick={doRefresh} title={t('profile.refresh')} aria-label={t('profile.refresh')} disabled={!profile}><RefreshCw size={15} /></button>
+                <button className="tool" onClick={share} title={t('profile.share')} aria-label={t('profile.share')}>{copied ? <Check size={15} className="text-verified" /> : <Share2 size={15} />}</button>
+                <button className="tool" title={saved ? 'Убрать из сохранённых' : 'Сохранить'} aria-label={saved ? 'Убрать из сохранённых' : 'Сохранить'} disabled={!profile}
                   onClick={() => saved ? store.unsave(qid) : store.save(qid, { name: uni?.name ?? qid, city: uni?.city, savedAt: new Date().toISOString(), photos: photos.length })}>
                   {saved ? <BookmarkCheck size={15} className="text-brand" /> : <Bookmark size={15} />}
                 </button>
-                <Link to={`/compare?a=${qid}`} className="btn-icon" title={t('profile.compare')}><GitCompare size={15} /></Link>
-                <button className={`btn-icon ${tab === 'judge' ? '!bg-ink !text-white' : ''}`} onClick={() => setTab(tab === 'judge' ? 'photos' : 'judge')} title={t('profile.judge')}><Gavel size={15} /></button>
+                <Link to={`/compare?a=${qid}`} className="tool" title={t('profile.compare')} aria-label={t('profile.compare')}><GitCompare size={15} /></Link>
+                <button className={`tool ${tab === 'judge' ? 'tool-on' : ''}`} onClick={() => setTab(tab === 'judge' ? 'photos' : 'judge')} title={t('profile.judge')} aria-label={t('profile.judge')}><Gavel size={15} /></button>
               </div>
-              {profile && (
-                <div className="text-xs text-ink-2 flex items-center gap-2">
-                  <CoverageDot level={profile.coverage.overall} />
-                  <span>{t('profile.coverage')}: {coverageLabel(profile.coverage.overall, lang)}</span>
-                  <span className="mono text-muted">· {(profile.elapsed_ms / 1000).toFixed(1)} s{cached ? ` · ${t('profile.cached')}` : ''}</span>
-                  {searching && <span className="mono text-muted animate-pulse">· {t('profile.searchingMore')}</span>}
+            </div>
+          </div>
+
+          {uni && (
+            <div className="mt-5 rounded-xl border border-line bg-surface overflow-hidden">
+              {/* -ml/-mt hide the outer edge of the cell borders, so only the lines between cells show at any column count */}
+              <dl className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] -ml-px -mt-px">
+                {facts.map((f) => (
+                  <div key={f.key} className="min-w-0 px-4 py-3 border-l border-t border-line">
+                    <dt className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold text-muted"><f.icon size={12} />{f.label}</dt>
+                    <dd className="mt-1 text-[15px] font-semibold text-ink">{f.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {social.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-line bg-canvas/60">
+                  <span className="mr-1 text-[11px] uppercase tracking-wider font-semibold text-muted">{t('profile.social')}</span>
+                  {social.map(([net, url]) => (
+                    <a key={net} href={url} target="_blank" rel="noreferrer" title={PHOTO_NETS.has(net) ? t('profile.socialLegend') : undefined}
+                      className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-line-2 bg-surface text-[13px] font-medium text-ink-2 hover:border-brand hover:text-brand transition-colors">
+                      {SOCIAL_NAME[net] ?? net}{PHOTO_NETS.has(net) && <Camera size={12} className="text-brand" />}
+                    </a>
+                  ))}
+                  {social.some(([net]) => PHOTO_NETS.has(net)) && (
+                    <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted"><Camera size={12} className="text-brand" /> {t('profile.socialLegend')}</span>
+                  )}
                 </div>
               )}
             </div>
-          </div>
-          <AgentsStrip stages={stages} sources={sources} elapsed={elapsed} />
+          )}
+
+          <AgentsStrip stages={stages} sources={sources} elapsed={elapsed} coverage={profile?.coverage.overall} cached={cached} />
         </div>
       </div>
 
@@ -221,8 +251,10 @@ export default function Profile() {
                       empty={photos.length > 0 || profile ? <EmptyState category={filter === 'all' ? undefined : filter} sources={doneSources} /> : null} />}
               </>
             )}
+            {tab === 'collage' && (profile ? <CollageTab profile={profile} onOpen={openPhoto} />
+              : !error && <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-lg shimmer" />)}</div>)}
+            {tab === 'about' && <AboutCampus qid={qid} />}
             {tab === 'bvr' && <BrochureVsReality photos={photos} onOpen={openPhoto} />}
-            {tab === 'map' && uni && <CampusMap3D uni={uni} campus={campus} photos={photos} ctx={ctx} onOpen={openPhoto} />}
             {tab === 'climate' && uni && <ClimateTab qid={qid} lat={uni.lat} lon={uni.lon} />}
             {tab === 'city' && uni && <CityTab qid={qid} uni={uni} ctx={ctx} onCtx={setCtx} />}
             {tab === 'timeline' && profile && <Timeline timeline={profile.timeline} selected={year} onSelect={(y) => { setYear(y); if (y) setTab('photos') }} />}

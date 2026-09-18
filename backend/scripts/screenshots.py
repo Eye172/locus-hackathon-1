@@ -20,7 +20,7 @@ SHOTS = [
     ("globe", "/", 9000, None),
     ("profile", f"/u/{QID}", 5000, None),
     ("passport", f"/u/{QID}?photo=c38f8b42e2a4ceb6", 5000, None),
-    ("map3d", f"/u/{QID}?tab=map", 12000, None),
+    ("map3d", f"/?u={QID}", 18000, None),  # the main map flies to the campus
     ("climate", f"/u/{QID}?tab=climate", 7000, None),
     ("city", f"/u/{QID}?tab=city", 6000, None),
     ("bvr", f"/u/{QID}?tab=bvr", 4000, None),

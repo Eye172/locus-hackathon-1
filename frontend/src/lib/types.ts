@@ -118,6 +118,9 @@ export interface Photo {
   date_estimate?: Era | null
   ref_similarity?: number | null
   featured?: boolean
+  intent?: string | null
+  query?: string | null
+  collage?: string | null
 }
 
 export interface InspectorStats {
@@ -183,7 +186,36 @@ export interface Profile {
   cached: boolean
   reference?: { url: string } | null
   inspector?: InspectorStats | null
+  collage?: CollageSection[]
+  plan?: PlanSummary | null
   version: string
+}
+
+export interface CollageSection { key: string; label: string; target: number; photos: string[]; found: number }
+export interface PlanSummary { hash: string; intents: { key: string; label: string; target: number; enabled: boolean; queries: Record<string, string[]> }[] }
+
+export interface FactItem { text: string; sources: number[] }
+export interface FactSection { key: string; title: string; items: FactItem[]; rating: 'good' | 'mixed' | 'poor' | 'unknown' | string; rating_note: string }
+export interface CampusFacts {
+  qid: string; summary: string; sections: FactSection[]; quick: { label: string; value: string; sources: number[] }[]
+  sources: { id: number; title: string; url: string; kind: string }[]; model: string; generated_at: string; note?: string | null
+}
+
+export type Platform = 'tiktok' | 'instagram' | 'google' | 'maps' | 'youtube'
+export interface Intent {
+  key: string; label: string; enabled: boolean; target: number; categories: string[]; platforms: Platform[]
+  phrases: Record<string, string[]>; concept?: string | null; caption_words: string[]; account_words: string[]; maps: string[]; fast: boolean
+}
+export interface CustomQuery { intent: string; query: string; platforms: Platform[] }
+export interface SearchPlan {
+  intents: Intent[]; languages: 'both' | 'en' | 'local'; posts_per_intent: number; videos_per_intent: number
+  phrases_per_intent: number; min_relevance: number; use_accounts: boolean; use_suggestions: boolean; custom: CustomQuery[]
+}
+export interface UniPlan { custom: CustomQuery[]; disabled: string[]; names: string[] }
+export interface UniPlanView {
+  qid: string; name: string; uni: UniPlan; preview: Record<string, Record<string, string[]>>
+  names: { full: string[]; tags: string[]; abbr: string[] }
+  discovered?: { ig_accounts: { username: string; full_name: string; intent: string }[]; ig_tags: { tag: string; count: number; intent: string }[]; tt_accounts: { username: string; name: string }[]; suggestions: { query: string; intent: string }[] } | null
 }
 
 export interface RecentItem { qid: string; name: string; city?: string | null; generated_at: string; elapsed_ms: number; photos: number }

@@ -39,10 +39,12 @@ class Settings(BaseSettings):
     fetch_concurrency: int = 10
     max_candidates: int = 90
     max_per_source: int = 40
-    # Second pass. The fast profile answers the case's 30 s; this one keeps collecting from the social
-    # networks afterwards and updates the same profile in the open page.
+    # Background pass. The fast profile answers the case's 30 s; after it nothing is cut off by the clock: the
+    # sources still running finish, the social networks are searched in full, the inspector judges the rest, and
+    # the open page quietly gets the profile again as photos come in (pipeline/orchestrator.py, Run.background).
     deep_pass: bool = True
-    deep_budget_s: float = 55.0
+    background_guard_s: float = 900.0   # not a budget: only stops something that hangs forever
+    background_refresh_s: float = 20.0  # how often the open page gets the grown profile while it runs
     deep_per_source: int = 40
     deep_videos: int = 10          # clips opened per social source (a download plus two ffmpeg seeks each)
 
@@ -72,7 +74,7 @@ class Settings(BaseSettings):
     inspect_batch: int = 16                 # photos per request: the daily quota counts requests, not photos
     inspect_concurrency: int = 3            # the free Gemini tier answers 429 above ~15 requests a minute
     inspect_max_photos: int = 150
-    inspect_max_photos_deep: int = 400   # the deep pass keeps judging after the fast profile is on screen
+    inspect_max_photos_deep: int = 400   # the background pass keeps judging after the fast profile is on screen
     inspect_max_street: int = 10      # Mapillary/Flickr street frames: few are informative, they mostly feed the walk tab
     inspect_timeout_s: float = 15.0          # 3.1 lite needs ~12 s for 16 photos
     depth_warmup: bool = True
@@ -123,6 +125,8 @@ class Settings(BaseSettings):
                            "env": "SCRAPECREATORS_API_KEY"},
             "instagram_search": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
                                  "env": "SCRAPECREATORS_API_KEY"},
+            "instagram_accounts": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
+                                   "env": "SCRAPECREATORS_API_KEY"},
             "tiktok_hashtag": {"enabled": bool(self.scrapecreators_api_key), "needs_key": True,
                                "env": "SCRAPECREATORS_API_KEY"},
             "youtube_search": {"enabled": bool(self.youtube_api_key), "needs_key": True, "env": "YOUTUBE_API_KEY"},

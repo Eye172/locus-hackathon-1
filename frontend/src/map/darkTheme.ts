@@ -1,3 +1,4 @@
+import { addProtocol } from 'maplibre-gl'
 import type { Map, StyleSpecification, LayerSpecification, SkySpecification } from 'maplibre-gl'
 
 export const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
@@ -79,6 +80,61 @@ export function prefetchPath(samples: { lat: number; lon: number; zoom: number }
 }
 const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 
+/* Where Esri has no imagery at a zoom level (z18-19 in Kyzylorda, z19 in Taraz or Khorog...) it still answers 200 with
+ * a grey "Map data not yet available" tile - the same 2 521-byte JPEG everywhere. The map would show it as imagery.
+ * The style loads Esri through this protocol instead: a placeholder is replaced by its parent tile's quarter, scaled
+ * up (going further up while the parent is a placeholder too) - softer, but the real ground. */
+const ESRI_PROTOCOL = 'esri'
+const PLACEHOLDER_BYTES = 2521
+const PLACEHOLDER_SHA256 = '9eafd300d61393184a4abc1d458564cfd1cd9b6f9c4e9c74687045c0a0e5b858'
+const esriCache = new globalThis.Map<string, Promise<ArrayBuffer | null>>()
+
+async function isPlaceholder(buf: ArrayBuffer): Promise<boolean> {
+  if (buf.byteLength !== PLACEHOLDER_BYTES || !globalThis.crypto?.subtle) return false
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf))
+  return Array.from(h, (b) => b.toString(16).padStart(2, '0')).join('') === PLACEHOLDER_SHA256
+}
+
+/** The imagery of tile z/y/x, or null when Esri has none at this level or above it (5 levels up at most). */
+function esriTile(z: number, y: number, x: number, signal?: AbortSignal, up = 0): Promise<ArrayBuffer | null> {
+  const key = `${z}/${y}/${x}`
+  let p = esriCache.get(key)
+  if (!p) {
+    p = (async () => {
+      const r = await fetch(tileUrl(ESRI_IMAGERY, z, x, y), { signal })
+      if (!r.ok) throw new Error(`esri ${r.status}`)
+      const buf = await r.arrayBuffer()
+      if (!(await isPlaceholder(buf))) return buf
+      if (z === 0 || up >= 5) return null
+      const parent = await esriTile(z - 1, y >> 1, x >> 1, undefined, up + 1)   // shared by 4 children: not cancelled with one
+      if (!parent) return null
+      const half = await createImageBitmap(new Blob([parent]), (x & 1) * 128, (y & 1) * 128, 128, 128,
+        { resizeWidth: 256, resizeHeight: 256, resizeQuality: 'high' })
+      const canvas = new OffscreenCanvas(256, 256)
+      canvas.getContext('2d')!.drawImage(half, 0, 0)
+      half.close()
+      return (await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })).arrayBuffer()
+    })()
+    p.catch(() => esriCache.delete(key))   // a failed or aborted load is tried again next time
+    esriCache.set(key, p)
+    if (esriCache.size > 600) esriCache.delete(esriCache.keys().next().value!)
+  }
+  return p
+}
+
+let esriProtocol = false
+function registerEsriProtocol() {
+  if (esriProtocol) return
+  esriProtocol = true
+  addProtocol(ESRI_PROTOCOL, async (params, abort) => {
+    const m = /(\d+)\/(\d+)\/(\d+)$/.exec(params.url)
+    if (!m) throw new Error(`bad esri url ${params.url}`)
+    const data = await esriTile(+m[1], +m[2], +m[3], abort.signal)
+    if (!data) throw new Error('no imagery here')   // the map keeps showing the lower-zoom tile it has
+    return { data }
+  })
+}
+
 /**
  * Paint overrides for the vector layers drawn on top of satellite imagery.
  * Fills are hidden (the imagery shows land, water and parks), roads become thin white lines,
@@ -124,7 +180,8 @@ export async function loadSatelliteStyle(globe = true): Promise<StyleSpecificati
   // frame; the sharper NASA tiles draw over them as they arrive.
   style.sources.planet = { type: 'raster', tiles: ['/planet/{z}/{x}/{y}.jpg'], tileSize: 256, maxzoom: 3, attribution: 'NASA GIBS Blue Marble' }
   style.sources.bluemarble = { type: 'raster', tiles: [BLUE_MARBLE], tileSize: 256, maxzoom: 8, attribution: 'NASA GIBS Blue Marble' }
-  style.sources.esri = { type: 'raster', tiles: [ESRI_IMAGERY], tileSize: 256, maxzoom: 19, attribution: 'Esri, Maxar, Earthstar Geographics' }
+  registerEsriProtocol()
+  style.sources.esri = { type: 'raster', tiles: [`${ESRI_PROTOCOL}://tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19, attribution: 'Esri, Maxar, Earthstar Geographics' }
   const rasters: LayerSpecification[] = [
     { id: 'planet', type: 'raster', source: 'planet', maxzoom: 7.5, paint: { 'raster-fade-duration': 0, 'raster-saturation': 0.05 } },
     { id: 'bluemarble', type: 'raster', source: 'bluemarble', paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 0, 1, 5.5, 1, 7.5, 0], 'raster-fade-duration': 0, 'raster-saturation': 0.05 } },

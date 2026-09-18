@@ -7,7 +7,7 @@
  * OSM places as a fallback.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -24,8 +24,8 @@ import { useLang, useT } from '../lib/i18n'
 import type { Lang } from '../lib/i18n'
 import { SearchBox } from './SearchBox'
 import {
-  GOOGLE_3D_KEY, computeRoute, groundHeight, haversineM, loadGoogle3D, nearbyPlaces, onGoogleAuthError, placesQuota,
-  rangeFor, textPlaces, walkMinutes,
+  GOOGLE_3D_KEY, computeRoute, earthDataSince, earthSurfaceSince, groundHeight, haversineM, loadGoogle3D, nearbyPlaces, onGoogleAuthError,
+  placesQuota, rangeFor, textPlaces, walkMinutes,
 } from '../lib/gmaps'
 import type { GRoute, GoogleLibs, LatLng, PlaceGroup } from '../lib/gmaps'
 
@@ -223,7 +223,34 @@ type MiniInfo = Awaited<ReturnType<typeof api.mini>>
 type Intro = 'wait' | 'fly' | 'orbit' | 'done'
 
 const ORBIT_MS = 16000
-const ALWAYS_ON = new Set(['sel', 'city'])  // element groups that are not user layers
+const INTRO_TILT = 62
+const INTRO_HEADING = 28
+const ALWAYS_ON = new Set(['sel', 'city', 'grey'])  // element groups that are not user layers
+const LS_SURFACE = 'campuslens.surface.'  // + qid: 'mesh' | 'flat', what Google's 3D map is at this campus
+// grey buildings where Google is flat: the backend's z14 building tiles (~1.5-2.4 km) list their non-empty z16 chunks
+// (~0.4-0.6 km); each chunk is one model. Chunks, not tiles: the map culls a model by its origin alone, so a tile-sized
+// model vanished while its buildings were still in the foreground.
+const GREY_TILE_Z = 14
+const GREY_CHUNK_Z = 16
+const GREY_MAX_MODELS = 160      // chunk models on the map at once (up to ~100 KB and a few hundred buildings each)
+const GREY_PER_STEP = 8          // new models per camera update
+const GREY_MAX_REACH_M = 3000    // how far around the looked-at point
+const GREY_MAX_RANGE_M = 15000   // higher up the buildings are specks: nothing new is loaded
+function greyTileOf(p: LatLng, z: number): [number, number] {
+  const n = 2 ** z
+  const r = (Math.max(-85, Math.min(85, p.lat)) * Math.PI) / 180
+  return [Math.floor(((p.lng + 180) / 360) * n), Math.floor(((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2) * n)]
+}
+/** a tile's centre; a chunk's model is placed at its chunk's centre (the backend builds it around the same point) */
+function greyTileCenter(x: number, y: number, z: number): LatLng {
+  const n = 2 ** z
+  return { lat: (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 0.5)) / n))) * 180) / Math.PI, lng: ((x + 0.5) / n) * 360 - 180 }
+}
+const greyTileSide = (lat: number, z: number) => (40075016.7 * Math.cos((lat * Math.PI) / 180)) / 2 ** z
+// how far out the scene lets you go: at most the university's city (or ~13 km around the campus while it is unknown)
+const CITY_MAX_ALT_M = 20000
+const NEAR_CAMPUS_DEG = 0.12
+const NEAR_CAMPUS_ALT_M = 12000
 
 export interface Campus3DProps {
   qid: string
@@ -277,6 +304,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   const introFor = useRef(-1)
   const introFinish = useRef<(() => void) | null>(null)
   const introRef = useRef<Intro>('wait')
+  const createdAt = useRef(0)
+  // Google's 3D here: a real mesh, or flat satellite imagery on terrain (then the city gets grey buildings)
+  const [surface, setSurface] = useState<'mesh' | 'flat' | null>(null)
   useEffect(() => { introRef.current = intro }, [intro])
   const onRef = useRef(on)
   useEffect(() => { onRef.current = on }, [on])
@@ -297,7 +327,8 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     return () => { alive = false }
   }, [qid, lang])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // the city boundary can arrive a little later than the rest (Nominatim is paced): ask again
+  // the city boundary usually arrives later than the rest (the server does not hold the pack for it; Nominatim is
+  // paced): ask again - the lock is needed only after the ~16 s orbit
   useEffect(() => {
     if (!pack) return
     setCityArea(pack.city_area ?? null)
@@ -309,10 +340,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       api.map3d(qid, lang).then((p) => {
         if (!alive) return
         if (p.city_area) setCityArea(p.city_area)
-        else if (p.city_status === 'pending' && ++tries < 3) timer = window.setTimeout(tick, 8000)
+        else if (p.city_status === 'pending' && ++tries < 8) timer = window.setTimeout(tick, 5000)
       }).catch(() => { /* keep the unlocked map */ })
     }
-    timer = window.setTimeout(tick, 8000)
+    timer = window.setTimeout(tick, 4000)
     return () => { alive = false; window.clearTimeout(timer) }
   }, [pack])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -348,9 +379,11 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   useEffect(() => {
     const host = hostRef.current
     if (!libs || !base || !host) return
-    // arrival: straight down onto the campus, like the last frame of the cloud dive
+    // arrival: already tilted, so the clouds clear onto the side view (the campus framing follows with the pack)
+    createdAt.current = performance.now()
     const map = new libs.maps3d.Map3DElement({
-      center: { lat: base.lat, lng: base.lng, altitude: base.alt }, range: arrival ? 2600 : 26000, tilt: 0, heading: 0,
+      center: { lat: base.lat, lng: base.lng, altitude: base.alt }, range: arrival ? 2600 : 26000,
+      tilt: arrival ? INTRO_TILT : 0, heading: arrival ? INTRO_HEADING : 0,
       mode: labels ? 'HYBRID' : 'SATELLITE', language: lang,
       gestureHandling: 'GREEDY',  // a full-screen map: the wheel zooms without Ctrl
     })
@@ -389,17 +422,31 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     return () => window.clearTimeout(timer)
   }, [active, steady, canFly])
 
-  // ---- the opening shot. page: fly to the campus. arrival: fly in, then one slow orbit (a gesture or «skip» ends it)
+  // ---- arrival: while the scene is still hidden under the clouds, jump the camera onto the campus framing —
+  // the clouds clear onto the finished side view and the orbit starts right away, no fly-in
+  const placedFor = useRef(-1)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!arrival || !map || !pack || active || placedFor.current === mapGen) return
+    const cam = introCam(pack, base?.alt, arrival)
+    map.center = cam.center; map.range = cam.range; map.tilt = cam.tilt; map.heading = cam.heading
+    placedFor.current = mapGen
+  }, [pack, active, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- the opening shot. page: fly to the campus. arrival: fly in (skipped when already placed), then one slow orbit
+  // (a gesture or «skip» ends it)
   useEffect(() => {
     const map = mapRef.current
     const host = hostRef.current
-    if (!map || !pack || !active || !canFly || introFor.current === mapGen) return
+    const placed = arrival && placedFor.current === mapGen
+    // arrival before the campus data (a first visit next to a live profile build, or a slow Wikidata/Nominatim): the
+    // clouds have cleared, so orbit the university's point now - a still picture read as "the map does not load".
+    // The campus, the dorms and the places draw themselves on the orbiting scene when the data comes.
+    const early = arrival && !pack && !!base
+    if (!map || !(pack || early) || !active || !(canFly || placed) || introFor.current === mapGen) return
     introFor.current = mapGen
-    const s = campusSpan(pack)
-    const cam = {
-      center: { lat: s.center.lat, lng: s.center.lng, altitude: pack.anchor.elevation ?? base?.alt ?? 0 },
-      range: rangeFor(s.meters) * (arrival ? 1.15 : 1), tilt: 62, heading: 28,
-    }
+    const cam = pack ? introCam(pack, base?.alt, arrival)
+      : { center: { lat: base!.lat, lng: base!.lng, altitude: base!.alt }, range: 2600, tilt: INTRO_TILT, heading: INTRO_HEADING }
     const flyMs = arrival ? 3800 : 2600
     let phase: 'fly' | 'orbit' | 'done' = 'fly'
     let guard = 0
@@ -427,6 +474,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     host?.addEventListener('pointerdown', onUser)
     host?.addEventListener('wheel', onUser, { passive: true })
     introFinish.current = () => { finish(); map.stopCameraAnimation?.() }
+    if (placed || early) { startOrbit(); return }  // early: the camera already frames the point (see the element)
     setIntro('fly')
     map.stopCameraAnimation?.()
     map.flyCameraTo({ endCamera: cam, durationMillis: flyMs })
@@ -471,8 +519,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     const padLng = pad / Math.max(Math.cos((lat * Math.PI) / 180), 0.2)
     try {
       map.bounds = { south: s - pad, west: w - padLng, north: n + pad, east: e + padLng }
+      // zooming out stops at the city: from higher up a tilted camera saw far past it, to the curve of the Earth
       const diag = haversineM({ lat: s, lng: w }, { lat: n, lng: e })
-      map.maxAltitude = baseAlt + Math.min(45000, Math.max(6000, diag * 0.9))
+      map.maxAltitude = baseAlt + Math.min(CITY_MAX_ALT_M, Math.max(4000, diag * 0.35))
     } catch { /* an older API without camera bounds: the mask still shows the city */ }
     const m3 = libs.maps3d
     const P = 0.8
@@ -493,6 +542,19 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       try { map.bounds = null; map.maxAltitude = 63170000 } catch { /* ignore */ }
     }
   }, [libs, cityArea, ready, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- no city boundary (yet, or none known): the camera still stays around the campus, ~13 km each way
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || cityArea || !ready || !anchor) return
+    const r = NEAR_CAMPUS_DEG
+    const rLng = r / Math.max(Math.cos((anchor.lat * Math.PI) / 180), 0.2)
+    try {
+      map.bounds = { south: anchor.lat - r, west: anchor.lng - rLng, north: anchor.lat + r, east: anchor.lng + rLng }
+      map.maxAltitude = baseAlt + NEAR_CAMPUS_ALT_M
+    } catch { /* an older API without camera bounds */ }
+    return () => { try { map.bounds = null; map.maxAltitude = 63170000 } catch { /* ignore */ } }
+  }, [cityArea, ready, mapGen, anchor?.lat, anchor?.lng])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- camera
   const fly = useCallback((p: LatLng, range: number, opts: { alt?: number | null; tilt?: number; heading?: number; ms?: number } = {}) => {
@@ -647,6 +709,120 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     computeRoute(libs, anchor, sel, sel.distance > 6000 ? 'DRIVING' : 'WALKING').then((r) => { if (alive) setSelRoute(r) })
     return () => { alive = false }
   }, [sel, libs])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- a map that receives nothing is not coming: with the key's daily 3D quota spent Google neither throws nor fires
+  // gmp-error, it just stays black with a spinner. No Earth data 10 s after the scene became visible -> treated as
+  // unavailable (the page falls back to its own satellite map with OSM buildings). Counted from `active`, not from the
+  // element's creation: hidden under the clouds, on a phone, Google started loading only ~14 s after creation.
+  useEffect(() => {
+    if (!mapRef.current || !active) return
+    const since = createdAt.current
+    const timer = window.setTimeout(() => { if (earthDataSince(since) === false) setGErr('load') }, 10000)
+    return () => window.clearTimeout(timer)
+  }, [mapGen, active])
+
+  // ---- real 3D or flat here? Read from what the renderer downloads around the campus (lib/gmaps.ts), remembered per
+  // university: a revisit may be served from the renderer's cache and download nothing to judge by
+  useEffect(() => {
+    if (!mapRef.current) return
+    let known: 'mesh' | 'flat' | null = null
+    try { const v = localStorage.getItem(LS_SURFACE + qid); if (v === 'mesh' || v === 'flat') known = v } catch { /* storage unavailable */ }
+    setSurface(known)
+    const since = createdAt.current
+    let tries = 0
+    const timer = window.setInterval(() => {
+      const s = earthSurfaceSince(since)
+      if (s) {
+        setSurface(s)
+        try { localStorage.setItem(LS_SURFACE + qid, s) } catch { /* storage unavailable */ }
+      }
+      if (s || ++tries > 80) window.clearInterval(timer)   // up to a minute: a phone got its first detailed nodes at ~20 s
+    }, 750)
+    return () => window.clearInterval(timer)
+  }, [mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- where Google has no 3D: the city's buildings in grey over the satellite photo (backend pipeline/city_glb.py),
+  // loaded where the camera looks - nearest chunks first, a few at a time, at most GREY_MAX_MODELS on the map (the
+  // farthest go) and nothing new from high up, where buildings are specks. The highlighted campus and dorms are drawn
+  // over them as before.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!libs || !pack || !map || surface !== 'flat') { setLayer('grey', []); return }
+    let alive = true
+    const indexes = new Map<string, [number, number, number][] | null>()   // z14 tile -> its chunks (null: asked)
+    const models = new Map<string, { el: HTMLElement; at: LatLng }>()
+    let timer = 0
+    let last = 0
+    const update = () => {
+      timer = 0
+      last = performance.now()
+      const c = map.center as LatLng | null
+      const range = Number(map.range) || 0
+      if (!c || !range) return
+      const reach = Math.min(GREY_MAX_REACH_M, Math.max(1200, range * 1.1))
+      const want: { key: string; x: number; y: number; at: LatLng; d: number }[] = []
+      if (range <= GREY_MAX_RANGE_M) {
+        const [tx, ty] = greyTileOf(c, GREY_TILE_Z)
+        const side = greyTileSide(c.lat, GREY_TILE_Z)
+        const k = Math.ceil(reach / side) + 1
+        const half = greyTileSide(c.lat, GREY_CHUNK_Z) * 0.71
+        for (let dx = -k; dx <= k; dx++) {
+          for (let dy = -k; dy <= k; dy++) {
+            const x = tx + dx, y = ty + dy, tkey = `${x}/${y}`
+            if (haversineM(c, greyTileCenter(x, y, GREY_TILE_Z)) > reach + side * 0.71) continue
+            if (!indexes.has(tkey)) {   // which chunks of this tile have buildings (the server builds them on the first ask)
+              indexes.set(tkey, null)
+              fetch(`${API_BASE}/api/map3d/${encodeURIComponent(qid)}/grey/${x}/${y}.json`)
+                .then((r) => (r.ok ? r.json() : { chunks: [] }))
+                .then((j) => { indexes.set(tkey, j.chunks ?? []); if (alive) schedule() })
+                .catch(() => indexes.set(tkey, []))
+              continue
+            }
+            for (const [cx, cy] of indexes.get(tkey) ?? []) {
+              const at = greyTileCenter(cx, cy, GREY_CHUNK_Z)
+              const d = haversineM(c, at)
+              if (d <= reach + half) want.push({ key: `${cx}/${cy}`, x: cx, y: cy, at, d })
+            }
+          }
+        }
+        want.sort((a, b) => a.d - b.d)
+      }
+      let added = 0
+      for (const t of want.slice(0, GREY_MAX_MODELS)) {
+        if (models.has(t.key)) continue
+        if (added === GREY_PER_STEP) { schedule(250); break }   // the rest a moment later
+        const el = new libs.maps3d.Model3DElement({
+          src: `${API_BASE}/api/map3d/${encodeURIComponent(qid)}/grey16/${t.x}/${t.y}-v6.glb`,  // must end in .glb: no query
+          position: { ...t.at, altitude: 0 }, altitudeMode: 'RELATIVE_TO_GROUND',
+          orientation: { heading: 0, tilt: 0, roll: 0 },   // the model is already east / north / up in metres
+        })
+        map.append(el)
+        models.set(t.key, { el, at: t.at })
+        added++
+      }
+      // over the cap, or well behind the camera: the farthest go
+      const byDist = [...models.entries()].map(([key, m]) => ({ key, m, d: haversineM(c, m.at) })).sort((a, b) => b.d - a.d)
+      for (const { key, m, d } of byDist) {
+        if (models.size <= GREY_MAX_MODELS && d <= reach * 1.6 + 1000) break
+        m.el.remove()
+        models.delete(key)
+      }
+      els.current.grey = [...models.values()].map((m) => m.el)
+    }
+    function schedule(ms = 600) { if (!timer) timer = window.setTimeout(update, Math.max(0, ms - (performance.now() - last))) }
+    const onMove = () => schedule()
+    update()
+    map.addEventListener('gmp-centerchange', onMove)
+    map.addEventListener('gmp-rangechange', onMove)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+      map.removeEventListener('gmp-centerchange', onMove)
+      map.removeEventListener('gmp-rangechange', onMove)
+      for (const m of models.values()) m.el.remove()
+      els.current.grey = []
+    }
+  }, [libs, pack, surface, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------- scene building
   // campus outline, buildings and the floating name plate
@@ -958,7 +1134,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   )
 
   const cameraButtons = libs && pack && !gErr && (
-    <div className={`absolute right-3 flex flex-col gap-1.5 z-10 ${arrival ? 'top-[5.5rem]' : 'top-3'}`}>
+    <div className={`absolute right-3 flex flex-col gap-1.5 z-10 ${arrival ? 'top-[9rem]' : 'top-3'}`}>
       <CamBtn onClick={campusView} icon={<Building2 size={15} />} label={t('m3d.cam.campus')} />
       <CamBtn onClick={dormView} icon={<BedDouble size={15} />} label={t('m3d.cam.dorms')} disabled={!dormItems.length} />
       <CamBtn onClick={centerView} icon={<Landmark size={15} />} label={t('m3d.cam.center')} disabled={!centerItem} />
@@ -968,7 +1144,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   )
 
   const selectedCard = sel && (
-    <div className={`absolute z-20 left-1/2 -translate-x-1/2 w-[min(440px,calc(100%-1.5rem))] max-sm:bottom-auto max-sm:left-3 max-sm:right-16 max-sm:w-auto max-sm:translate-x-0 ${arrival ? 'bottom-[4.75rem] max-sm:top-[5.5rem]' : 'bottom-4 max-sm:top-3'}`}>
+    <div className={`absolute z-20 left-1/2 -translate-x-1/2 w-[min(440px,calc(100%-1.5rem))] max-sm:bottom-auto max-sm:left-3 max-sm:right-16 max-sm:w-auto max-sm:translate-x-0 ${arrival ? 'bottom-[4.75rem] max-sm:top-[9rem]' : 'bottom-4 max-sm:top-3'}`}>
       <div className="card p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           {sel.thumb ? <img src={sel.thumb} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
@@ -1027,7 +1203,8 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         {active && (
           <>
             {/* the university, in brief: the whole card opens the full profile */}
-            <div className="absolute z-20 top-3 left-1/2 -translate-x-1/2 w-[min(760px,calc(100%-8rem))] max-sm:left-[3.75rem] max-sm:right-3 max-sm:translate-x-0 max-sm:w-auto m3d-drop">
+            {/* the globe's transparent header lies over the top 3.5rem: everything here starts below it */}
+            <div className="absolute z-20 top-[4.25rem] left-1/2 -translate-x-1/2 w-[min(760px,calc(100%-8rem))] max-sm:left-[3.75rem] max-sm:right-3 max-sm:translate-x-0 max-sm:w-auto m3d-drop">
               <button onClick={onOpenProfile} className="w-full text-left rounded-2xl bg-white/95 backdrop-blur-md shadow-2xl border border-white/70 p-2 pr-2.5 flex items-center gap-3 hover:bg-white transition group">
                 <span className="w-12 h-12 rounded-xl overflow-hidden bg-canvas border border-line grid place-items-center shrink-0">
                   {thumb ? <img src={thumb} alt="" className="w-full h-full object-cover" /> : <Building2 size={20} className="text-muted" />}
@@ -1056,14 +1233,19 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
               )}
             </div>
             {onBack && (
-              <button onClick={onBack} title={t('m3d.backPlanet')} className="absolute z-20 top-3 left-3 w-12 h-12 rounded-2xl bg-white/90 backdrop-blur shadow-xl grid place-items-center hover:bg-white">
+              <button onClick={onBack} title={t('m3d.backPlanet')} className="absolute z-20 top-[4.25rem] left-3 w-12 h-12 rounded-2xl bg-white/90 backdrop-blur shadow-xl grid place-items-center hover:bg-white">
                 <Undo2 size={18} />
               </button>
             )}
 
-            {!ready && pack && (
+            {!ready && (pack || intro !== 'wait') && (
               <div className="absolute z-20 bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
                 <span className="rounded-full bg-black/50 backdrop-blur text-white/85 text-[12px] px-3 py-1.5">{intro === 'orbit' ? t('m3d.orbiting') : t('m3d.arriving')}</span>
+                {!pack && !packErr && (
+                  <span className="rounded-full bg-black/50 backdrop-blur text-white/85 text-[12px] px-3 py-1.5 inline-flex items-center gap-1.5">
+                    <LoaderCircle size={12} className="animate-spin" /> {t('m3d.loadingCampus')}
+                  </span>
+                )}
                 <button onClick={() => introFinish.current?.()} className="rounded-full bg-white/90 hover:bg-white text-ink text-[12px] font-medium px-3 py-1.5 inline-flex items-center gap-1.5 shadow-lg">
                   <SkipForward size={13} /> {t('m3d.skip')}
                 </button>
@@ -1102,7 +1284,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                   </div>
                 </div>
                 {drawer && (
-                  <aside className="absolute z-20 left-3 top-[5.5rem] bottom-[4.5rem] w-[360px] max-w-[calc(100%-1.5rem)] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden pop">
+                  <aside className="absolute z-20 left-3 top-[9rem] bottom-[4.5rem] w-[360px] max-w-[calc(100%-1.5rem)] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden pop">
                     <div className="flex items-center px-4 pt-3 pb-1">
                       <span className="caps text-muted">{t('m3d.title')}</span>
                       <button className="ml-auto btn-icon !w-8 !h-8" onClick={() => setDrawer(false)} aria-label="close"><X size={15} /></button>
@@ -1195,7 +1377,22 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   )
 }
 
-export default Campus3D
+/** Google's 3D map can throw from inside its own code - seen when the key's daily 3D quota runs out ("Maps Demo Key
+ *  limit reached"): the next call into maps3d fails and, thrown from an effect, took the whole app down to a blank
+ *  page. Any such failure now just ends the Google scene; the page falls back as when the map is unavailable. */
+class SceneBoundary extends Component<{ onFail?: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error: unknown) {
+    console.warn('[campus3d] the Google 3D scene failed, falling back:', error)
+    this.props.onFail?.()
+  }
+  render() { return this.state.failed ? null : this.props.children }
+}
+
+export default function Campus3DSafe(props: Campus3DProps) {
+  return <SceneBoundary onFail={props.onUnavailable}><Campus3D {...props} /></SceneBoundary>
+}
 
 
 function campusSpan(pack: Map3DPack): { center: LatLng; meters: number } {
@@ -1204,6 +1401,15 @@ function campusSpan(pack: Map3DPack): { center: LatLng; meters: number } {
   if (pts.length < 2) return { center: { lat: pack.anchor.lat, lng: pack.anchor.lon }, meters: 450 }
   const s = span(pts)
   return { center: s.center, meters: Math.min(Math.max(s.meters, 350), 4000) }
+}
+
+/** The opening-shot camera: the whole campus from the side. */
+function introCam(pack: Map3DPack, baseAlt: number | undefined, arrival: boolean) {
+  const s = campusSpan(pack)
+  return {
+    center: { lat: s.center.lat, lng: s.center.lng, altitude: pack.anchor.elevation ?? baseAlt ?? 0 },
+    range: rangeFor(s.meters) * (arrival ? 1.15 : 1), tilt: INTRO_TILT, heading: INTRO_HEADING,
+  }
 }
 
 function Step({ done, label }: { done: boolean; label: string }) {

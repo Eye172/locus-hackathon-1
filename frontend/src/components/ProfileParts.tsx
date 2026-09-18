@@ -22,41 +22,90 @@ const AGENT: Record<string, Record<Lang, string>> = {
   analyze: { ru: 'Curator', en: 'Curator', kk: 'Curator' }, assemble: { ru: 'Writer', en: 'Writer', kk: 'Writer' },
 }
 
-/** One-line agent strip: dot, agent name, time. Sources unfold below. */
-export function AgentsStrip({ stages, sources, elapsed }: { stages: Record<string, Stage>; sources: Record<string, SourceStatus>; elapsed: number }) {
+const SEGMENT: Record<string, string> = { done: 'bg-verified', running: 'bg-brand animate-pulse', pending: 'bg-line-2', skipped: 'bg-likely', error: 'bg-unverified' }
+
+/** Status line under the header: coverage, what the pipeline is doing in words, a stage bar.
+ *  The per-stage times and the sources unfold below, so the header itself stays readable. */
+export function AgentsStrip({ stages, sources, elapsed, coverage, cached }: {
+  stages: Record<string, Stage>; sources: Record<string, SourceStatus>; elapsed: number
+  coverage?: string; cached?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const lang = useLang()
   const t = useT()
   const list = Object.values(stages)
+  const name = (s: Stage) => AGENT[s.key]?.[lang] ?? s.label
   const problems = list.filter((s) => s.status === 'skipped' || s.status === 'error')
+  const running = list.filter((s) => s.status === 'running')
+  const busy = list.length === 0 || list.some((s) => s.status === 'running' || s.status === 'pending')
   const srcs = Object.entries(sources)
+  const srcDone = srcs.filter(([, s]) => s.status === 'done').length
+  const secs = `${(elapsed / 1000).toFixed(1)} s`
   return (
-    <div className="rule pt-3">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
-        {list.map((s) => (
-          <span key={s.key} className="inline-flex items-center gap-1.5" title={s.detail ?? ''}>
-            {ICON[s.status]}
-            <span className={s.status === 'pending' ? 'text-slate-400' : 'text-ink-2'}>{AGENT[s.key]?.[lang] ?? s.label}</span>
-            {s.ms != null && s.status !== 'running' && s.status !== 'pending' && <span className="mono text-muted">{(s.ms / 1000).toFixed(1)}s</span>}
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
+        {coverage && (
+          <span className="inline-flex items-center gap-2 h-7 px-2.5 rounded-full border border-line bg-surface">
+            <CoverageDot level={coverage} />
+            <span className="text-muted">{t('profile.coverage')}:</span>
+            <span className="font-semibold text-ink">{coverageLabel(coverage, lang)}</span>
           </span>
-        ))}
-        {srcs.length > 0 && (
-          <button onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 text-ink-2 hover:text-ink cursor-pointer">
-            {t('home.sources').toLowerCase()} <span className="mono">{srcs.filter(([, s]) => s.status === 'done').length}/{srcs.length}</span><ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        )}
+        <span className="inline-flex items-center gap-2 text-ink-2 min-w-0">
+          {busy ? <Loader2 size={14} className="text-brand animate-spin shrink-0" /> : <Check size={14} className="text-verified shrink-0" />}
+          {list.length === 0 ? t('profile.statusStarting')
+            : running.length ? <span>{t('profile.statusRunning')}: <span className="font-medium text-ink">{running.map(name).join(', ')}</span> <span className="mono text-muted">· {secs}</span></span>
+            : busy ? <span>{t('profile.generating')} <span className="mono text-muted">· {secs}</span></span>
+            : <span>{t('profile.statusDone').replace('{s}', secs)}{cached && <span className="text-muted"> · {t('profile.cached')}</span>}</span>}
+        </span>
+        {list.length > 0 && (
+          <span className="hidden sm:flex items-center gap-0.5 w-36" aria-hidden>
+            {list.map((s) => <i key={s.key} className={`h-1.5 flex-1 rounded-full ${SEGMENT[s.status] ?? 'bg-line-2'}`} title={name(s)} />)}
+          </span>
+        )}
+        {problems.length > 0 && (
+          <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-likely hover:underline cursor-pointer">
+            <AlertTriangle size={13} /> {t('profile.statusIssues')}: {problems.length}
           </button>
         )}
-        <span className="ml-auto mono text-muted">{(elapsed / 1000).toFixed(1)} s</span>
+        <button onClick={() => setOpen(!open)} className="ml-auto inline-flex items-center gap-1.5 text-ink-2 hover:text-ink cursor-pointer">
+          {t('profile.details')}
+          {srcs.length > 0 && <span className="mono text-xs text-muted">{t('home.sources').toLowerCase()} {srcDone}/{srcs.length}</span>}
+          <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
       </div>
-      {problems.length > 0 && <div className="mt-1.5 text-xs text-likely">{problems.map((s) => `${AGENT[s.key]?.[lang] ?? s.label}: ${s.detail}`).join(' · ')}</div>}
       {open && (
-        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-xs">
-          {srcs.map(([k, s]) => (
-            <div key={k} className="flex items-center gap-2" title={s.detail ?? ''}>
-              {ICON[s.status as keyof typeof ICON]}
-              <span className="text-ink-2 truncate">{s.label}</span>
-              <span className="mono text-muted ml-auto">{s.status === 'done' ? `${s.count} · ${s.ms} ms` : s.status === 'disabled' ? 'нет ключа' : s.status}</span>
+        <div className="mt-3 rounded-xl border border-line bg-surface p-4 grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] text-xs">
+          <div>
+            <h4 className="caps text-muted mb-2">{t('profile.stages')}</h4>
+            <ol className="space-y-1.5">
+              {list.map((s, i) => (
+                <li key={s.key} title={s.detail ?? ''}>
+                  <div className="flex items-center gap-2">
+                    <span className="mono text-muted w-4 text-right">{i + 1}</span>
+                    {ICON[s.status]}
+                    <span className={s.status === 'pending' ? 'text-slate-400' : 'text-ink-2'}>{name(s)}</span>
+                    {s.ms != null && s.status !== 'running' && s.status !== 'pending' && <span className="mono text-muted ml-auto">{(s.ms / 1000).toFixed(1)} s</span>}
+                  </div>
+                  {(s.status === 'skipped' || s.status === 'error') && s.detail && <div className="ml-6 pl-2 mt-0.5 text-likely">{s.detail}</div>}
+                </li>
+              ))}
+            </ol>
+          </div>
+          {srcs.length > 0 && (
+            <div className="min-w-0">
+              <h4 className="caps text-muted mb-2">{t('home.sources')} <span className="mono normal-case tracking-normal">{srcDone}/{srcs.length}</span></h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                {srcs.map(([k, s]) => (
+                  <div key={k} className="flex items-center gap-2 min-w-0" title={s.detail ?? ''}>
+                    {ICON[s.status as keyof typeof ICON]}
+                    <span className="text-ink-2 truncate">{s.label}</span>
+                    <span className="mono text-muted ml-auto shrink-0">{s.status === 'done' ? `${s.count} · ${s.ms} ms` : s.status === 'disabled' ? t('home.keyMissing') : s.status}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>

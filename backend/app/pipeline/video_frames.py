@@ -46,7 +46,7 @@ async def until_deadline(coros: list, margin: float = 0.0) -> list:
         t.cancel()
     return [t.result() if t in done and not t.cancelled() and t.exception() is None else None for t in tasks]
 FRACTIONS = (0.35, 0.7)     # a third in, two thirds in: past the intro, before the call to subscribe
-MAX_BYTES = 8_000_000       # a 60 s vertical clip is ~3 MB; anything larger is not worth the budget
+MAX_BYTES = 25_000_000      # a 60 s vertical clip is ~3 MB; a 3-minute dorm tour ~20 MB is still worth it
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/128.0 Safari/537.36"}
 
@@ -109,7 +109,27 @@ async def frames(url: str, duration_s: float, key: str | None = None, timeout: f
         return await _download(url, duration_s, dests, key, timeout)
 
 
+def _grab_url(url: str, duration_s: float, out_paths: list[Path]) -> list[Path]:
+    """Runs in a worker thread: ffmpeg seeks inside the remote file with range requests and reads only the bytes
+    around each frame. Instagram reels are often 10-40 MB; downloading them whole took up to 40 s, and the ones past
+    the size cap were lost (27 of 50 in the audit of 18 Sep). TikTok's CDN refuses ffmpeg (403) - it is downloaded."""
+    out: list[Path] = []
+    for frac, dest in zip(FRACTIONS, out_paths):
+        try:
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-headers", f"User-Agent: {UA['User-Agent']}\r\n",
+                            "-ss", f"{duration_s * frac:.2f}", "-i", url, "-frames:v", "1", "-q:v", "3", str(dest)],
+                           check=False, timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.debug("ffmpeg url failed: %r", e)
+            continue
+        if dest.exists() and dest.stat().st_size > 4000:
+            out.append(dest)
+    return out
+
+
 async def _download(url: str, duration_s: float, dests: list[Path], key: str, timeout: float) -> list[Path]:
+    if "cdninstagram" in url or "fbcdn" in url:
+        return await asyncio.to_thread(_grab_url, url, min(duration_s, 600.0), dests)
     try:
         r = await http.get(url, headers=_headers(url), timeout=timeout)
     except Exception as e:  # noqa: BLE001

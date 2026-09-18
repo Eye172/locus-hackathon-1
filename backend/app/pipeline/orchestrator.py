@@ -1,14 +1,17 @@
-"""Runs the whole pipeline for one university under a time budget and streams events.
+"""Runs the whole pipeline for one university and streams events.
 
-Event types: stage, university, campus, source, photos (preliminary batches), profile (final), error.
+Event types: stage, university, campus, source, photos (preliminary batches), profile, error.
 Design: facts come first (≈1 s) so the UI can render the header; the campus outline (Overpass) is resolved
-in parallel with the non-geographic sources; geo sources wait for it. Everything is capped by the budget.
+in parallel with the non-geographic sources; geo sources wait for it. The first profile is a snapshot at ~24 s
+(the case's 30 s); nothing is cut off there - the background pass carries on without a clock and sends the grown
+profile again (final=False) until the last one (final=True).
 """
 from __future__ import annotations
 
 import asyncio
 import io
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -24,13 +27,14 @@ from ..models import (BROCHURE_SOURCES, CATEGORIES, Campus, CategoryStats, Photo
                       SOURCE_LABELS, Stage, University)
 from . import categorize as categorize_mod
 from . import context as context_mod
-from . import crossdup, curate, dedup, describe, video_frames, vision
+from . import collage as collage_mod
+from . import crossdup, curate, dedup, describe, search_plan, video_frames, vision
 from . import enrich as enrich_mod
 from .ai_inspector import Inspector
-from .fetch import Fetched, fetch_all
+from .fetch import Fetched, fetch_all, fetch_waves
 from .fetch import photo_id as fetch_id
-from .sources import (social, social_api, commons, flickr, map_reviews, mapillary, official_site, places,
-                      vk_geo, web_images, wikipedia)
+from .sources import (social, social_api, social_search, commons, flickr, map_reviews, mapillary, official_site,
+                      places, vk_geo, web_images, wikipedia)
 from .verify import CITY_SOURCES, CROWD_SOURCES, SEARCH_SOURCES, VerifyContext, hard_flags, score
 
 log = logging.getLogger("campuslens.orchestrator")
@@ -44,11 +48,10 @@ STAGES = [
     ("inspect", "ИИ-инспектор: проверка каждого фото"),
     ("analyze", "Уверенность, дубли, отбор"),
     ("assemble", "Сборка профиля"),
-    ("deep", "Полный обход соцсетей"),
 ]
 GEO_SOURCES = {"commons_geo", "mapillary", "flickr"}
 HARD_CAP_S = 29.0  # the case asks for a useful profile within 30 s: nothing optional may push past this
-# with the deep pass on, the first profile does not have to wait for stragglers - they arrive in the second one
+# with the background pass on, the first profile does not have to wait for stragglers - they arrive in later ones
 FAST_TARGET_S = 24.0
 SOCIAL_SOURCES = {"telegram", "youtube", "instagram", "instagram_tagged", "tiktok", "vk"}  # wait for the site links
 
@@ -76,7 +79,17 @@ class Run:
         self.deep = settings.deep_pass
         self.description = None
         self.context = None
+        self.plan: search_plan.Plan = search_plan.load()
         self.collect_deadline = self.deadline
+        self.factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {}
+        self.first_tasks: dict[str, asyncio.Task] = {}   # the first pass's source runs, by source name
+        self.got: dict[str, int] = {}                    # images each source has added, over all its runs
+        self.have: set[tuple[str, str]] = set()          # (source, photo id): a re-run never adds the same image twice
+        # after the first profile: no stage bar, no timer, no per-source chatter - only the grown profile now and then
+        self.quiet = False
+        self.first_ms: int | None = None
+        self.guard_end = math.inf
+        self.bg_done = asyncio.Event()
 
     # ---------- helpers ----------
     @property
@@ -98,6 +111,8 @@ class Run:
         log.info("%s %s", self.qid, s)
 
     async def stage(self, key: str, status: str, detail: str | None = None, count: int | None = None) -> None:
+        if self.quiet:  # the stage bar stays as the first profile left it
+            return
         st = self.stages[key]
         if status == "running":
             st.ms = self.ms()
@@ -109,6 +124,8 @@ class Run:
     async def source_event(self, name: str, status: str, count: int = 0, ms: int = 0, detail: str | None = None) -> None:
         self.sources_status[name] = {"status": status, "count": count, "ms": ms, "detail": detail,
                                      "label": SOURCE_LABELS.get(name, name)}
+        if self.quiet:  # kept for the next profile, not streamed
+            return
         await self.emit({"type": "source", "name": name, **self.sources_status[name], "elapsed_ms": self.ms()})
 
     # ---------- photo building ----------
@@ -136,6 +153,8 @@ class Run:
             outdated=bool(year and year < datetime.now().year - settings.outdated_years),
             lat=lat, lon=lon, phash=f.phash, dhash=f.dhash or None, sha1=f.sha1 or None,
             is_brochure=c.source in BROCHURE_SOURCES,
+            intent=c.intent or next((x.intent for x in f.extra_sources if x.intent), None),
+            query=c.query or next((x.query for x in f.extra_sources if x.query), None),
         )
 
     def text_of(self, f: Fetched) -> str:
@@ -178,7 +197,9 @@ class Run:
         photo_like = 1.0 - float(c.get("junk_total", 0.5))
         ref = float(np.dot(self.embs[f.id], self.ref_emb)) if self.ref_emb is not None and f.id in self.embs else 0.0
         needs = 0.15 if f.cand.source in SEARCH_SOURCES | CROWD_SOURCES else 0.0
-        return photo_like + 0.3 * max(0.0, ref - 0.6) + needs
+        # a post whose caption names the university and the theme is looked at before one that only matched a query
+        rel = 0.2 * min(1.0, (f.cand.relevance or 0.0) / 5.0)
+        return photo_like + 0.3 * max(0.0, ref - 0.6) + needs + rel
 
     def describe_for_ai(self, f: Fetched) -> str:
         """One metadata line per candidate for the inspector prompt."""
@@ -194,7 +215,8 @@ class Run:
             geo = ("inside the campus outline" if self.vctx.geom.mode == "polygon" else "within 500 m of the university point") \
                 if d == 0 else f"{d:.0f} m from the campus"
         kind = "city article/category (photo of the city)" if c.is_city or c.source in CITY_SOURCES else SOURCE_LABELS.get(c.source, c.source)
-        found = f"; found by image search {c.collector.split(':', 1)[1]!r}" if (c.collector or "").startswith("google:") else ""
+        found = f"; found by image search {c.collector.split(':', 1)[1]!r}" if (c.collector or "").startswith("google:") \
+            else f"; found by searching {c.query!r}" if c.query else ""
         return (f"source={kind}{found}; caption={cap!r}; page={page}; geotag={geo}; size={f.width}x{f.height}; "
                 f"date={c.date or f.exif_date or '?'}")
 
@@ -285,11 +307,13 @@ class Run:
                    + (6.0 if name in ("web_image", "map_review", "youtube_search") else 0)
                    # these open the videos themselves: a download plus two ffmpeg seeks per clip
                    + (10.0 if name in ("tiktok", "tiktok_search", "tiktok_hashtag", "tiktok_top",
-                                       "instagram_search") else 0))
-        # searches read this and hand back what they have a little before the hard timeout
-        token = video_frames.DEADLINE.set(t + timeout - 1.0)
+                                       "instagram_search", "instagram_accounts") else 0))
+        # searches that fan out over many queries and clips read this and hand back what they have a little before
+        # it, so a slow one still makes the first profile; in the background pass nothing is due and they run out
+        token = video_frames.DEADLINE.set(None if self.quiet else t + timeout - 1.0)
         try:
-            cands: list[PhotoCandidate] = await asyncio.wait_for(coro, timeout=timeout)
+            # with the background pass on, a source is never cut off: past its timeout it lands in a later profile
+            cands: list[PhotoCandidate] = await (coro if self.deep else asyncio.wait_for(coro, timeout=timeout))
         except asyncio.TimeoutError:
             await self.source_event(name, "skipped", detail="таймаут источника", ms=int((time.monotonic() - t) * 1000))
             return
@@ -299,30 +323,57 @@ class Run:
             return
         finally:
             video_frames.DEADLINE.reset(token)
+        # a second run of a source (background pass, retry) only downloads what the first one did not
+        cands = [c for c in cands if (name, fetch_id(c.url)) not in self.have]
         if not cands:
-            await self.source_event(name, "done", count=0, ms=int((time.monotonic() - t) * 1000), detail="ничего не найдено")
+            await self.source_event(name, "done", count=self.got.get(name, 0), ms=int((time.monotonic() - t) * 1000),
+                                    detail="ничего не найдено" if not self.got.get(name) else None)
             return
         await self.source_event(name, "fetching", count=len(cands), ms=int((time.monotonic() - t) * 1000))
-        fetch_deadline = self.collect_deadline
-        fetched = await fetch_all(cands, deadline=fetch_deadline, limit=limit)
-        self.logf(f"{name}: {len(cands)} candidates -> {len(fetched)} usable images")
-        if fetched:
-            await self.embed(fetched)
-            self.fetched.extend(fetched)
-            if self.inspector:
-                # only near-certain junk skips the inspector: CLIP calls fountains "maps" and facades "posters"
-                todo = [f for f in fetched if self.clf[f.id]["junk_total"] < 0.97]
-                if name in ("mapillary", "flickr"):
-                    todo = todo[:settings.inspect_max_street]
-                self.inspector.submit(todo, self.ai_priority)
-            prelim = self.analyze(fetched)
-            for p in prelim:
-                p.preliminary = True
-            await self.emit({"type": "photos", "source": name, "preliminary": True,
-                             "photos": [p.model_dump() for p in prelim if not p.rejected],
-                             "rejected": len([p for p in prelim if p.rejected]), "elapsed_ms": self.ms()})
-        await self.source_event(name, "done", count=len(fetched), ms=int((time.monotonic() - t) * 1000),
-                                detail=f"кандидатов {len(cands)}")
+        # downloads still running when the first profile is due are not dropped: they land in a later one
+        late: list[asyncio.Task] = []
+        try:
+            async def wave(batch: list[Fetched]) -> None:
+                await self.ingest(name, batch)
+
+            # images are embedded and queued for the inspector as they arrive, not when the slowest one is in
+            await fetch_waves(cands, deadline=self.collect_deadline, on_batch=wave, limit=limit,
+                              late=late if self.deep else None)
+            await self.source_event(name, "done", count=self.got.get(name, 0), ms=int((time.monotonic() - t) * 1000),
+                                    detail=f"кандидатов {len(cands)}")
+            if late:
+                rest = [r for r in await asyncio.gather(*late, return_exceptions=True) if isinstance(r, Fetched)]
+                await self.ingest(name, rest)
+                await self.source_event(name, "done", count=self.got.get(name, 0),
+                                        ms=int((time.monotonic() - t) * 1000), detail=f"кандидатов {len(cands)}")
+        finally:
+            for x in late:
+                x.cancel()
+
+    async def ingest(self, name: str, fetched: list[Fetched]) -> None:
+        """New images of one source: embedded, queued for the inspector, shown as preliminary before the first profile."""
+        fetched = [f for f in fetched if (name, f.id) not in self.have]
+        self.logf(f"{name}: +{len(fetched)} usable images")
+        if not fetched:
+            return
+        self.have.update((name, f.id) for f in fetched)
+        self.got[name] = self.got.get(name, 0) + len(fetched)
+        await self.embed(fetched)
+        self.fetched.extend(fetched)
+        if self.inspector:
+            # only near-certain junk skips the inspector: CLIP calls fountains "maps" and facades "posters"
+            todo = [f for f in fetched if self.clf[f.id]["junk_total"] < 0.97]
+            if name in ("mapillary", "flickr"):
+                todo = todo[:settings.inspect_max_street]
+            self.inspector.submit(todo, self.ai_priority)
+        if self.quiet:  # the next profile carries them
+            return
+        prelim = self.analyze(fetched)
+        for p in prelim:
+            p.preliminary = True
+        await self.emit({"type": "photos", "source": name, "preliminary": True,
+                         "photos": [p.model_dump() for p in prelim if not p.rejected],
+                         "rejected": len([p for p in prelim if p.rejected]), "elapsed_ms": self.ms()})
 
     async def commons_bundle(self, kind: str) -> list[PhotoCandidate]:
         uni = self.uni
@@ -374,6 +425,7 @@ class Run:
     async def run(self) -> Profile:
         await self.stage("facts", "running")
         self.uni, _wiki = await enrich_mod.facts(self.qid, self.logf)
+        self.plan = await search_plan.for_university(self.qid)
         self.campus = enrich_mod.provisional_campus(self.uni)
         flags = await cache.get_flags(self.qid)
         self.vctx = VerifyContext(
@@ -426,14 +478,14 @@ class Run:
             factories["instagram"] = (lambda: self.after_official("instagram", social_api.instagram_posts), 20)
             factories["instagram_tagged"] = (lambda: self.after_official("instagram", social_api.instagram_tagged), 20)
             factories["tiktok"] = (lambda: self.after_official("tiktok", social_api.tiktok_videos), 10)
-            factories["tiktok_search"] = (lambda: social_api.tiktok_search(self.uni), 10)
-            factories["tiktok_hashtag"] = (lambda: social_api.tiktok_hashtag(self.uni), 12)
-            # what a student sees typing the university into TikTok and Instagram: the Photo tab's slideshows
-            # cost no video download, so they come in the fast profile; reels and more pages come in the deep pass
-            factories["tiktok_top"] = (lambda: social_api.tiktok_top(self.uni, 24, 2), 24)
-            factories["instagram_search"] = (lambda: social_api.instagram_search(self.uni, 16, 3), 16)
+            # the themes of the search plan (atmosphere, a day in the life, campus, dorms…) searched the way students
+            # post them; the first profile gets the fast themes, the background pass all of them
+            factories["tiktok_search"] = (lambda: social_search.tiktok(self.uni, self.plan, fast=True), 80)
+            factories["instagram_search"] = (lambda: social_search.instagram(self.uni, self.plan, fast=True), 60)
+            factories["instagram_accounts"] = (
+                lambda: social_search.instagram_accounts(self.uni, self.plan, fast=True), 40)
         if "youtube_search" in enabled:
-            factories["youtube_search"] = (lambda: social_api.youtube_search(self.uni), 8)
+            factories["youtube_search"] = (lambda: social_api.youtube_intents(self.uni, self.plan), 30)
         if "mapillary" in enabled:
             factories["mapillary"] = (lambda: self.after_campus(lambda: mapillary.collect(bbox_pad(), 20)), 15)
         if "flickr" in enabled:
@@ -451,14 +503,18 @@ class Run:
             self.logf(f"external collector supplied {len(ext_cands)} candidates")
 
         # CLIP loads lazily inside embed(); at server start it is already warm, so collection begins immediately
+        self.factories = factories
         tasks = {asyncio.create_task(self.source_pipeline(n, f(), lim), name=n): n for n, (f, lim) in factories.items()}
-        # downloads stop at collect_deadline (the budget minus a reserve for the inspector and the assembly) and keep
-        # what has arrived; sources then get 2 s to embed and hand their images over before they are cancelled
+        self.first_tasks = {n: t for t, n in tasks.items()}
+        # the first profile takes what has downloaded by collect_deadline (the budget minus a reserve for the inspector
+        # and the assembly); sources get 2 s more to embed and hand their images over. Without the background pass the
+        # rest is cancelled; with it, it keeps running and lands in a later profile
         done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.collect_deadline + 2.0 - time.monotonic(), 3.0))
-        for t in pending:
-            t.cancel()
-            self.partial = True
-            await self.source_event(tasks[t], "skipped", detail="не уложился в бюджет времени")
+        if not self.deep:
+            for t in pending:
+                t.cancel()
+                self.partial = True
+                await self.source_event(tasks[t], "skipped", detail="не уложился в бюджет времени")
         for t in done:
             if t.exception():
                 self.logf(f"{tasks[t]} crashed: {t.exception()!r}")
@@ -476,32 +532,35 @@ class Run:
             pass
         if self.inspector:
             await self.stage("inspect", "running")
-            await self.inspector.finish(timeout=max(2.0, self.until(self.cap_s - 3.5)))
+            # with the background pass on, the workers keep judging after this: the first profile takes what is done
+            await self.inspector.finish(timeout=max(2.0, self.until(self.cap_s - 3.5)), stop=not self.deep)
             st = self.inspector.stats()
             self.logf(f"inspector {st['model']}: {st['photos']}/{len(self.fetched)} photos judged "
                       f"({st['cached']} from cache, {st['calls']} calls, {st['tokens_in']}+{st['tokens_out']} tokens, "
                       f"{st['errors']} errors)")
-            status = "done" if st["photos"] else "error"
-            models = " + ".join(st["models"]) or st["model"]
-            await self.stage("inspect", status, count=st["photos"],
-                             detail=f"проверено ИИ: {st['photos']} из {len(self.fetched)} · {models}"
-                                    # said out loud: the photos it could not look at are rejected, not trusted
-                                    + (" · суточный лимит ИИ исчерпан, непроверенные фото из поиска не показаны"
-                                       if st["quota_out"] else f" · ошибок: {st['errors']}" if st["errors"] else ""))
+            await self.stage("inspect", "done" if st["photos"] else "error", count=st["photos"],
+                             detail=self.inspect_detail())
         else:
             await self.stage("inspect", "skipped", detail="нет ключа LLM: только CLIP и сигналы источников")
 
         profile = await self.finalize(final=not self.deep)
         if self.deep:
             try:
-                await self.deepen()
+                await self.background()
             except Exception as e:  # noqa: BLE001
-                self.logf(f"deep pass failed: {e!r}")
-                await self.stage("deep", "error", detail=f"{type(e).__name__}")
+                self.logf(f"background pass failed: {e!r}")
             profile = await self.finalize(final=True)
         return profile
 
-    # ---------- assembly (runs once for the fast profile, once more after the deep pass) ----------
+    def inspect_detail(self) -> str:
+        st = self.inspector.stats()
+        models = " + ".join(st["models"]) or st["model"]
+        return (f"проверено ИИ: {st['photos']} из {len(self.fetched)} · {models}"
+                # said out loud: the photos it could not look at are rejected, not trusted
+                + (" · суточный лимит ИИ исчерпан, непроверенные фото из поиска не показаны"
+                   if st["quota_out"] else f" · ошибок: {st['errors']}" if st["errors"] else ""))
+
+    # ---------- assembly (the first profile, the background updates, the last one) ----------
     async def finalize(self, final: bool = True) -> Profile:
         # ---------- analysis over the full set (cross-source signals need everything) ----------
         await self.stage("analyze", "running")
@@ -512,6 +571,7 @@ class Run:
         kept = dedup.cluster_similar(good, self.embs)
         hidden = len(good) - len(kept)
         kept = curate.feature(kept, self.embs)
+        collage = collage_mod.build(kept, self.plan)
         rejected.sort(key=lambda p: -p.confidence)
         await self.stage("analyze", "done",
                          detail=f"копий объединено: {len(self.fetched) - len(reps)}, похожих скрыто: {hidden}, "
@@ -543,8 +603,11 @@ class Run:
                        and (not p.rejected or (p.reject_reason or "").startswith(("низкая уверенность", "малоинформативный")))],
                       key=lambda p: p.date or "")
         if self.context is None:
-            try:
-                self.context = await asyncio.wait_for(self.context_task, timeout=max(0.3, self.until(self.cap_s - 3.0)))
+            # the first profile waits a little; the background updates take it once it is there; the last one waits
+            wait = max(0.3, self.until(self.cap_s - 3.0)) if not self.quiet else \
+                max(0.0, self.guard_end - time.monotonic()) if final else 0.0
+            try:  # shielded: a lookup that misses the first profile keeps going for the next one
+                self.context = await asyncio.wait_for(asyncio.shield(self.context_task), timeout=wait)
             except Exception:
                 self.context = None
         context = self.context
@@ -555,54 +618,105 @@ class Run:
         if self.description is None:
             self.description = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None,
                                                     timeout=min(6.0, self.until(self.cap_s - 0.7)))
+        elif self.quiet and final:
+            # written again over everything that was found, with time to answer; a model that fails now does not
+            # replace its own earlier text with the template
+            d = await describe.build(self.uni, self.campus, stats, context.model_dump() if context else None, timeout=20.0)
+            if d.mode == "llm" or self.description.mode != "llm":
+                self.description = d
         description = self.description
+        # the time to the first answer: that is what the page waited for; the background pass after it is not
+        elapsed = self.first_ms if self.first_ms is not None else self.ms()
         profile = Profile(
             university=self.uni, campus=self.campus, photos=kept, rejected=rejected, categories=cats,
             coverage=coverage, description=description, context=context, walk=walk,
             timeline=dict(sorted(timeline.items())), stages=list(self.stages.values()),
             sources_status=self.sources_status, log=self.log,
-            generated_at=datetime.now(timezone.utc).isoformat(), elapsed_ms=self.ms(), partial=self.partial,
+            generated_at=datetime.now(timezone.utc).isoformat(), elapsed_ms=elapsed, partial=self.partial,
             reference=self.reference, inspector=self.inspector.stats() if self.inspector else None,
+            collage=collage, plan=collage_mod.plan_summary(self.plan, self.uni),
         )
         await self.stage("assemble", "done", count=len(kept))
         profile.stages = list(self.stages.values())
-        profile.elapsed_ms = self.ms()
+        if self.first_ms is None:
+            self.first_ms = profile.elapsed_ms = self.ms()
         await cache.save_profile(profile)
-        self.logf(f"profile ready: {len(kept)} photos, {len(rejected)} rejected, {self.ms()} ms")
-        await self.emit({"type": "profile", "profile": profile.model_dump(), "final": final, "elapsed_ms": self.ms()})
+        self.logf(f"profile {'ready' if not self.quiet else 'updated'}: {len(kept)} photos, {len(rejected)} rejected, "
+                  f"{self.ms()} ms")
+        await self.emit({"type": "profile", "profile": profile.model_dump(), "final": final,
+                         "elapsed_ms": profile.elapsed_ms})
         return profile
 
-    # ---------- deep pass ----------
-    async def deepen(self) -> None:
-        """Everything the 25-second budget had to leave on the table.
+    # ---------- background pass ----------
+    async def background(self) -> None:
+        """Everything the first answer had to leave on the table, with no clock on it.
 
-        The fast profile is already on screen, so from here the limits come off: every slideshow photo TikTok's own
-        search returns, frames from many more clips, the university's whole Instagram grid and every post that tags
-        it. New photos stream into the open page as they pass the inspector, and the profile is rebuilt at the end.
-        Nothing is prepared beforehand - this is still the same request, it just keeps going after the first answer."""
-        if "instagram" not in {n for n, st in settings.sources_status().items() if st["enabled"]}:
-            await self.stage("deep", "skipped", detail="нет ключа для соцсетей")
-            return
-        await self.stage("deep", "running")
-        self.deadline = time.monotonic() + settings.deep_budget_s
-        self.collect_deadline = self.deadline - 6.0
+        The first profile is on screen and saved, so from here nothing is due: the sources still running finish, the
+        downloads still in flight land, the social networks are searched in full (every place query in both
+        languages, more pages, frames from more clips, the university's whole Instagram grid and every post that
+        tags it), a source that failed gets a second try, the campus outline is asked for again if Overpass was
+        slow, and the inspector judges everything it has not seen. Silently: no stage bar, no timer - the open page
+        gets the grown profile every background_refresh_s while something new comes in, and the last one at the end.
+        The only limit is background_guard_s against something hanging forever. Nothing is prepared beforehand -
+        this is still the same request, it just keeps going after the first answer."""
+        self.quiet = True
+        self.deadline = self.collect_deadline = math.inf
+        self.guard_end = time.monotonic() + settings.background_guard_s
+        enabled = {n for n, st in settings.sources_status().items() if st["enabled"]}
         if self.inspector:
-            # photos that hit the fast pass's cap were dropped without a verdict, and a search hit without one is
-            # not shown at all: with the cap lifted they get their look now
+            # photos that hit the first pass's cap were left without a verdict, and a search hit without one is not
+            # shown at all: with the cap raised they get their look now
             self.inspector.cap = settings.inspect_max_photos_deep
             self.inspector.submit([f for f in self.fetched
                                    if f.id not in self.inspector.verdicts and self.clf[f.id]["junk_total"] < 0.97],
                                   self.ai_priority)
-            self.inspector._kick()   # what the fast pass left in the queue continues from where it stopped
+            self.inspector._kick()   # what the first pass left in the queue continues from where it stopped
+        factories = self.deep_factories(enabled)
+        for n, st in list(self.sources_status.items()):
+            if st["status"] in ("error", "skipped") and n in self.factories and n not in factories:
+                factories[n] = self.factories[n]   # one more try: most failures are a slow or busy server
+        tasks = {t for t in self.first_tasks.values() if not t.done()}
+        tasks |= {asyncio.create_task(self.source_pipeline(n, self.after_first(n, f), lim), name=f"bg:{n}")
+                  for n, (f, lim) in factories.items()}
+        if self.stages["campus"].status in ("skipped", "error"):
+            tasks.add(asyncio.create_task(self.late_campus()))
+        ticker = asyncio.create_task(self.refresh_loop())
+        try:
+            _, pending = await asyncio.wait(tasks, timeout=max(1.0, self.guard_end - time.monotonic())) \
+                if tasks else (set(), set())
+            for t in pending:
+                t.cancel()
+            if pending:
+                self.partial = True
+                self.logf(f"background guard: stopped {len(pending)} sources that never finished")
+            if self.inspector:
+                await self.inspector.finish(timeout=max(1.0, self.guard_end - time.monotonic()))
+                if self.inspector.queue and not self.inspector.quota_out:
+                    self.partial = True
+                st = self.inspector.stats()
+                # the details panel shows the whole count, not the first profile's
+                self.stages["inspect"].count, self.stages["inspect"].detail = st["photos"], self.inspect_detail()
+                self.logf(f"background pass: inspector judged {st['photos']} photos in total, "
+                          f"{len(self.fetched)} images collected")
+        finally:
+            self.bg_done.set()
+            await ticker
+
+    def deep_factories(self, enabled: set[str]) -> dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]]:
+        """The full versions of the searches the first pass ran in short."""
         v, n = settings.deep_videos, settings.deep_per_source
-        factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {
-            "tiktok_top": (lambda: social_api.tiktok_top(self.uni, n, v, pages=3, deep=True), n),
-            "instagram_search": (lambda: social_api.instagram_search(self.uni, n, v, pages=2, deep=True), n),
-            "tiktok_hashtag": (lambda: social_api.tiktok_hashtag(self.uni, n, v), n),
-            "tiktok_search": (lambda: social_api.tiktok_search(self.uni, n, v), n),
+        factories: dict[str, tuple[Callable[[], Awaitable[list[PhotoCandidate]]], int]] = {}
+        if "web_image" in enabled:
+            factories["web_image"] = (self.google_deep, 3 * n)
+            # the dorms, the library, the sports complex, the canteen as their own pins on Google Maps
+            factories["map_review"] = (lambda: map_reviews.collect_intents(self.uni, self.plan), 3 * n)
+        if "instagram" not in enabled:   # the social networks below all go through ScrapeCreators
+            return factories
+        factories |= {
+            "tiktok_search": (lambda: social_search.tiktok(self.uni, self.plan), 4 * n),
+            "instagram_search": (lambda: social_search.instagram(self.uni, self.plan), 3 * n),
+            "instagram_accounts": (lambda: social_search.instagram_accounts(self.uni, self.plan), 2 * n),
         }
-        if "web_image" in {k for k, st in settings.sources_status().items() if st["enabled"]}:
-            factories["web_image"] = (lambda: web_images.google_images(self.uni, deep=True), n)
         ig = self.uni.social.get("instagram")
         if ig:
             factories["instagram"] = (lambda: social_api.instagram_posts(ig, n), n)
@@ -610,17 +724,58 @@ class Run:
         tt = self.uni.social.get("tiktok")
         if tt:
             factories["tiktok"] = (lambda: social_api.tiktok_videos(tt, n, v), n)
-        # the fast profile is on screen: a source may use the whole deep budget, minus time to fetch and inspect
-        room = max(10.0, self.collect_deadline - 8.0 - time.monotonic())
-        tasks = {asyncio.create_task(self.source_pipeline(f"{name}", f(), lim, timeout=room), name=name): name
-                 for name, (f, lim) in factories.items()}
-        done, pending = await asyncio.wait(tasks.keys(), timeout=max(self.collect_deadline + 2.0 - time.monotonic(), 5.0))
-        for t in pending:
-            t.cancel()
-        if self.inspector:
-            await self.inspector.finish(timeout=max(3.0, self.deadline - time.monotonic()))
-            self.logf(f"deep pass: inspector judged {len(self.inspector.verdicts)} photos in total")
-        await self.stage("deep", "done", count=len(self.fetched), detail=f"кандидатов всего: {len(self.fetched)}")
+        return factories
+
+    async def google_deep(self) -> list[PhotoCandidate]:
+        """The classic category queries in the local language, and the themes of the search plan."""
+        a, b = await asyncio.gather(web_images.google_images(self.uni, deep=True),
+                                    web_images.google_intents(self.uni, self.plan), return_exceptions=True)
+        return [c for r in (a, b) if isinstance(r, list) for c in r]
+
+    async def after_first(self, name: str, factory):
+        """The full run of a source starts when its first-pass run is over: the calls they share are cached by
+        then, not paid twice."""
+        t = self.first_tasks.get(name)
+        if t and not t.done():
+            await asyncio.wait({t})
+        return await factory()
+
+    async def late_campus(self) -> None:
+        """Overpass did not answer in time for the first profile: ask again without the clock. With an outline the
+        verification gets its polygon, and the geotagged sources look inside it again."""
+        try:
+            c = await enrich_mod.campus(self.uni, self.logf)
+        except Exception as e:  # noqa: BLE001
+            self.logf(f"late campus lookup failed: {e!r}")
+            return
+        self.campus = c
+        self.vctx.geom = CampusGeom(c.polygon, (self.uni.lat, self.uni.lon), c.radius_m)
+        st = self.stages["campus"]
+        st.status, st.count = "done", len(c.buildings)
+        st.detail = f"{'полигон' if c.mode == 'polygon' else 'радиус'}, объектов: {len(c.buildings)} (после первого профиля)"
+        if c.mode == "polygon":
+            await asyncio.gather(*[self.source_pipeline(n, self.factories[n][0](), self.factories[n][1])
+                                   for n in GEO_SOURCES if n in self.factories])
+
+    def progress(self) -> tuple[int, int]:
+        return len(self.fetched), len(self.inspector.verdicts) if self.inspector else 0
+
+    async def refresh_loop(self) -> None:
+        """The open page gets the grown profile while the background pass runs - only when something is new."""
+        seen = self.progress()
+        while not self.bg_done.is_set():
+            try:
+                await asyncio.wait_for(self.bg_done.wait(), timeout=settings.background_refresh_s)
+                return   # the last profile is assembled by run()
+            except asyncio.TimeoutError:
+                pass
+            if self.progress() == seen:
+                continue
+            seen = self.progress()
+            try:
+                await self.finalize(final=False)
+            except Exception as e:  # noqa: BLE001
+                self.logf(f"background update failed: {e!r}")
 
 
 async def run(qid: str, emit: Emit) -> Profile:

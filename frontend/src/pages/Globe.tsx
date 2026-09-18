@@ -1,6 +1,6 @@
 import { Cutscene, hasCutscene } from '../components/Cutscene'
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapPin, ArrowRight, Undo2, Loader2 } from 'lucide-react'
 import { GlobeMap, type GlobeHandle, type HoverInfo } from '../map/GlobeMap'
 import { Clouds } from '../components/Clouds'
@@ -23,6 +23,7 @@ export default function Globe() {
   const t = useT()
   const lang = useLang()
   const nav = useNavigate()
+  const [params, setParams] = useSearchParams()
   const globe = useRef<GlobeHandle>(null)
   const [zoom, setZoom] = useState(1.5)
   const [hover, setHover] = useState<HoverInfo | null>(null)
@@ -115,6 +116,23 @@ export default function Globe() {
       setDive(true); setDiveRun((n) => n + 1)
     } })
   }
+  // the profile's «campus map» (/?u=qid) is this same map: the same flight as after a search, once the planet has loaded
+  useEffect(() => {
+    const u = params.get('u')
+    if (!u) return
+    setPhase('flying')  // no title and search box on the way
+    const mini = api.mini(u).catch(() => null)
+    let timer = 0, dead = false
+    const go = async () => {
+      // the style is in (its layers are added on style.load, ~0.8 s cold). Not isStyleLoaded(): that also waits for
+      // the 2.4 MB universities layer and every tile, ~4 s cold, all spent looking at a still planet
+      if (!globe.current?.getMap()?.getLayer('unis-point')) { timer = window.setTimeout(go, 100); return }
+      const m = await mini
+      if (!dead) goTo(u, m?.name || u, m?.city)
+    }
+    go()
+    return () => { dead = true; window.clearTimeout(timer) }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   const heroRef = useRef<Photo[]>([])
   useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
   const onDiveMid = useCallback(() => {
@@ -169,10 +187,12 @@ export default function Globe() {
     }
   }, [])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; globe.current?.resetToGlobe() }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
 
   return (
-    <div ref={pageRef} className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
+    // the transparent header is fixed over the globe, so the page is the full viewport: one pixel more and it scrolls,
+    // and the scrollbar that appears narrows the map by 15 px mid-load. dvh: on phones 100vh includes the address bar
+    <div ref={pageRef} className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: '100dvh' }}>
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} inset={inset}
         onTitleOverlap={setTitleHidden} />
@@ -188,7 +208,7 @@ export default function Globe() {
 
       {phase === 'idle' && (
         <>
-          <div ref={titleRef} className="absolute top-8 left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none"
+          <div ref={titleRef} className="absolute top-[5.5rem] left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none"
             style={{ opacity: titleHidden ? 0 : 1, transition: 'opacity 800ms ease' }}>
             <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight leading-tight drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">CampusLens</h1>
           </div>
@@ -223,7 +243,7 @@ export default function Globe() {
 
       {((reveal && phase === 'arrived') || revealArmed) && target && heroPhotos.length > 0 && (
         <CampusReveal visible={reveal && phase === 'arrived'} qid={target.qid} name={target.name} city={target.city} photos={heroPhotos} onOpen={openProfile}
-          inScene={!!g3d?.active} onMap={() => { setReveal(false); setRevealArmed(false); if (!g3dRef.current) globe.current?.riseBuildings() }} />
+          onMap={() => { setReveal(false); setRevealArmed(false); if (!g3dRef.current) globe.current?.riseBuildings() }} />
       )}
       {phase !== 'idle' && target && !(reveal && heroPhotos.length > 0) && !g3d?.active && (
         <div className="absolute left-4 bottom-4 right-4 sm:right-auto sm:w-[420px] z-30 pop">

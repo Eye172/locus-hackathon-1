@@ -43,11 +43,12 @@ SOURCE_LABELS: dict[str, str] = {
     "commons_search": "Wikimedia Commons (поиск по названию)",
     "openverse": "Openverse (открытые лицензии)",
     "tiktok": "TikTok вуза",
-    "tiktok_search": "TikTok (поиск по названию)",
+    "tiktok_search": "TikTok: поиск по темам (атмосфера, кампус, общежития…)",
     "tiktok_hashtag": "TikTok (хэштег вуза)",
     "tiktok_top": "TikTok (поиск по названию: видео и фото)",
-    "instagram_search": "Instagram (поиск по названию и хэштегу)",
-    "youtube_search": "YouTube (поиск по названию)",
+    "instagram_search": "Instagram: хэштеги и поиск по темам",
+    "instagram_accounts": "Instagram: клубы, библиотека и службы вуза",
+    "youtube_search": "YouTube: кампус-туры и влоги",
 }
 BROCHURE_SOURCES = {"official"}
 
@@ -137,6 +138,9 @@ class PhotoCandidate(BaseModel):
     height: int | None = None
     is_city: bool = False
     collector: str | None = None   # who found it (e.g. "node-commons"); informational, does not change trust
+    intent: str | None = None      # the theme it was searched for (pipeline/search_plan.py): dorm, atmosphere…
+    query: str | None = None       # the query that found it, as sent
+    relevance: float | None = None # how clearly the post itself is about this university (social_search.score)
 
 
 class Signal(BaseModel):
@@ -212,6 +216,9 @@ class Photo(BaseModel):
     date_estimate: str | None = None     # "2010s" etc. when no real date is known; always shown as an estimate
     ref_similarity: float | None = None  # CLIP cosine to the reference photo of the university
     featured: bool = False               # picked by the curator for the compact per-category set
+    intent: str | None = None            # the search theme that found it
+    query: str | None = None
+    collage: str | None = None           # the collage section it was placed in (pipeline/collage.py)
 
 
 class Stage(BaseModel):
@@ -258,6 +265,15 @@ class Context(BaseModel):
     climate_url: str | None = None
 
 
+class CollageSection(BaseModel):
+    """One theme of the "what is this university like" collage: its best photos, in order."""
+    key: str
+    label: str
+    target: int = 0
+    photos: list[str] = Field(default_factory=list)   # photo ids
+    found: int = 0                                     # usable photos that fit this theme before the cut
+
+
 class Profile(BaseModel):
     university: University
     campus: Campus | None = None
@@ -278,4 +294,6 @@ class Profile(BaseModel):
     cached: bool = False
     reference: dict | None = None        # {url, page_url, source} of the trusted reference photo shown to the inspector
     inspector: dict | None = None        # {model, photos, calls, tokens_in, tokens_out, ms, errors}
+    collage: list[CollageSection] = Field(default_factory=list)
+    plan: dict | None = None             # {hash, intents: [{key, label, target, queries: {platform: [...]}}]}
     version: str = "0.2"

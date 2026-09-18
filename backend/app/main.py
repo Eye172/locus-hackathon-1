@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
+import time
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -23,7 +24,63 @@ from .pipeline.resolve import index, resolve
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("campuslens")
 
-_running: dict[str, asyncio.Task] = {}
+class _Build:
+    """One live build of a profile, shared by every page that asks for it while it runs. Once the first profile is
+    out the build belongs to the server: closing the page does not stop the background pass (it saves what it finds),
+    and a page opened later joins it - the events so far are replayed - instead of starting a second build."""
+
+    def __init__(self, qid: str) -> None:
+        self.events: list[dict] = []
+        self.subs: set[asyncio.Queue] = set()
+        self.answered = False
+        self.closed = False    # the final profile or an error has gone out
+        self.task = asyncio.create_task(orchestrator.run(qid, self.emit))
+        self.task.add_done_callback(lambda t: self._done(qid, t))
+
+    def _done(self, qid: str, t: asyncio.Task) -> None:
+        if _builds.get(qid) is self:
+            del _builds[qid]
+        if not t.cancelled():
+            t.exception()  # retrieved: a failure normally has already gone out as an "error" event
+        if not self.closed:  # stopped without a last word (cancelled, or died oddly): nobody may wait forever
+            self._send({"type": "error", "message": "сборка профиля остановлена", "log": []})
+
+    async def emit(self, ev: dict) -> None:
+        self._send(ev)
+
+    def _send(self, ev: dict) -> None:
+        if ev["type"] == "profile":  # a joining page needs only the latest one
+            self.answered = True
+            self.events = [e for e in self.events if e["type"] != "profile"]
+        self.closed = ev["type"] == "error" or (ev["type"] == "profile" and ev.get("final", True))
+        self.events.append(ev)
+        for q in self.subs:
+            q.put_nowait(ev)
+
+
+_builds: dict[str, _Build] = {}
+
+
+async def _build_events(qid: str):
+    """Events of the live build of `qid`, started here or joined; ends after the final profile or an error."""
+    b = _builds.get(qid)
+    if b is None:
+        b = _builds[qid] = _Build(qid)
+    q: asyncio.Queue = asyncio.Queue()
+    for ev in b.events:
+        q.put_nowait(ev)
+    b.subs.add(q)
+    try:
+        while True:
+            ev = await q.get()
+            yield ev
+            if ev["type"] == "error" or (ev["type"] == "profile" and ev.get("final", True)):
+                return
+    finally:
+        b.subs.discard(q)
+        # left before anything was shown: nobody is waiting for it; after the first profile it runs to the end
+        if not b.subs and not b.answered:
+            b.task.cancel()
 
 
 @asynccontextmanager
@@ -40,6 +97,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CampusLens API", version="0.1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
+from .api_search import router as _search_router  # noqa: E402  (search settings and campus facts)
+app.include_router(_search_router)
 
 
 @app.get("/api/health")
@@ -133,27 +192,11 @@ async def stream_profile(qid: str, refresh: bool = False):
             if cached:
                 yield _sse({"type": "profile", "profile": cached.model_dump(), "cached": True, "final": False,
                             "elapsed_ms": 0})
-        queue: asyncio.Queue = asyncio.Queue()
-
-        async def emit(ev: dict) -> None:
-            await queue.put(ev)
-
-        task = asyncio.create_task(orchestrator.run(qid, emit))
-        _running[qid] = task
-        try:
-            while True:
-                ev = await queue.get()
+        # the pipeline sends the first profile, then keeps collecting in the background and sends it again as it
+        # grows; the stream closes on the one marked final
+        async with aclosing(_build_events(qid)) as events:
+            async for ev in events:
                 yield _sse(ev)
-                # the pipeline sends the fast profile, then keeps going through the social networks and sends it
-                # again; the stream closes on the one marked final
-                if ev["type"] == "error" or (ev["type"] == "profile" and ev.get("final", True)):
-                    break
-        finally:
-            _running.pop(qid, None)
-            if not task.done():
-                task.cancel()
-            else:
-                task.exception()  # retrieve to avoid warnings
 
     return EventSourceResponse(gen(), ping=10)
 
@@ -165,9 +208,14 @@ async def refresh_profile(qid: str):
 
 
 async def _generate_silent(qid: str) -> Profile:
-    async def emit(ev: dict) -> None:
-        return None
-    return await orchestrator.run(qid, emit)
+    """The first profile of a live build; its background pass goes on without the caller."""
+    async with aclosing(_build_events(qid)) as events:
+        async for ev in events:
+            if ev["type"] == "error":
+                raise HTTPException(502, ev["message"])
+            if ev["type"] == "profile":
+                return Profile.model_validate(ev["profile"])
+    raise HTTPException(502, "profile build stopped")
 
 
 @app.get("/api/compare")
@@ -242,14 +290,23 @@ async def flag(body: FlagIn):
     return {"ok": True, "flags": flags.get(body.photo_id, 0)}
 
 
+_facts_live: dict[str, tuple[float, asyncio.Task]] = {}
+
+
 async def _facts(qid: str):
-    """University facts + campus from the cached profile, else a quick live lookup (≈1 s)."""
+    """University facts + campus from the cached profile, else a live lookup (1.5-2.5 s, Wikidata + Wikipedia).
+    The live lookup is shared for an hour: the 3D map asks again while its city boundary is pending."""
     p = await cache.get_profile(qid)
     if p:
         return p.university, p.campus
     from .pipeline import enrich as enrich_mod
-    uni, _ = await enrich_mod.facts(qid)
-    return uni, None
+    hit = _facts_live.get(qid)
+    t = hit[1] if hit else None
+    if t is None or time.monotonic() - hit[0] > 3600 or (t.done() and (t.cancelled() or t.exception() is not None)):
+        t = asyncio.ensure_future(enrich_mod.facts(qid))
+        _facts_live[qid] = (time.monotonic(), t)
+    uni, _ = await asyncio.shield(t)
+    return uni.model_copy(deep=True), None
 
 
 @app.get("/api/context/{qid}")
@@ -282,6 +339,18 @@ async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pa
         from .pipeline.map3d import PACK_VERSION
         if c and c.get("v") == PACK_VERSION:
             return c
+    # requests for a pack that is being built join that build (the scene and its retries ask at the same time)
+    t = _pack_builds.get(key)
+    if t is None:
+        t = _pack_builds[key] = asyncio.ensure_future(_build_pack(qid, key, lang))
+        t.add_done_callback(lambda _t: _pack_builds.pop(key, None))
+    return await asyncio.shield(t)
+
+
+_pack_builds: dict[str, asyncio.Task] = {}
+
+
+async def _build_pack(qid: str, key: str, lang: str) -> dict:
     from .pipeline import map3d
     p = await cache.get_profile(qid)
     if p:
@@ -289,6 +358,9 @@ async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pa
         photos = [ph.model_dump(include={"id", "lat", "lon", "thumb", "category", "level", "page_url", "source_label", "rejected"})
                   for ph in p.photos]
     else:
+        row = index.by_id.get(qid)
+        if row and row.get("coord"):  # tiles and the campus outline load while Wikidata answers
+            map3d.warm(qid, row["coord"][0], row["coord"][1], [row.get("ru"), row.get("en")])
         uni, campus = await _facts(qid)
         photos = []
     if uni.lat is None:
@@ -298,7 +370,8 @@ async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pa
     except Exception as e:  # noqa: BLE001
         log.exception("map3d failed for %s", qid)
         raise HTTPException(503, f"map3d unavailable: {type(e).__name__}")
-    if pack["stats"]["tiles"] and pack.get("city_status") != "pending":
+    # not kept: a pack still waiting for its city, or built while the elevation services refused (no ground height)
+    if pack["stats"]["tiles"] and pack.get("city_status") != "pending" and pack["anchor"].get("elevation") is not None:
         await cache.kv_set("map3d", key, pack)
     return pack
 
@@ -312,6 +385,69 @@ async def map3d_footprints(body: FootprintsBody):
     """Building footprint and ground height under each point (dormitories found by Google Places on the client)."""
     from .pipeline import map3d
     return {"items": await map3d.footprints(body.points)}
+
+
+GLB_VERSION = 6  # in the model URL too: a changed model must not come from week-long browser caches
+GREY_MAX_KM = 40  # tiles are served only around the university's city (the camera is locked to it anyway)
+_grey_builds: dict[str, asyncio.Task] = {}
+_grey_skip: dict[str, tuple[set[str], tuple[float, float]]] = {}
+
+
+async def _grey_tile(qid: str, x: int, y: int) -> list[list[int]]:
+    """Builds (once) the grey chunk models of z14 tile x/y for this university's scene: [[x16, y16, buildings], ...]."""
+    import gzip
+    from .geo import haversine_km
+    from .pipeline import city_glb
+    if qid not in _grey_skip:
+        pack = await map3d_pack(qid, refresh=False, lang="ru")
+        skip = {b["id"] for b in pack["campus"]["buildings"]} |                {d["building"]["id"] for d in pack.get("dorms") or [] if d.get("building")}
+        _grey_skip[qid] = (skip, (pack["anchor"]["lat"], pack["anchor"]["lon"]))
+    skip, anchor = _grey_skip[qid]
+    if haversine_km(*city_glb.tile_center(x, y), *anchor) > GREY_MAX_KM:
+        raise HTTPException(400, "only the university's city")
+    folder = settings.data_dir / "glb" / qid / f"v{GLB_VERSION}"
+    index = folder / f"{x}_{y}.json"
+    # a tile built without ground heights (the elevation services refused) stands flat: rebuilt after a while
+    stale = index.exists() and not json.loads(index.read_text()).get("dem", True) and time.time() - index.stat().st_mtime > 600
+    if not index.exists() or stale:
+        async def build() -> None:
+            chunks, dem = await city_glb.chunks_of_tile(x, y, skip)
+            folder.mkdir(parents=True, exist_ok=True)
+            for (cx, cy), (glb, _) in chunks.items():
+                (folder / f"{cx}_{cy}.glb.gz").write_bytes(gzip.compress(glb, 6))
+            index.write_text(json.dumps({"chunks": [[cx, cy, n] for (cx, cy), (_, n) in chunks.items()], "dem": dem}))
+        key = f"{qid}/{x}/{y}"
+        t = _grey_builds.get(key)
+        if t is None:
+            t = _grey_builds[key] = asyncio.ensure_future(build())
+            t.add_done_callback(lambda _t: _grey_builds.pop(key, None))
+        await asyncio.shield(t)
+    return json.loads(index.read_text())["chunks"]
+
+
+@app.get("/api/map3d/{qid}/grey/{x}/{y}.json")
+async def map3d_grey_index(qid: str, x: int, y: int):
+    """Grey 3D buildings where Google's 3D map is flat satellite imagery (pipeline/city_glb.py): the non-empty ~400 m
+    chunks of z14 tile x/y. The page asks for the tiles where the camera looks, then loads their chunks' models."""
+    return {"z": 16, "chunks": await _grey_tile(qid, x, y)}
+
+
+# the path ends in ".glb", no query: the map's model loader silently ignores any other src
+@app.get("/api/map3d/{qid}/grey16/{cx}/{cy}-v{ver}.glb")
+async def map3d_grey_chunk(qid: str, cx: int, cy: int, ver: int, request: Request):
+    """One chunk's model (z16 tile cx/cy), placed by the page at the chunk's centre. The campus's own buildings and
+    dorms are left out: the scene draws them highlighted. Gzipped on disk."""
+    import gzip
+    path = settings.data_dir / "glb" / qid / f"v{GLB_VERSION}" / f"{cx}_{cy}.glb.gz"
+    if not path.exists():
+        await _grey_tile(qid, cx >> 2, cy >> 2)   # its z14 tile (z16 = z14 + 2)
+    if not path.exists():
+        return Response(status_code=204)
+    body = path.read_bytes()
+    headers = {"Cache-Control": "public, max-age=604800"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(body, media_type="model/gltf-binary", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(body), media_type="model/gltf-binary", headers=headers)
 
 
 @app.get("/api/climate/{qid}")

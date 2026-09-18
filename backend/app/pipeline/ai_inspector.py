@@ -50,8 +50,9 @@ Return one item per candidate, n = its number:
 - place: this_university = its campus, buildings, rooms, labs, dorms, sports facilities or its student events; city = the city itself (streets, landmarks, theatres, churches, mosques, parks, views), not the university; other_place = a different identifiable institution or building; unknown; not_photo = drawing, render, logo, screenshot, document.
 - rel 0-3: how sure you are that the photo shows THIS university (3 = matches the reference, or its name/logo is visible, or the metadata clearly ties it and the picture fits; 0 = no). For place=city give rel for "shows this city".
 - cat: campus|dormitory|classroom|library|lab|sports|student_life|city|none.
-- q 0-3: usefulness for a prospective student: 0 = strip, banner, crop, detail or blur; 3 = clear informative view.
-- flags: illustration, stock (staged stock photo), banner (text or graphics overlay), crop, text, portrait (one or two people fill the frame), collage, screenshot, logo, official_meeting (officials at a table or ceremony).
+- q 0-3: how much the photo shows what it is like to be at this university - the place itself: buildings, halls, rooms, labs, the library, a dorm room, a canteen, an event with its venue. 3 = the place is clearly visible and informative (people may be in it); 2 = the place is visible but partly covered or ordinary; 1 = mostly faces, a selfie, a close-up of food/objects/screens, a dark or blurred frame, a frame where big text covers the picture; 0 = poster, title card, document, graphic, strip, crop.
+- flags: illustration, stock (staged stock photo), banner (text or graphics overlay), crop, text, portrait (one or two people fill the frame and hide the place), collage, screenshot, logo, official_meeting (officials at a table or ceremony, a press photo of a signing, a podium speech).
+Frames from students' videos and photos from social networks are welcome when they show the place: judge the picture, not the caption.
 - era: probable decade the photo was taken.
 - why: only if rel<=1 or any flag: at most 6 Russian words; otherwise "".
 Judge buildings strictly: a building unlike the reference and not tied to the university by its metadata is not the campus."""
@@ -211,19 +212,23 @@ class Inspector:
                 if self.quota_out:
                     return
         except asyncio.CancelledError:
-            # the fast profile's deadline: what this worker held goes back in line, and the deep pass picks it up
+            # stopped at a deadline: what this worker held goes back in line for whoever drains the queue next
             for f in batch:
                 if f.id not in self.verdicts:
                     self.seq += 1
                     heapq.heappush(self.queue, (0.0, self.seq, f))
             raise
 
-    async def finish(self, timeout: float) -> None:
-        """Waits for the queue to drain; at the deadline the workers stop and the rest stays queued (see _worker)."""
+    async def finish(self, timeout: float, stop: bool = True) -> None:
+        """Waits for the queue to drain; at the deadline the workers stop and the rest stays queued (see _worker).
+        With stop=False they keep going after it - the first profile takes the verdicts so far, the background pass
+        the rest."""
         end = time.monotonic() + timeout
         while self.tasks and time.monotonic() < end:
             await asyncio.wait(list(self.tasks), timeout=max(0.0, end - time.monotonic()))
             self._kick()   # a worker that returned while photos were still arriving
+        if not stop:
+            return
         for t in list(self.tasks):
             t.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)

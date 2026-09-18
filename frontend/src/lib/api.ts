@@ -1,4 +1,4 @@
-import type { Candidate, Campus, ClimatePack, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SourceStatus, Stage, University } from './types'
+import type { Candidate, Campus, CampusFacts, ClimatePack, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SearchPlan, SourceStatus, Stage, UniPlan, UniPlanView, University } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
 
@@ -7,6 +7,12 @@ async function getJSON<T>(path: string): Promise<T> {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
   // an outdated backend (or a proxy) answers unknown API paths with the app's HTML page
   if (!(r.headers.get('content-type') ?? '').includes('json')) throw new Error(`api-not-json:${path.split('?')[0]}`)
+  return r.json() as Promise<T>
+}
+
+async function sendJSON<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const r = await fetch(API_BASE + path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+  if (!r.ok) { let m = `${r.status}`; try { m = (await r.json()).detail ?? m } catch { /* not json */ } throw new Error(typeof m === 'string' ? m : JSON.stringify(m)) }
   return r.json() as Promise<T>
 }
 
@@ -33,6 +39,12 @@ export const api = {
     return r.json() as Promise<CompareAi>
   },
   refresh: (qid: string) => fetch(`${API_BASE}/api/profile/${qid}/refresh`, { method: 'POST' }),
+  facts: (qid: string, refresh = false) => getJSON<CampusFacts>(`/api/facts/${qid}${refresh ? '?refresh=true' : ''}`),
+  searchPlan: () => getJSON<{ plan: SearchPlan; defaults: SearchPlan; platforms: string[] }>('/api/search-plan'),
+  saveSearchPlan: (plan: SearchPlan) => sendJSON<{ plan: SearchPlan }>('PUT', '/api/search-plan', plan),
+  resetSearchPlan: () => sendJSON<{ plan: SearchPlan }>('POST', '/api/search-plan/reset'),
+  uniPlan: (qid: string) => getJSON<UniPlanView>(`/api/search-plan/${qid}`),
+  saveUniPlan: (qid: string, up: UniPlan) => sendJSON<{ uni: UniPlan }>('PUT', `/api/search-plan/${qid}`, up),
   flag: async (qid: string, photo_id: string, reason?: string) => {
     const r = await fetch(`${API_BASE}/api/flag`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -101,8 +113,8 @@ export function streamProfile(qid: string, refresh: boolean, h: StreamHandlers):
     h.onSource?.(d.name, { status: d.status, count: d.count, ms: d.ms, detail: d.detail, label: d.label }, d.elapsed_ms)
   })
   es.addEventListener('photos', (e) => { const d = parse(e as MessageEvent); h.onPhotos?.(d.source, d.photos, d.rejected) })
-  // the profile arrives more than once: the cached one (if any), the fast one, then the full one after the
-  // deep pass through the social networks. Only the final event closes the stream.
+  // the profile arrives more than once: the cached one (if any), the fast one, then again every ~20 s while the
+  // background pass keeps collecting, without a time limit. Only the final event closes the stream.
   es.addEventListener('profile', (e) => {
     const d = parse(e as MessageEvent)
     h.onProfile?.(d.profile, !!d.cached, d.final !== false)

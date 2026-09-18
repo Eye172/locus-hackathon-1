@@ -52,23 +52,38 @@ def _date(ts) -> str | None:
 _locks: dict[str, asyncio.Lock] = {}
 
 
-async def _sc(path: str, **params) -> dict | None:
+async def _sc(path: str, _max_age: float = 12 * 3600, **params) -> dict | None:
     if not settings.scrapecreators_api_key:
         return None
     key = f"{path}?{sorted(params.items())}"
     # the feed answers both instagram_posts and the id lookup of instagram_tagged, and they run side by side:
     # without this lock the same page would be bought twice
     async with _locks.setdefault(key, asyncio.Lock()):
-        hit = await cache.kv_get("social", key, max_age_s=12 * 3600)
+        hit = await cache.kv_get("social", key, max_age_s=_max_age)
         if hit is not None:
             return hit
         return await _sc_fetch(path, key, params)
 
 
 async def _sc_fetch(path: str, key: str, params: dict) -> dict | None:
-    r = await http.get(SC + path, params=params, headers={"x-api-key": settings.scrapecreators_api_key}, timeout=12.0)
+    # TikTok's search answers in 2-8 s and now and then in 15-20: one slow answer used to empty the whole source
+    r = None
+    for attempt in range(2):
+        try:
+            r = await http.get(SC + path, params=params, headers={"x-api-key": settings.scrapecreators_api_key},
+                               timeout=25.0)
+            break
+        except Exception as e:  # noqa: BLE001
+            log.warning("scrapecreators %s %s: %r", path, "retrying" if attempt == 0 else "gave up", e)
+    if r is None:
+        return None
     if r.status_code != 200:
         log.warning("scrapecreators %s -> %s %s", path, r.status_code, r.text[:160])
+        if r.status_code == 404 and '"not_found"' in r.text:
+            # "Instagram does not have a popular page for that query", "No posts found": free, but asking again
+            # every build costs seconds; the answer is remembered like any other
+            await cache.kv_set("social", key, {})
+            return {}
         return None
     j = r.json()
     log.info("scrapecreators %s: %s credits left", path, j.get("credits_remaining"))
@@ -526,4 +541,67 @@ async def youtube_search(uni: University, videos: int = 6) -> list[PhotoCandidat
                 date=(sn.get("publishedAt") or "")[:10] or None, date_source="video" if sn.get("publishedAt") else None,
                 collector=f"youtube_api:frame{k}",
             ))
+    return out
+
+
+async def youtube_intents(uni: University, plan, videos: int = 5) -> list[PhotoCandidate]:
+    """YouTube for the themes that people film as a walk-through: the campus tour, the dorm room tour, a day in the
+    life. One search per theme (100 of the 10 000 daily quota units each, cached for a week), in the language the
+    university's students write in. A video counts when its title names the university; admission agencies' ads
+    (MBBS abroad, "поступление под ключ") are skipped. Three of YouTube's own stills from inside each video."""
+    if not settings.youtube_api_key:
+        return []
+    from .. import search_plan as sp
+    from ..langs import local_lang
+    from .social_search import COMMERCE, _flat
+    local = local_lang(uni)
+    forms = sp.name_forms(uni)
+    jobs: list[tuple[str, str, str]] = []
+    for i in sp.enabled(plan, "youtube"):
+        qs = sp.queries(plan, i, uni, "youtube")
+        q = next((q for lang, q in qs if lang == local), None) or next((q for _, q in qs), None)
+        if q:
+            jobs.append((i.key, q, local if local in ("ru", "en") else "en"))
+
+    async def search(q: str, rl: str) -> list[dict]:
+        hit = await cache.kv_get("social", f"yt:{q}", max_age_s=7 * 86400)
+        if hit is not None:
+            return hit
+        r = await http.get("https://www.googleapis.com/youtube/v3/search", params={
+            "part": "snippet", "q": q, "type": "video", "maxResults": videos, "relevanceLanguage": rl,
+            "key": settings.youtube_api_key}, timeout=10.0)
+        if r.status_code != 200:
+            log.warning("youtube search -> %s %s", r.status_code, r.text[:160])
+            return []
+        hit = r.json().get("items", [])
+        await cache.kv_set("social", f"yt:{q}", hit)
+        return hit
+
+    found = await asyncio.gather(*[search(q, rl) for _, q, rl in jobs], return_exceptions=True)
+    out: list[PhotoCandidate] = []
+    seen: set[str] = set()
+    for (ik, q, _), items in zip(jobs, found):
+        if isinstance(items, Exception):
+            continue
+        for it in items:
+            vid = (it.get("id") or {}).get("videoId")
+            sn = it.get("snippet") or {}
+            title = sn.get("title") or ""
+            text = f"{title} {sn.get('description') or ''}"
+            low = text.lower()
+            named = any(f in low for f in forms["full"]) or any(t in _flat(text) for t in forms["tags"]) or \
+                any(re.search(rf"(?<![\w]){re.escape(a)}(?![\w])", low) for a in forms["abbr"])
+            if not vid or vid in seen or not named or COMMERCE.search(text):
+                continue
+            seen.add(vid)
+            for k in (1, 2, 3):
+                out.append(PhotoCandidate(
+                    url=f"https://i.ytimg.com/vi/{vid}/maxres{k}.jpg", page_url=f"https://www.youtube.com/watch?v={vid}",
+                    source="youtube_search", title=f"Кадр из видео «{title[:100]}»",
+                    text=f"{title} {sn.get('channelTitle', '')}", author=sn.get("channelTitle"),
+                    license="© автор видео на YouTube (кадр со ссылкой на видео)",
+                    date=(sn.get("publishedAt") or "")[:10] or None,
+                    date_source="video" if sn.get("publishedAt") else None,
+                    collector=f"youtube_api:frame{k}", intent=ik, query=q,
+                ))
     return out

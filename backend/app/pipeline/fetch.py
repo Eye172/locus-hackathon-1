@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import io
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,7 +136,10 @@ async def fetch_one(cand: PhotoCandidate, sem: asyncio.Semaphore, deadline: floa
         return Fetched(cand=cand, id=pid, last_modified=last_modified, **dec)
 
 
-async def fetch_all(cands: list[PhotoCandidate], deadline: float, limit: int | None = None) -> list[Fetched]:
+async def fetch_all(cands: list[PhotoCandidate], deadline: float, limit: int | None = None,
+                    late: list[asyncio.Task] | None = None) -> list[Fetched]:
+    """What has downloaded by `deadline` (math.inf = everything). With `late`, the downloads still running at the
+    deadline are not dropped: they are handed over there to finish (each task resolves to a Fetched or None)."""
     sem = asyncio.Semaphore(settings.fetch_concurrency)
     seen: set[str] = set()
     uniq: list[PhotoCandidate] = []
@@ -148,8 +152,48 @@ async def fetch_all(cands: list[PhotoCandidate], deadline: float, limit: int | N
     if not uniq:
         return []
     # stop at the deadline and keep whatever has arrived: a slow source still contributes its first images
-    tasks = [asyncio.create_task(fetch_one(c, sem, deadline)) for c in uniq]
-    done, pending = await asyncio.wait(tasks, timeout=max(0.1, deadline - time.monotonic()))
-    for t in pending:
-        t.cancel()
+    tasks = [asyncio.create_task(fetch_one(c, sem, math.inf if late is not None else deadline)) for c in uniq]
+    done, pending = await asyncio.wait(tasks, timeout=None if deadline == math.inf
+                                       else max(0.1, deadline - time.monotonic()))
+    if late is not None:
+        late.extend(pending)
+    else:
+        for t in pending:
+            t.cancel()
     return [r for t in done if not t.cancelled() and t.exception() is None and isinstance(r := t.result(), Fetched)]
+
+
+async def fetch_waves(cands: list[PhotoCandidate], deadline: float, on_batch, limit: int | None = None,
+                      late: list[asyncio.Task] | None = None, wave_s: float = 1.5) -> int:
+    """Like fetch_all, but hands over what has downloaded every `wave_s` seconds instead of waiting for the slowest
+    image of the source. The embedding and the AI inspector start on the first images while the rest still arrive:
+    waiting for the slowest one made every source hand its images over at the first profile's collect deadline, and
+    the inspector had no time left to look at any of them (the first profile of KBTU on 18 Sep: 0 calls in 23 s).
+    Returns how many images were handed over; with `late`, the downloads still running at the deadline go there."""
+    sem = asyncio.Semaphore(settings.fetch_concurrency)
+    seen: set[str] = set()
+    uniq: list[PhotoCandidate] = []
+    for c in cands:
+        if c.url not in seen:
+            seen.add(c.url)
+            uniq.append(c)
+    if limit:
+        uniq = uniq[:limit]
+    pending = {asyncio.create_task(fetch_one(c, sem, math.inf if late is not None else deadline)) for c in uniq}
+    handed = 0
+    while pending:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        done, pending = await asyncio.wait(pending, timeout=min(wave_s, left))
+        batch = [r for t in done if not t.cancelled() and t.exception() is None and isinstance(r := t.result(), Fetched)]
+        if batch:
+            handed += len(batch)
+            await on_batch(batch)
+    if pending:
+        if late is not None:
+            late.extend(pending)
+        else:
+            for t in pending:
+                t.cancel()
+    return handed

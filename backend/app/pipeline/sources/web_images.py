@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from ... import http
+from ... import cache, http
 from ...config import settings
 from ...models import PhotoCandidate, University
 from . import commons
@@ -75,12 +75,25 @@ async def _serper(q: str, gl: str | None, hl: str, num: int = 10) -> list[dict]:
     body = {"q": q, "hl": {"nb": "no"}.get(hl, hl), "num": num}
     if gl:
         body["gl"] = gl.lower()
+    key = json.dumps(body, sort_keys=True, ensure_ascii=False)
+    hit = await cache.kv_get("serper", key, max_age_s=3 * 86400)   # the same query in a rebuild costs nothing
+    if hit is not None:
+        return hit
     async with _serper_sem:
-        r = await http.post("https://google.serper.dev/images", json=body,
-                            headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"},
-                            timeout=6.0)
+        r = None
+        for attempt in range(2):     # a 6 s timeout used to drop two of seven queries now and then
+            try:
+                r = await http.post("https://google.serper.dev/images", json=body,
+                                    headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"},
+                                    timeout=10.0)
+                break
+            except Exception:  # noqa: BLE001
+                if attempt:
+                    raise
     r.raise_for_status()
-    return r.json().get("images", [])
+    images = r.json().get("images", [])
+    await cache.kv_set("serper", key, images)
+    return images
 
 
 async def google_images(uni: University, deep: bool = False) -> list[PhotoCandidate]:
@@ -131,9 +144,57 @@ async def google_images(uni: University, deep: bool = False) -> list[PhotoCandid
                 text=" ".join(x for x in [im.get("title"), dom, word_of(q, name)] if x),
                 author=im.get("source") or dom,
                 license="© университет (официальный сайт)" if official else "© правообладатель; показано превью со ссылкой на источник",
-                width=w or None, height=h or None, collector=f"google:{q}",
+                width=w or None, height=h or None, collector=f"google:{q}", intent=CAT_INTENT.get(cat), query=q,
             ))
-    await _page_dates(out)
+    await _page_dates(out, wait=None if deep else 2.5)
+    return out
+
+
+# the category of a classic query -> the theme of the search plan it serves (pipeline/search_plan.py)
+CAT_INTENT = {"campus": "campus", "dormitory": "dorm", "classroom": "classes", "library": "library", "lab": "labs",
+              "sports": "sports", "student_life": "atmosphere", "assembly_hall": "events", "canteen": "food"}
+
+
+async def google_intents(uni: University, plan, fast: bool = False) -> list[PhotoCandidate]:
+    """Google Images for the themes of the search plan ("<name> dorm room", "<name> fest", "<name> cafeteria"),
+    in English and in the local language; the classic category queries above stay as they are."""
+    if not settings.serper_api_key:
+        return []
+    from .. import search_plan as sp
+    cc = country_code(uni)
+    up = await sp.load_uni(uni.qid)
+    jobs: list[tuple[str, str, str]] = []
+    for i in sp.enabled(plan, "google"):
+        if fast and not i.fast:
+            continue
+        for lang, q in sp.queries(plan, i, uni, "google", up.names):
+            jobs.append((i.key, q, "en" if lang in ("en", "custom") else lang))
+    results = await asyncio.gather(*[_serper(q, cc, hl) for _, q, hl in jobs], return_exceptions=True)
+    site = _domain(uni.website)
+    seen: set[str] = set()
+    out: list[PhotoCandidate] = []
+    for (ik, q, _hl), res in zip(jobs, results):
+        if isinstance(res, Exception):
+            log.warning("serper %r failed: %r", q, res)
+            continue
+        for im in res:
+            url, page = im.get("imageUrl"), im.get("link")
+            dom = _domain(page)
+            if not url or not page or url in seen or not url.startswith("http") or                     SKIP_DOMAINS.search(dom) or SKIP_DOMAINS.search(_domain(url)):
+                continue
+            w, h = im.get("imageWidth") or 0, im.get("imageHeight") or 0
+            if w and h and min(w, h) < 360:
+                continue
+            seen.add(url)
+            official = bool(site) and (dom == site or dom.endswith("." + site))
+            out.append(PhotoCandidate(
+                url=url, page_url=page, source="official" if official else "web_image",
+                title=(im.get("title") or "").strip() or None,
+                text=" ".join(x for x in [im.get("title"), dom, q] if x), author=im.get("source") or dom,
+                license="© университет (официальный сайт)" if official else "© правообладатель; показано превью со ссылкой на источник",
+                width=w or None, height=h or None, collector=f"google:{q}", intent=ik, query=q,
+            ))
+    await _page_dates(out, wait=None if not fast else 2.5)
     return out
 
 
@@ -141,7 +202,7 @@ def word_of(q: str, name: str) -> str:
     return q.replace(name, "").strip()
 
 
-async def _page_dates(cands: list[PhotoCandidate], limit: int = 30) -> None:
+async def _page_dates(cands: list[PhotoCandidate], limit: int = 30, wait: float | None = 2.5) -> None:
     """Publication date of the page each image was found on (meta article:published_time, <time datetime>)."""
     pages: dict[str, list[PhotoCandidate]] = {}
     for c in cands:
@@ -162,10 +223,11 @@ async def _page_dates(cands: list[PhotoCandidate], limit: int = 30) -> None:
             for c in pages[url]:
                 c.date, c.date_source = d, "page"
 
-    # dates are a bonus: whatever answers within 2.5 s is used, the rest stays undated
+    # dates are a bonus: in the first profile whatever answers within 2.5 s is used, the rest stays undated;
+    # the background pass (wait=None) waits for every page
     tasks = [asyncio.create_task(one(u)) for u in list(pages)[:limit]]
     if tasks:
-        _, pending = await asyncio.wait(tasks, timeout=2.5)
+        _, pending = await asyncio.wait(tasks, timeout=wait)
         for t in pending:
             t.cancel()
 

@@ -75,8 +75,60 @@ function bootstrap(params: Record<string, string>) {
 export interface GoogleLibs { maps3d: any; marker: any; places: any; routes: any }
 let libsPromise: Promise<GoogleLibs> | null = null
 
+/* Does Google's 3D map have real 3D here? It is a textured photogrammetry mesh (buildings, trees) in ~2 500 cities and
+ * satellite imagery draped over terrain everywhere else - all of Kazakhstan, for one. The Maps JavaScript API cannot
+ * say which (checked 18.09.2026: no property or event on Map3DElement, and the coverage map in the docs is a private
+ * Maps Platform dataset). The renderer's own downloads can: the Google Earth nodes it fetches carry an imagery epoch
+ * (`!3u…`) when they are terrain under a satellite photo, and none when they are mesh with its own texture. Measured on
+ * the campus scene: mesh nodes Tokyo 633 of 719 (every one of the 453 at depth >= 16), Hong Kong 1 174 of 1 356,
+ * Astana 0 of 964, Almaty 0 of 923.
+ * Undocumented, so a change on Google's side only leaves the answer unknown (no grey city), never wrong. */
+type EarthNode = { t: number; depth: number; mesh: boolean }
+const earthNodes: EarthNode[] = []
+const earthAny: number[] = []   // start times of every Earth data request (metadata included)
+let watchingNodes = false
+let nodesObserved = false       // the observer really runs: only then can "no data" be told from "cannot see"
+function watchEarthNodes() {
+  if (watchingNodes || typeof PerformanceObserver === 'undefined') return
+  watchingNodes = true
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (!e.name.includes('/rt/earth/')) continue
+        // only answered requests: a failed one is an entry too (responseStatus 0); browsers without the field count all
+        const status = (e as PerformanceResourceTiming & { responseStatus?: number }).responseStatus
+        if (status !== undefined && (status < 200 || status >= 400)) continue
+        earthAny.push(e.startTime)
+        const m = /\/rt\/earth\/NodeData\/pb=!1m2!1s([0-7]+)!2u\d+!2e\d+(!3u\d+)?/.exec(e.name)
+        if (m) earthNodes.push({ t: e.startTime, depth: m[1].length, mesh: !m[2] })
+      }
+      if (earthNodes.length > 30000) earthNodes.splice(0, earthNodes.length - 30000)
+      if (earthAny.length > 30000) earthAny.splice(0, earthAny.length - 30000)
+    }).observe({ type: 'resource', buffered: true })  // an observer, not the timing buffer: that one stops at 250
+    nodesObserved = true
+  } catch { /* no resource timing: the surface stays unknown */ }
+}
+
+/** Has Google's 3D map downloaded any Earth data since `since`? null when this browser cannot tell. A map that gets
+ *  nothing (the key's daily 3D quota spent: "Maps Demo Key limit reached") stays black with a spinner for good. */
+export function earthDataSince(since: number): boolean | null {
+  if (!nodesObserved) return null
+  return earthAny.some((t) => t >= since)
+}
+
+/** 'mesh' (Google draws real 3D here), 'flat' (terrain + satellite photo only) or null (too few nodes yet), judged by
+ *  the detailed nodes (octree depth >= 16, the last few hundred metres of zoom) fetched since `since`
+ *  (a performance.now() time). A single mesh node in twenty counts as 3D: grey buildings only where there is none. */
+export function earthSurfaceSince(since: number, minNodes = 40): 'mesh' | 'flat' | null {
+  let deep = 0, mesh = 0
+  for (const n of earthNodes) if (n.t >= since && n.depth >= 16) { deep++; if (n.mesh) mesh++ }
+  if (deep < minNodes) return null
+  return mesh / deep >= 0.05 ? 'mesh' : 'flat'
+}
+
 export function loadGoogle3D(lang: string): Promise<GoogleLibs> {
   if (!GOOGLE_3D_KEY) return Promise.reject(new Error('no-key'))
+  watchEarthNodes()
   if (!libsPromise) {
     bootstrap({ key: GOOGLE_3D_KEY, v: 'weekly', language: lang })
     const im = (n: string) => window.google.maps.importLibrary(n)

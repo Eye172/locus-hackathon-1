@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Box, ChevronLeft, ChevronRight, ExternalLink, Map as MapIcon } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink, Map as MapIcon } from 'lucide-react'
 import { DepthPhoto } from './DepthPhoto'
 import { API_BASE } from '../lib/api'
 import type { Photo } from '../lib/types'
@@ -30,10 +29,8 @@ export function pickHero(photos: Photo[], limit = 6): Photo[] {
 export const heroUrl = (qid: string, id: string, src?: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg${src ? `?src=${encodeURIComponent(src)}` : ''}`
 export const depthUrl = (id: string) => `${API_BASE}/api/depth/${id}.png`
 
-export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true, inScene = false }:
-  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean
-    /** opened from the Google 3D scene: «3D map» returns there, no link to the separate page */
-    inScene?: boolean }) {
+export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true }:
+  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean }) {
   const t = useT()
   const lang = useLang()
   const [idx, setIdx] = useState(0)
@@ -89,7 +86,6 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
           {city && <div className="text-sm text-white/75">{city}</div>}
         </div>
         <div className="flex gap-2 shrink-0">
-          {!inScene && <Link to={`/map3d/${qid}`} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur" title={t('m3d.open')}><Box size={15} /> <span className="max-sm:hidden">{t('m3d.open')}</span></Link>}
           <button onClick={onMap} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur" title={t('reveal.map')}><MapIcon size={15} /> <span className="max-sm:hidden">{t('reveal.map')}</span></button>
         </div>
       </div>

@@ -25,6 +25,7 @@ SOURCE_PRIOR: dict[str, float] = {
     "telegram": 0.35,
     "instagram": 0.35,
     "instagram_tagged": 0.22,
+    "instagram_accounts": 0.20,
     "vk": 0.35,
     "tiktok": 0.30,
     "youtube": 0.30,
@@ -58,6 +59,7 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "telegram": "Пост в официальном Telegram-канале вуза (ссылка с сайта)",
     "instagram": "Публикация в официальном Instagram вуза (ссылка с сайта)",
     "instagram_tagged": "Автор поста отметил в нём официальный аккаунт вуза",
+    "instagram_accounts": "Пост аккаунта клуба, библиотеки или службы вуза (найден по названию вуза)",
     "vk": "Пост в официальной группе VK вуза",
     "tiktok": "Видео в официальном TikTok вуза (ссылка с сайта)",
     "youtube": "Кадр видео с официального YouTube-канала вуза",
@@ -66,10 +68,10 @@ SOURCE_SIGNAL_LABEL: dict[str, str] = {
     "web_image": "Google Картинки по запросу с названием вуза",
     "commons_search": "Файл Commons, в описании которого есть название вуза",
     "openverse": "Фото с открытой лицензией (Openverse) по названию вуза",
-    "tiktok_search": "Видео в TikTok по запросу с названием вуза (автор не обязательно вуз)",
+    "tiktok_search": "Пост в TikTok по теме («общежитие», «атмосфера»…); подпись или автор связаны с вузом",
     "tiktok_hashtag": "Кадр из видео под хэштегом вуза в TikTok (снято не вузом)",
     "tiktok_top": "Найдено поиском TikTok по названию вуза (автор не обязательно вуз)",
-    "instagram_search": "Найдено поиском Instagram по названию вуза (автор не обязательно вуз)",
+    "instagram_search": "Пост в Instagram под хэштегом вуза или по теме; подпись или автор связаны с вузом",
     "youtube_search": "Кадр видео на YouTube по запросу с названием вуза (автор не обязательно вуз)",
 }
 CITY_SOURCES = {"city_article", "city_cat"}
@@ -78,7 +80,7 @@ CITY_SOURCES = {"city_article", "city_cat"}
 GEO_CROWD_SOURCES = {"vk_geo"}
 # posted by someone else about the university: the tag or the coordinate points here, the picture still has to
 # be looked at. Nothing from these sources is shown without the inspector's verdict.
-CROWD_SOURCES = GEO_CROWD_SOURCES | {"instagram_tagged"}
+CROWD_SOURCES = GEO_CROWD_SOURCES | {"instagram_tagged", "instagram_accounts"}
 SEARCH_SOURCES = {"web_image", "tiktok_search", "tiktok_hashtag", "tiktok_top", "instagram_search", "youtube_search",
                   "openverse", "commons_search", "external"}
 REJECT_FLAGS = {"illustration", "stock", "screenshot", "logo", "collage"}
