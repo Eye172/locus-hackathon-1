@@ -26,6 +26,8 @@ interface Props {
   onReady?: () => void
   /** free band for the planet: px taken by the page's title (top) and search block (bottom) */
   inset?: { top: number; bottom: number }
+  /** the planet's disc has grown up into the title (true) or is clear of it again (false); fires on changes only */
+  onTitleOverlap?: (overlap: boolean) => void
 }
 
 const HOME: [number, number] = [66, 44]
@@ -92,7 +94,8 @@ function planSpiral(c0: { lng: number; lat: number }, z0: number, lat: number, l
 }
 const BUILDINGS = 'building-3d'
 
-export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady, inset }, ref) {
+export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady, inset,
+  onTitleOverlap }, ref) {
   const container = useRef<HTMLDivElement>(null)
   const stars = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<Map | null>(null)
@@ -255,6 +258,19 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       }
     }
     if (!on) { map.getCanvas().style.cursor = ''; onHover?.(null) }
+  }
+
+  // does the planet reach up into the title? The top of the disc against the title's bottom edge (inset.top is that
+  // edge plus a 16 px gap, see Globe). Zooming in grows the disc upwards; the title fades out as the planet touches it.
+  const titleOverlap = useRef(false)
+  const checkTitle = (map: Map) => {
+    const inset = insetRef.current
+    if (!inset || !onTitleOverlap) return
+    const h = map.getContainer().clientHeight, pad = map.getPadding()
+    const r = globeRadiusPx(map.getZoom(), map.getCenter().lat, h, map.getVerticalFieldOfView())
+    const cy = Math.min(h, Math.max(0, (pad.top ?? 0) + (h - (pad.top ?? 0) - (pad.bottom ?? 0)) / 2))
+    const over = cy - r < inset.top - 16 + 6   // 6 px before the rim meets the letters
+    if (over !== titleOverlap.current) { titleOverlap.current = over; onTitleOverlap(over) }
   }
 
   const cancelMotion = () => { if (motion.current) cancelAnimationFrame(motion.current); motion.current = 0; endIntro() }
@@ -472,7 +488,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     const resume = () => { window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 5000) }
     map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
     map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
-    map.on('move', () => { onZoom?.(map.getZoom()); drawStars() })
+    map.on('move', () => { onZoom?.(map.getZoom()); drawStars(); checkTitle(map) })
     map.on('zoomstart', (e) => { if (e.originalEvent) atHome.current = false })
     map.on('resize', fitHome)
 

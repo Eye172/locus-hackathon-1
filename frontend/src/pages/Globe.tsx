@@ -50,6 +50,7 @@ export default function Globe() {
   const titleRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
   const [inset, setInset] = useState<{ top: number; bottom: number }>()
+  const [titleHidden, setTitleHidden] = useState(false)   // the planet has grown into the title: fade it out
 
   // the planet is centred in the free band between the title and the search block
   useLayoutEffect(() => {
@@ -173,7 +174,8 @@ export default function Globe() {
   return (
     <div ref={pageRef} className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: 'calc(100vh - 56px)' }}>
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
-      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} inset={inset} />
+      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} inset={inset}
+        onTitleOverlap={setTitleHidden} />
       <Clouds zoom={dive ? 0 : zoom} />
       {g3d && target && (
         <Suspense fallback={null}>
@@ -186,7 +188,8 @@ export default function Globe() {
 
       {phase === 'idle' && (
         <>
-          <div ref={titleRef} className="absolute top-8 left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none">
+          <div ref={titleRef} className="absolute top-8 left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none"
+            style={{ opacity: titleHidden ? 0 : 1, transition: 'opacity 800ms ease' }}>
             <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight leading-tight drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">CampusLens</h1>
           </div>
           <div ref={searchRef} className="absolute left-0 right-0 bottom-10 flex flex-col items-center px-4 gap-3">
