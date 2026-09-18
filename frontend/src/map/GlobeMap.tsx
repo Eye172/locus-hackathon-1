@@ -113,13 +113,18 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     const zoom = room > 40 ? Math.min(2.6, Math.max(0.5, zoomForRadius(room, lat, h, map.getVerticalFieldOfView()))) : 1.5
     return { zoom, padding: { top, bottom, left: 0, right: 0 } }
   }
-  // the opening frame: the planet's centre on the bottom edge (MapLibre clamps the padded centre to the canvas, so
-  // this is as low as it goes) and its top a fifth of the way down - a big dome rising from below
+  // the opening frame: a big dome rising from below with its top just under the title, on any screen. The planet is
+  // as large as the zoom limit allows (the cloud layer starts at 3.5), centred on the bottom edge if that already
+  // reaches the title (MapLibre clamps the padded centre to the canvas, so the edge is as low as it goes); on a big
+  // monitor the zoom limit is hit first, so the centre moves up until the top touches the title.
   const introView = (map: Map, lat: number) => {
     const c = map.getContainer(), w = c.clientWidth, h = c.clientHeight
     const fov = map.getVerticalFieldOfView()
-    const zoom = Math.min(3.3, zoomForRadius(Math.min(0.8 * h, 0.62 * w), lat, h, fov))  // clouds start at 3.5
-    return { zoom, padding: { top: h, bottom: 0, left: 0, right: 0 } }
+    const top = insetRef.current?.top ?? Math.round(0.2 * h)   // the title's bottom edge + a gap (measured in Globe)
+    const zoom = Math.min(3.65, zoomForRadius(Math.min(h - top, 0.62 * w), lat, h, fov))
+    const r = globeRadiusPx(zoom, lat, h, fov)
+    const cy = Math.min(h, top + r)   // where the planet's centre goes on screen
+    return { zoom, padding: { top: Math.max(0, 2 * cy - h), bottom: 0, left: 0, right: 0 } }
   }
   const introRef = useRef<'pending' | 'running' | 'done'>(introPlayed ? 'done' : 'pending')
   const [revealed, setRevealed] = useState(introPlayed)
@@ -412,6 +417,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         const reveal = () => {
           if (shown || cancelled) return
           shown = true
+          // the title may have moved since (web fonts): frame the dome against where it is now
+          map!.jumpTo({ ...introView(map!, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })
           setRevealed(true)
           window.setTimeout(() => { if (!cancelled && map) pullBack(map) }, REVEAL_MS + 350)
         }
