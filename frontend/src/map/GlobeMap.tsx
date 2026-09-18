@@ -154,7 +154,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
                    left: 0, right: 0 } })
       if (u < 1) { motion.current = requestAnimationFrame(step); return }
       motion.current = 0
-      introRef.current = 'done'
+      endIntro()
       atHome.current = true
       spinning.current = true
       showMarkers(true, 900)   // the universities appear once the planet has settled
@@ -162,11 +162,17 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     spinning.current = false
     motion.current = requestAnimationFrame(step)
   }
-  const cancelIntro = () => {
+  // the opening shot always finishes: a touch, a drag or the wheel during it would otherwise fight the scripted camera
+  // (or stop it halfway, leaving a giant planet under the title). Gestures are off for its ~3.5 s and come back after.
+  const HANDLERS = ['dragPan', 'scrollZoom', 'boxZoom', 'dragRotate', 'keyboard', 'doubleClickZoom', 'touchZoomRotate',
+                    'touchPitch'] as const
+  const setGestures = (map: Map, on: boolean) => {
+    for (const h of HANDLERS) { if (on) map[h].enable(); else map[h].disable() }
+  }
+  const endIntro = () => {
     if (introRef.current === 'done') return
-    if (introRef.current === 'running') { cancelAnimationFrame(motion.current); motion.current = 0 }
     introRef.current = 'done'
-    showMarkers(true, 400)
+    if (mapRef.current) setGestures(mapRef.current, true)
   }
 
   const fitHome = () => {
@@ -251,7 +257,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     if (!on) { map.getCanvas().style.cursor = ''; onHover?.(null) }
   }
 
-  const cancelMotion = () => { if (motion.current) cancelAnimationFrame(motion.current); motion.current = 0 }
+  const cancelMotion = () => { if (motion.current) cancelAnimationFrame(motion.current); motion.current = 0; endIntro() }
   const clearResetTimers = () => { resetTimers.current.forEach((id) => window.clearTimeout(id)); resetTimers.current = [] }
 
   useImperativeHandle(ref, () => ({
@@ -413,6 +419,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       if (introRef.current === 'pending' && !still) {
         introPlayed = true
+        setGestures(map, false)
         map.jumpTo({ ...introView(map, INTRO_LAT), center: [HOME[0] - INTRO_TURN, INTRO_LAT] })  // before the first frame
         // the planet is textured from the first frame (local tiles, see loadSatelliteStyle): no waiting on the
         // network - a beat to take in the big planet, then the camera pulls back
@@ -461,7 +468,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       onReady?.()
     })
 
-    const stop = () => { cancelIntro(); spinning.current = false; window.clearTimeout(idleTimer.current) }
+    const stop = () => { if (introRef.current === 'done') spinning.current = false; window.clearTimeout(idleTimer.current) }
     const resume = () => { window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 5000) }
     map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
     map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
