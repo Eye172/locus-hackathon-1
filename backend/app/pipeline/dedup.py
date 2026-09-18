@@ -14,18 +14,32 @@ def hamming(h1: str, h2: str) -> int:
     return imagehash.hex_to_hash(h1) - imagehash.hex_to_hash(h2)
 
 
+def _phash_int(h: str | None) -> int | None:
+    try:
+        return int(h, 16) if h else None
+    except ValueError:
+        return None
+
+
 def merge_exact(items: list[Fetched]) -> list[Fetched]:
     """Group copies (Hamming <= threshold). The best-source, highest-resolution copy represents the group;
     other copies are attached as extra_sources so provenance is preserved."""
+    # every photo is compared with every group: ~100k comparisons for a grown profile. imagehash builds two numpy
+    # arrays per comparison (~3 s per profile update, holding the event loop); a XOR of the hashes as integers gives
+    # the same bit count in a fraction of a microsecond
+    limit = settings.phash_max_distance
     groups: list[list[Fetched]] = []
+    heads: list[int | None] = []
     for f in items:
-        for g in groups:
+        h = _phash_int(f.phash)
+        for g, gh in zip(groups, heads):
             same_bytes = bool(f.sha1) and f.sha1 == g[0].sha1
-            if same_bytes or hamming(f.phash, g[0].phash) <= settings.phash_max_distance:
+            if same_bytes or (h is not None and gh is not None and (h ^ gh).bit_count() <= limit):
                 g.append(f)
                 break
         else:
             groups.append([f])
+            heads.append(h)
     out: list[Fetched] = []
     for g in groups:
         g.sort(key=lambda x: (SOURCE_PRIOR.get(x.cand.source, 0), x.width * x.height), reverse=True)

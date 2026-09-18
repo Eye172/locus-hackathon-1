@@ -26,6 +26,11 @@ NEIGHBOUR_MIN_POP = 500_000
 NEIGHBOUR_MAX_KM = 15.0          # the neighbour's boundary must be this close to the campus
 NEIGHBOUR_CENTRE_KM = 45.0       # and its centre not much further
 MIN_CITY_KM2 = 100.0            # smaller "cities" are districts or suburbs: look one level up
+# ...unless OSM says the small area is a settlement in its own right: Karakol (39 km2) and Talas (14 km2) are towns,
+# Hong Kong's "Central and Western" (20 km2, a suburb) and Almaty's Bostandyk (99 km2, a city district) are not.
+# Without this a small town's scene was locked to its whole region, mountains and lakes included.
+SETTLEMENTS = {"city", "town", "village", "municipality"}
+CACHE_V = "v2:"                  # cached answers carry the OSM kind since v2
 HUGE_KM2 = 6000.0                # municipalities like Chongqing: keep a 40 km disc around the campus
 CITY_KINDS = {("boundary", "administrative"), ("place", "city"), ("place", "town"), ("place", "municipality"),
               ("boundary", "political"), ("place", "state")}
@@ -75,10 +80,10 @@ def _area_of(row: dict):
 
 async def _city_shape(name: str, qid: str | None, near: tuple[float, float]):
     """(outline, name, wikidata id) of the city called `name` around `near`; Nominatim's wikidata tag decides."""
-    key = qid or f"name:{name.lower()}:{round(near[0], 1)},{round(near[1], 1)}"
+    key = CACHE_V + (qid or f"name:{name.lower()}:{round(near[0], 1)},{round(near[1], 1)}")
     hit = await cache.kv_get("citygeo", key, max_age_s=30 * 86400)
     if hit is not None:
-        return (shape(hit["geom"]), hit["name"], hit.get("wd")) if hit.get("geom") else None
+        return (shape(hit["geom"]), hit["name"], hit.get("wd"), hit.get("kind")) if hit.get("geom") else None
     rows = await _nominatim(name)
     best, best_score = None, -1e9
     pt = Point(near[1], near[0])
@@ -95,19 +100,20 @@ async def _city_shape(name: str, qid: str | None, near: tuple[float, float]):
         rank = int(row.get("place_rank") or 30)
         score = (100 if qid and wd == qid else 0) - d_km * 3 - abs(rank - 14)
         if score > best_score:
-            best, best_score = (g, row.get("name") or name, wd), score
+            best, best_score = (g, row.get("name") or name, wd, row.get("addresstype")), score
     if rows:  # an empty answer may be a network hiccup: do not remember it
-        await cache.kv_set("citygeo", key, {"geom": best[0].__geo_interface__, "name": best[1], "wd": best[2]} if best else {"geom": None})
+        await cache.kv_set("citygeo", key, {"geom": best[0].__geo_interface__, "name": best[1], "wd": best[2], "kind": best[3]}
+                           if best else {"geom": None})
     return best
 
 
 async def _containing_area(campus: tuple[float, float]):
     """The smallest administrative area around the campus that is city-sized (≥ MIN_CITY_KM2): Nominatim reverse
     at city, county and state zoom. Hong Kong universities are filed under 20 km² districts; this finds Hong Kong."""
-    key = f"rev:{round(campus[0], 3)},{round(campus[1], 3)}"
+    key = CACHE_V + f"rev:{round(campus[0], 3)},{round(campus[1], 3)}"
     hit = await cache.kv_get("citygeo", key, max_age_s=30 * 86400)
     if hit is not None:
-        return (shape(hit["geom"]), hit["name"], hit.get("wd")) if hit.get("geom") else None
+        return (shape(hit["geom"]), hit["name"], hit.get("wd"), hit.get("kind")) if hit.get("geom") else None
     found, complete = None, True
     for zoom in (10, 8, 5):
         row = await _paced_get("reverse", {"lat": campus[0], "lon": campus[1], "zoom": zoom})
@@ -117,12 +123,13 @@ async def _containing_area(campus: tuple[float, float]):
         g = _area_of(row) if isinstance(row, dict) and "error" not in row else None
         if g is None:
             continue
-        found = (g, row.get("name"), (row.get("extratags") or {}).get("wikidata"))
+        found = (g, row.get("name"), (row.get("extratags") or {}).get("wikidata"), row.get("addresstype"))
         if _km2(g, campus[0]) >= MIN_CITY_KM2:
             complete = True
             break
     if complete:
-        await cache.kv_set("citygeo", key, {"geom": found[0].__geo_interface__, "name": found[1], "wd": found[2]} if found else {"geom": None})
+        await cache.kv_set("citygeo", key, {"geom": found[0].__geo_interface__, "name": found[1], "wd": found[2], "kind": found[3]}
+                           if found else {"geom": None})
     return found
 
 
@@ -164,13 +171,13 @@ async def city_area(uni: University, campus: tuple[float, float]) -> dict | None
     base = await _city_shape(", ".join(x for x in (uni.city, uni.country) if x), uni.city_qid, near)
     if base is not None and not base[0].buffer(0.02).contains(Point(campus[1], campus[0])):
         base = None  # the campus is not in the city it is filed under (a suburb campus)
-    if base is None or _km2(base[0], lat) < MIN_CITY_KM2:
+    if base is None or (_km2(base[0], lat) < MIN_CITY_KM2 and base[3] not in SETTLEMENTS):
         around = await _containing_area(campus)
         if around is not None and (base is None or _km2(around[0], lat) > _km2(base[0], lat)):
             base = around
     if base is None:
         return None
-    geom, name, city_wd = base
+    geom, name, city_wd, _kind = base
     names = [name]
     parts = [geom]
     for n in await _neighbours(city_wd or uni.city_qid, campus) if (city_wd or uni.city_qid) else []:

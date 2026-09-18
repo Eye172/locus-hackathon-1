@@ -12,9 +12,11 @@ import logging
 import math
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import mapbox_vector_tile
+from mapbox_vector_tile.Mapbox import vector_tile_pb2
 from rapidfuzz import fuzz
 from shapely import STRtree
 from shapely.geometry import MultiPolygon, Point, Polygon, box
@@ -33,7 +35,13 @@ TILE_TTL_S = 14 * 86400
 DORM_RADIUS_M = 2500
 POI_RADIUS_M = 2000
 MAX_CAMPUS_BUILDINGS = 400
-PACK_VERSION = 2  # 2: city_area (the 3D camera is locked to the city)
+PACK_VERSION = 4  # 2: city_area (camera locked to the city); 3: small towns are cities, not their region;
+#   4: packs built while the elevation service refused (camera target at 0 m) are not reused
+# The city boundary (Nominatim, paced at 1 request/s and shared with the profile build) took 2-10 s on its own, up to
+# 25 s next to a live profile build, and the whole pack waited for it: the 3D scene stood without its campus. The
+# camera is locked to the city only after the ~16 s orbit, so the pack goes out without it (city_status "pending")
+# and the client asks again; the lookup keeps running meanwhile.
+CITY_WAIT_S = 0.6  # a boundary cached from an earlier visit is back in ~50 ms
 
 DORM_NAME_RE = re.compile(r"общежит|жатақхана|жатакхана|dormitor|residence hall|student (house|housing|residence)|"
                           r"студенческ\w* (дом|городок)|кампус.*корпус проживания|halls? of residence", re.I)
@@ -61,17 +69,67 @@ GROUPS: dict[str, dict[str, set[str]]] = {
 
 _tile_tpl: tuple[str, float] | None = None
 _elev_memo: dict[tuple[float, float], float] = {}
+# single-flight lookups: a request that needs one already running joins it instead of starting another.
+# Tiles leave the table when done (the disk cache holds them); outlines and city boundaries stay (small).
+_tasks: dict[object, asyncio.Task] = {}
+# the map's own worker: in the shared default pool it queued behind a live profile build's hundreds of image decodes
+# (a 1.5 s analysis took 26 s)
+_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="map3d")
+
+
+async def _in_pool(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_pool, fn, *args)
+
+
+def _shared(key: object, make, keep: bool = True) -> asyncio.Task:
+    t = _tasks.get(key)
+    if t is None or (t.done() and (t.cancelled() or t.exception() is not None)):
+        t = _tasks[key] = asyncio.ensure_future(make())
+        if not keep:
+            t.add_done_callback(lambda _t: _tasks.pop(key, None) if _tasks.get(key) is _t else None)
+    return t
+
+
+def _city_task(uni: University, origin: tuple[float, float]) -> asyncio.Task:
+    """One city-boundary lookup per university: the client's repeat requests join the one already running."""
+    from .citygeo import city_area
+    return _shared(("city", uni.qid), lambda: city_area(uni, origin))
+
+
+def _outline_task(qid: str, names: list[str], lat: float, lon: float) -> asyncio.Task:
+    from .sources import osm
+    return _shared(("outline", qid), lambda: asyncio.wait_for(osm.nominatim_outline(qid, names, lat, lon), timeout=4))
+
+
+def warm(qid: str, lat: float, lon: float, names: list[str | None]) -> None:
+    """Start the network part of a pack (tiles, campus outline) from the index row while the university's facts are
+    still being looked up (Wikidata, 2-5 s): build() then finds them done or joins them."""
+    _shared(("warm", qid, round(lat, 4), round(lon, 4)),
+            lambda: _tile_blobs(bbox_around(lat, lon, max(DORM_RADIUS_M, POI_RADIUS_M))), keep=False)
+    names = [n for n in dict.fromkeys(names) if n]
+    if names:
+        _outline_task(qid, names, lat, lon)
 
 
 # ---------------------------------------------------------------- tiles
 
-async def _template() -> str:
+async def _fetch_template() -> str:
     global _tile_tpl
-    if _tile_tpl and time.time() - _tile_tpl[1] < 6 * 3600:
-        return _tile_tpl[0]
+    hit = await cache.kv_get("map3d_tiles", "template", max_age_s=6 * 3600)  # survives restarts: ~1-4 s saved
+    if hit:
+        _tile_tpl = (hit["url"], time.time())
+        return hit["url"]
     d = await http.get_json(TILEJSON, timeout=8.0)
     _tile_tpl = (d["tiles"][0], time.time())
+    await cache.kv_set("map3d_tiles", "template", {"url": _tile_tpl[0]})
     return _tile_tpl[0]
+
+
+async def _template() -> str:
+    if _tile_tpl and time.time() - _tile_tpl[1] < 6 * 3600:
+        return _tile_tpl[0]
+    # all tiles of a pack ask at once: one TileJSON request, not sixteen
+    return await asyncio.shield(_shared("template", _fetch_template, keep=False))
 
 
 def _tile_xy(lat: float, lon: float, z: int = Z) -> tuple[int, int]:
@@ -94,6 +152,10 @@ def _tile_dir() -> Path:
 
 
 async def _tile_bytes(x: int, y: int) -> bytes | None:
+    return await asyncio.shield(_shared(("tile", x, y), lambda: _fetch_tile(x, y), keep=False))
+
+
+async def _fetch_tile(x: int, y: int) -> bytes | None:
     path = _tile_dir() / f"{x}_{y}.pbf"
     if path.exists() and time.time() - path.stat().st_mtime < TILE_TTL_S:
         return path.read_bytes()
@@ -115,11 +177,17 @@ async def _tile_bytes(x: int, y: int) -> bytes | None:
 
 
 class Tile:
-    """One decoded z14 tile with coordinates converted to lon/lat."""
+    """One z14 tile with coordinates converted to lon/lat. Layers are decoded on first use, one at a time: parsing the
+    protobuf is native and cheap, the geometry decode is pure Python (~2 s for a dense city pack), and the building
+    layer is needed only where the campus and the dorms are - the POI layer everywhere, roads and the rest never."""
 
     def __init__(self, x: int, y: int, data: bytes):
         self.x, self.y = x, y
-        self.layers = mapbox_vector_tile.decode(data, default_options={"y_coord_down": True}) if data else {}
+        self._pb = None
+        if data:
+            self._pb = vector_tile_pb2.tile()
+            self._pb.ParseFromString(data)
+        self._layers: dict[str, dict | None] = {}
         self._buildings: list[dict] | None = None
         self._tree: STRtree | None = None
         (x0, y0), (x1, y1) = self._lonlat(0, 0, 1), self._lonlat(1, 1, 1)
@@ -134,6 +202,23 @@ class Tile:
             self._tree = STRtree([b["shape"] for b in items])
         return [items[i] for i in self._tree.query(geom)]
 
+    def _pb_layer(self, name: str):
+        for pb in self._pb.layers if self._pb is not None else []:
+            if pb.name == name:
+                return pb
+        return None
+
+    def layer(self, name: str) -> dict | None:
+        if name not in self._layers:
+            pb = self._pb_layer(name)
+            found = None
+            if pb is not None:
+                one = vector_tile_pb2.tile()
+                one.layers.add().CopyFrom(pb)
+                found = mapbox_vector_tile.decode(one.SerializeToString(), default_options={"y_coord_down": True}).get(name)
+            self._layers[name] = found
+        return self._layers[name]
+
     def _lonlat(self, px: float, py: float, extent: int) -> tuple[float, float]:
         n = 2 ** Z
         lon = (self.x + px / extent) / n * 360.0 - 180.0
@@ -143,7 +228,7 @@ class Tile:
     def buildings(self) -> list[dict]:
         if self._buildings is not None:
             return self._buildings
-        layer = self.layers.get("building")
+        layer = self.layer("building")
         if not layer:
             self._buildings = []
             return []
@@ -187,22 +272,36 @@ class Tile:
         return out
 
     def pois(self) -> list[dict]:
-        layer = self.layers.get("poi")
-        if not layer:
+        """Single points of the POI layer, read straight from the protobuf: a city-centre tile holds ~1 000 places with
+        dozens of name:xx tags each, and the generic decoder converted every tag of every place (~3 s for London)."""
+        pb = self._pb_layer("poi")
+        if pb is None:
             return []
-        ext = layer.get("extent", 4096)
+        ext = pb.extent or 4096
+        keys = list(pb.keys)
+        wanted = [k in ("class", "subclass", "rank") or k.startswith("name") for k in keys]
+        values = pb.values
+        memo: dict[int, object] = {}
+
+        def value(i: int):
+            if i not in memo:
+                fields = values[i].ListFields()
+                memo[i] = fields[0][1] if fields else None
+            return memo[i]
+
         out = []
-        for f in layer["features"]:
-            g = f.get("geometry") or {}
-            if g.get("type") != "Point":
+        for f in pb.features:
+            g = f.geometry
+            if f.type != 1 or len(g) != 3 or g[0] != 9:  # one MoveTo of one point; multipoints are skipped as before
                 continue
-            px, py = g["coordinates"]
+            px, py = (g[1] >> 1) ^ -(g[1] & 1), (g[2] >> 1) ^ -(g[2] & 1)  # zigzag
             if not (0 <= px <= ext and 0 <= py <= ext):  # tile buffer: the neighbour tile owns it
                 continue
+            tags = f.tags
+            p = {keys[tags[i]]: value(tags[i + 1]) for i in range(0, len(tags) - 1, 2) if wanted[tags[i]]}
             lon, lat = self._lonlat(px, py, ext)
-            p = f.get("properties") or {}
             out.append({"lat": lat, "lon": lon, "class": p.get("class"), "subclass": p.get("subclass"),
-                        "rank": p.get("rank"), "names": {k: v for k, v in p.items() if k == "name" or k.startswith("name")}})
+                        "rank": p.get("rank"), "names": {k: v for k, v in p.items() if k.startswith("name")}})
         return out
 
 
@@ -261,10 +360,51 @@ def _building_at(tiles: list[Tile], lat: float, lon: float, max_m: float = 30.0)
     return best
 
 
+_topo_lock = asyncio.Lock()
+_topo_last = 0.0
+ELEV_KV_MAX = 40   # requests up to this many points are also remembered on disk, point by point (anchors, dorms)
+
+
+async def _open_topo(chunk: list[tuple[float, float]]) -> dict[tuple[float, float], float]:
+    """OpenTopoData (SRTM 90 m, ASTER 30 m past SRTM's 60 N): the fallback when Open-Meteo refuses (it has an hourly
+    limit). Public API: at most 1 request a second and 100 points a request."""
+    global _topo_last
+    out: dict[tuple[float, float], float] = {}
+    for i in range(0, len(chunk), 100):
+        part = chunk[i:i + 100]
+        async with _topo_lock:
+            wait = 1.05 - (time.monotonic() - _topo_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                d = await http.get_json("https://api.opentopodata.org/v1/srtm90m,aster30m",
+                                        params={"locations": "|".join(f"{k[0]},{k[1]}" for k in part)}, timeout=8.0)
+            except Exception as e:  # noqa: BLE001
+                log.info("opentopodata failed: %s", type(e).__name__)
+                d = {}
+            finally:
+                _topo_last = time.monotonic()
+        for k, r in zip(part, d.get("results") or []):
+            e = r.get("elevation")
+            if isinstance(e, (int, float)) and not math.isnan(e):
+                out[k] = float(e)
+    return out
+
+
 async def elevations(points: list[tuple[float, float]]) -> list[float | None]:
-    """Ground height above sea level (m) for each (lat, lon); Open-Meteo, memoised, one request for the misses."""
+    """Ground height above sea level (m) for each (lat, lon): memoised, then Open-Meteo, then OpenTopoData for what
+    it did not answer. A missing height is not harmless: the 3D camera's target altitude comes from it, and at 0 m the
+    camera sat inside the terrain of any city high up (Osh ~1 000 m, Karakol ~1 760 m)."""
     keys = [(round(a, 4), round(b, 4)) for a, b in points]
     miss = [k for k in dict.fromkeys(keys) if k not in _elev_memo]
+    small = len(miss) <= ELEV_KV_MAX
+    if miss and small:   # remembered on disk from an earlier run
+        got = await asyncio.gather(*(cache.kv_get("elev", f"{k[0]},{k[1]}") for k in miss))
+        for k, v in zip(miss, got):
+            if v is not None:
+                _elev_memo[k] = float(v["m"])
+        miss = [k for k in miss if k not in _elev_memo]
+    fresh: dict[tuple[float, float], float] = {}
     for i in range(0, len(miss), 90):
         chunk = miss[i:i + 90]
         params = {"latitude": ",".join(str(k[0]) for k in chunk), "longitude": ",".join(str(k[1]) for k in chunk)}
@@ -273,11 +413,22 @@ async def elevations(points: list[tuple[float, float]]) -> list[float | None]:
                 d = await http.get_json("https://api.open-meteo.com/v1/elevation", params=params, timeout=6.0)
                 for k, e in zip(chunk, d.get("elevation") or []):
                     if e is not None and not (isinstance(e, float) and math.isnan(e)):
-                        _elev_memo[k] = float(e)
+                        fresh[k] = float(e)
                 break
             except Exception as e:  # noqa: BLE001
                 log.info("elevation failed (%s): %s", attempt, type(e).__name__)
-                await asyncio.sleep(0.5)
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+    rest = [k for k in miss if k not in fresh]
+    if rest:
+        fresh.update(await _open_topo(rest))
+    _elev_memo.update(fresh)
+    if fresh and small:
+        try:  # one writer at a time: the database is shared with the profile builds
+            for k, v in fresh.items():
+                await cache.kv_set("elev", f"{k[0]},{k[1]}", {"m": v})
+        except Exception as e:  # noqa: BLE001 - a cache that did not save is not an error
+            log.info("elevation cache write failed: %s", type(e).__name__)
     return [_elev_memo.get(k) for k in keys]
 
 
@@ -321,10 +472,9 @@ def _area_shape(ring_latlon: list[list[float]]) -> Polygon | MultiPolygon | None
 async def _campus_outline(uni: University, campus: Campus | None) -> tuple[Polygon | MultiPolygon | None, str | None]:
     if campus and campus.polygon and len(campus.polygon) >= 4:
         return _area_shape(campus.polygon), campus.osm_url
-    from .sources import osm
     names = [n for n in [uni.names.get("ru"), uni.names.get("en"), uni.name, *uni.names.values()] if n]
-    try:
-        c = await asyncio.wait_for(osm.nominatim_outline(uni.qid, list(dict.fromkeys(names)), uni.lat, uni.lon), timeout=4)
+    try:  # usually started already by warm(), from the index row
+        c = await asyncio.shield(_outline_task(uni.qid, list(dict.fromkeys(names)), uni.lat, uni.lon))
     except Exception:  # noqa: BLE001
         c = None
     if c and c.polygon:
@@ -415,11 +565,13 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
         raise ValueError("no coordinates")
     lat0, lon0 = uni.lat, uni.lon
     radius = max(DORM_RADIUS_M, POI_RADIUS_M)
+    t0 = time.monotonic()
+    took: dict[str, float] = {}  # step -> seconds since the start, for one log line per pack
     # the tiles around the university download while the outline and the city boundary are looked up
     first_tiles = asyncio.create_task(_tile_blobs(bbox_around(lat0, lon0, radius)))
-    from .citygeo import city_area
-    city_task = asyncio.create_task(city_area(uni, (lat0, lon0)))
+    city_task = _city_task(uni, (lat0, lon0))
     outline, osm_url = await _campus_outline(uni, campus)
+    took["outline"] = time.monotonic() - t0
     if outline is not None and (outline.is_empty or _area_m2(outline, lat0) > 25_000_000):
         outline = None  # a whole district tagged as the university is useless as a campus outline
     if outline is not None:
@@ -439,8 +591,10 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
     have = {k for k, _ in blobs}
     if any(k not in have for k in _tiles_for_bbox(bb)):  # a moved anchor or a large outline needs a few more tiles
         blobs = [b for b in await _tile_blobs(bb)]
-    campus_feats, dorms, places, stats = await asyncio.to_thread(
+    took["tiles"] = time.monotonic() - t0
+    campus_feats, dorms, places, stats = await _in_pool(
         _analyse, uni, outline, blobs, lang, (lat0, lon0), (anchor_lat, anchor_lon))
+    took["analyse"] = time.monotonic() - t0
 
     center = None
     if uni.city_lat is not None and uni.city_lon is not None:
@@ -450,7 +604,10 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
     route = (ctx or {}).get("route_center") if ctx else None
 
     elev_pts = [(anchor_lat, anchor_lon)] + ([(center["lat"], center["lon"])] if center else []) + [(d["lat"], d["lon"]) for d in dorms]
+    # the city boundary's last chance runs alongside the elevation request, not after it
+    city_wait = asyncio.ensure_future(asyncio.wait_for(asyncio.shield(city_task), timeout=CITY_WAIT_S))
     elev = await elevations(elev_pts)
+    took["elevation"] = time.monotonic() - t0
     if center:
         center["elevation"] = elev[1]
     for d, e in zip(dorms, elev[1 + (1 if center else 0):]):
@@ -469,13 +626,15 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
 
     city_status = "ok"
     try:
-        # shield: a slow Nominatim keeps working in the background and fills its cache for the next visit
-        city = await asyncio.wait_for(asyncio.shield(city_task), timeout=12)
+        # shield: a slow Nominatim keeps working in the background; the client's next request picks up its result
+        city = await city_wait
         if city is None:
             city_status = "none"
     except Exception as e:  # noqa: BLE001
         log.info("city area not ready: %s", type(e).__name__)
         city, city_status = None, "pending"
+    log.info("map3d %s in %.1f s (%s; city %s, %d tiles %d KB)", uni.qid, time.monotonic() - t0,
+             ", ".join(f"{k} {v:.1f}" for k, v in took.items()), city_status, len(blobs), sum(len(b) for _, b in blobs) // 1024)
 
     return {
         "v": PACK_VERSION,
@@ -518,4 +677,4 @@ async def footprints(points: list[dict]) -> dict[str, dict | None]:
             b = _building_at(tiles, p["lat"], p["lon"], max_m=35)
             out[str(p.get("id"))] = {**_feature(b, "dorm", p["lat"], p["lon"]), "elevation": e} if b else {"elevation": e, "ring": None}
         return out
-    return await asyncio.to_thread(run)
+    return await _in_pool(run)
