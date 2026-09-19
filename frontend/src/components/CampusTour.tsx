@@ -7,7 +7,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Footprints, LoaderCircle, MapPin, Pause, Play, X } from 'lucide-react'
+import { Box, ExternalLink, Footprints, LoaderCircle, MapPin, Pause, Play, X } from 'lucide-react'
 import { api } from '../lib/api'
 import type { Map3DPack, Photo } from '../lib/types'
 import { CampusReveal, pickHero } from './CampusReveal'
@@ -16,6 +16,7 @@ import type { LatLng } from '../lib/gmaps'
 import { uniName, useLang } from '../lib/i18n'
 
 type Mode = 'photos' | 'walk'
+const MAPILLARY = ((import.meta.env.VITE_MAPILLARY_TOKEN as string | undefined) ?? '').trim()
 interface Stop { id: string; label: string; kind: 'entrance' | 'place' | 'dorm'; at: LatLng }
 
 const GENERIC = /^(university|universit\w*|университет\w*|state|national|institute|институт|college|academy|академия|of|the|and|named|after|имени|kazakh|казахский|technical|технический|государственный|национальный)$/i
@@ -48,6 +49,11 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
   const [stop, setStop] = useState<Stop | null>(null)
   const [pano, setPano] = useState<'idle' | 'ok' | 'none'>('idle')
   const [auto, setAuto] = useState(false)
+  const [src, setSrcState] = useState<'google' | 'mapillary'>(GOOGLE_3D_KEY ? 'google' : 'mapillary')
+  const srcChosen = useRef(false)
+  const chooseSrc = (v: 'google' | 'mapillary') => { srcChosen.current = true; setSrcState(v) }
+  const [panoId, setPanoId] = useState<string | null>(null)
+  const [mly, setMly] = useState<string>('idle')
   const box = useRef<HTMLDivElement>(null)
   const panoRef = useRef<any>(null)
 
@@ -99,38 +105,78 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
     return () => { alive = false }
   }, [pack, lang])
 
-  // the panorama: nearest to the stop (outdoor first, then any: photospheres often show the insides), facing it
+  // the panorama. Walkable first, as in Google Maps: of the panoramas around the stop (Google's own cars and trekkers,
+  // then people's photospheres - often indoors), the nearest one that links on to others; a dead-end photosphere (a
+  // drone shot, one room) only when nothing walkable is within ~500 m more. Facing the place.
   useEffect(() => {
-    if (mode !== 'walk' || !stop || !GOOGLE_3D_KEY) return
+    if (mode !== 'walk' || src !== 'google' || !stop || !GOOGLE_3D_KEY) return
     let alive = true
     setPano('idle')
     setAuto(false)
     loadStreetView(lang).then(async (sv) => {
       const svc = new sv.StreetViewService()
-      const ask = (radius: number, source: any) => svc.getPanorama({ location: stop.at, radius, preference: sv.StreetViewPreference.NEAREST, sources: [source] })
-      let data: any = null
-      for (const [r, s] of [[80, sv.StreetViewSource.OUTDOOR], [80, sv.StreetViewSource.DEFAULT], [300, sv.StreetViewSource.OUTDOOR], [600, sv.StreetViewSource.DEFAULT]] as const) {
-        try { data = (await ask(r, s)).data; break } catch { /* next radius */ }
-      }
+      const S = sv.StreetViewSource
+      const asks: [number, any][] = [[60, S.GOOGLE], [60, S.DEFAULT], [250, S.GOOGLE], [150, S.OUTDOOR], [700, S.GOOGLE], [400, S.DEFAULT]]
+      const found = await Promise.all(asks.map(([radius, source]) => svc.getPanorama({ location: stop.at, radius, preference: sv.StreetViewPreference.NEAREST, sources: [source] })
+        .then((r: any) => r.data).catch(() => null)))
+      const seen = new Set<string>()
+      const cands = found.filter((d: any) => d && !seen.has(d.location.pano) && seen.add(d.location.pano)).map((d: any) => {
+        const at = d.location.latLng.toJSON()
+        const dist = haversineM(at, stop.at)
+        return { d, at, score: dist + ((d.links?.length ?? 0) ? 0 : 500) }
+      }).sort((a: any, b: any) => a.score - b.score)
       if (!alive || !box.current) return
-      if (!data) { setPano('none'); return }
-      const at = data.location.latLng.toJSON()
+      if (!cands.length) {
+        setPano('none')
+        if (!srcChosen.current && MAPILLARY) setSrcState('mapillary')   // no Google here: the people's street photos
+        return
+      }
+      const { d, at } = cands[0]
       const pov = { heading: haversineM(at, stop.at) > 8 ? bearing(at, stop.at) : 0, pitch: 4 }
       if (panoRef.current) {
-        panoRef.current.setPano(data.location.pano)
+        panoRef.current.setPano(d.location.pano)
         panoRef.current.setPov(pov)
       } else {
         panoRef.current = new sv.StreetViewPanorama(box.current, {
-          pano: data.location.pano, pov, zoom: 0, addressControl: false, motionTracking: false, motionTrackingControl: false,
-          fullscreenControl: false, showRoadLabels: false,
+          pano: d.location.pano, pov, zoom: 0, addressControl: false, motionTracking: false, motionTrackingControl: false,
+          fullscreenControl: false, showRoadLabels: false, clickToGo: true, linksControl: true,
         })
+        panoRef.current.addListener('pano_changed', () => setPanoId(panoRef.current?.getPano?.() ?? null))
       }
+      setPanoId(d.location.pano)
       setPano('ok')
     }).catch(() => { if (alive) setPano('none') })
     return () => { alive = false }
-  }, [stop, mode, lang])
+  }, [stop, mode, lang, src])
   useEffect(() => () => { panoRef.current?.setVisible?.(false); panoRef.current = null }, [])
-  useEffect(() => { if (mode !== 'walk') { panoRef.current?.setVisible?.(false); panoRef.current = null } }, [mode])
+  useEffect(() => { if (mode !== 'walk' || src !== 'google') { panoRef.current?.setVisible?.(false); panoRef.current = null } }, [mode, src])
+
+  // Mapillary: street-level photos people drive and walk (flat images in sequences - its viewer steps along them)
+  useEffect(() => {
+    if (mode !== 'walk' || src !== 'mapillary' || !stop || !MAPILLARY) return
+    let alive = true
+    setMly('idle')
+    // ~250 m around the stop, then ~650 m: campus lanes are often not driven, the streets around them are
+    const around = (dLat: number) => {
+      const dLng = dLat / Math.max(0.2, Math.cos((stop.at.lat * Math.PI) / 180))
+      const bbox = [stop.at.lng - dLng, stop.at.lat - dLat, stop.at.lng + dLng, stop.at.lat + dLat].map((v) => v.toFixed(6)).join(',')
+      return fetch(`https://graph.mapillary.com/images?access_token=${MAPILLARY}&fields=id,computed_geometry,is_pano,captured_at&bbox=${bbox}&limit=200`).then((r) => r.json())
+    }
+    around(0.0022)
+      .then((j) => ((j.data ?? []).length ? j : around(0.006)))
+      .then((j) => {
+        if (!alive) return
+        const now = Date.now()
+        const best = ((j.data ?? []) as any[]).filter((x) => x.computed_geometry).map((x) => {
+          const [lng, lat] = x.computed_geometry.coordinates
+          const age = (now - (x.captured_at ?? 0)) / 3.15e10   // years
+          return { id: String(x.id), score: haversineM(stop.at, { lat, lng }) + (x.is_pano ? 0 : 60) + Math.min(10, age) * 15 }
+        }).sort((a, b) => a.score - b.score)[0]
+        setMly(best ? best.id : 'none')
+      })
+      .catch(() => { if (alive) setMly('none') })
+    return () => { alive = false }
+  }, [stop, mode, src])
 
   // Автопрогулка: a slow turn, then a step along the link closest to where the camera looks
   useEffect(() => {
@@ -165,12 +211,21 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
       {mode === 'photos' && photos.length === 0 && (
         <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">Фото этого вуза ещё собираются — пока можно пройтись по кампусу</div>
       )}
-      {mode === 'walk' && (
+      {mode === 'walk' && src === 'google' && (
         <>
           <div ref={box} className="absolute inset-0" />
           {pano === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm pointer-events-none"><span className="inline-flex items-center gap-2"><LoaderCircle size={15} className="animate-spin" /> Ищем панораму рядом…</span></div>}
-          {pano === 'none' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm px-6 text-center pointer-events-none">Google Street View не снимал это место. Выберите другую точку внизу.</div>}
-          {!GOOGLE_3D_KEY && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm">Нет ключа Google Maps</div>}
+          {pano === 'none' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm px-6 text-center pointer-events-none">Google Street View не снимал это место. Выберите другую точку или Mapillary внизу.</div>}
+        </>
+      )}
+      {mode === 'walk' && src === 'mapillary' && (
+        <>
+          {mly !== 'idle' && mly !== 'none' && (
+            <iframe key={mly} title="Mapillary" className="absolute inset-0 w-full h-full border-0" allowFullScreen
+              src={`https://www.mapillary.com/embed?image_key=${mly}&style=photo`} />
+          )}
+          {mly === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm pointer-events-none"><span className="inline-flex items-center gap-2"><LoaderCircle size={15} className="animate-spin" /> Ищем снимки Mapillary рядом…</span></div>}
+          {mly === 'none' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm px-6 text-center pointer-events-none">В Mapillary здесь снимков нет. Выберите другую точку внизу.</div>}
         </>
       )}
 
@@ -197,10 +252,18 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
       {mode === 'walk' && stops.length > 0 && (
         <div className="absolute z-[90] bottom-3 left-3 right-3 flex justify-center pointer-events-none">
           <div className="pointer-events-auto max-w-full overflow-x-auto no-scrollbar rounded-2xl bg-black/55 backdrop-blur-md p-1.5 flex gap-1.5">
-            <button onClick={() => setAuto((v) => !v)} disabled={pano !== 'ok'}
+            <div className="shrink-0 flex rounded-xl bg-white/10 p-0.5">
+              {GOOGLE_3D_KEY && <button onClick={() => chooseSrc('google')} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${src === 'google' ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Google</button>}
+              {MAPILLARY && <button onClick={() => chooseSrc('mapillary')} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${src === 'mapillary' ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Mapillary</button>}
+            </div>
+            {src === 'google' && panoId && pano === 'ok' && (
+              <a href={`https://www.google.com/maps/@?api=1&map_action=pano&pano=${encodeURIComponent(panoId)}`} target="_blank" rel="noreferrer" title="Открыть эту панораму в Google Картах"
+                className="shrink-0 h-9 px-3 rounded-xl text-[13px] inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20"><ExternalLink size={13} /> Google Карты</a>
+            )}
+            {src === 'google' && <button onClick={() => setAuto((v) => !v)} disabled={pano !== 'ok'}
               className={`shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 disabled:opacity-50 ${auto ? 'bg-white text-ink' : 'bg-white/10 hover:bg-white/20'}`}>
               {auto ? <Pause size={14} /> : <Play size={14} />} Автопрогулка
-            </button>
+            </button>}
             <span className="w-px bg-white/15 my-1 shrink-0" />
             {stops.map((s) => {
               const I = icon[s.kind]

@@ -97,6 +97,10 @@ export function DepthPhoto({ src, depthSrc, className, strength = 0.045, alt, co
     return () => {
       alive = false; cancelAnimationFrame(raf)
       ro?.disconnect()
+      // every slide is a new canvas: without this the contexts pile up until Chrome drops the oldest (the 3D map's,
+      // Street View's) and they go black
+      // (only once the canvas is really gone: StrictMode re-runs the effect on the same canvas)
+      window.setTimeout(() => { if (!c.isConnected) gl.getExtension('WEBGL_lose_context')?.loseContext() }, 0)
       if (onMove) c.removeEventListener('mousemove', onMove)
       if (onLeave) c.removeEventListener('mouseleave', onLeave)
       if (onOrient) window.removeEventListener('deviceorientation', onOrient)
