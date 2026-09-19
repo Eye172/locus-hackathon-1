@@ -9,6 +9,7 @@ export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', 
   const [q, setQ] = useState('')
   const [cands, setCands] = useState<Candidate[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
   const [active, setActive] = useState(0)
   const timer = useRef<number | undefined>(undefined)
   const seq = useRef(0)
@@ -18,24 +19,33 @@ export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', 
   useEffect(() => { if (autoFocus) inputRef.current?.focus({ preventScroll: true }) }, [autoFocus])
   useEffect(() => {
     window.clearTimeout(timer.current)
+    const my = ++seq.current
+    setLoading(false); setError(false)
     if (suppress.current) { suppress.current = false; return }
+    setCands(null)
     if (q.trim().length < 2) { setCands(null); return }
     timer.current = window.setTimeout(async () => {
-      const my = ++seq.current
       setLoading(true)
       try { const r = await api.search(q.trim()); if (my === seq.current) { setCands(r.candidates); setActive(0); onCandidates?.(r.candidates) } }
-      catch { if (my === seq.current) setCands([]) }
+      catch { if (my === seq.current) { setCands(null); setError(true) } }
       finally { if (my === seq.current) setLoading(false) }
     }, 220)
-    return () => window.clearTimeout(timer.current)
+    return () => { window.clearTimeout(timer.current); seq.current++ }
   }, [q])
 
   const pick = (c: Candidate) => { seq.current++; suppress.current = true; setCands(null); setQ(c.label); inputRef.current?.blur(); onPick(c) }
   const submit = async () => {
-    if (!q.trim()) return
+    if (!q.trim() || loading) return
+    const my = ++seq.current
+    window.clearTimeout(timer.current)
+    setError(false)
     let list = cands
-    if (!list) { setLoading(true); list = (await api.search(q.trim())).candidates; setLoading(false) }
-    if (list.length) pick(list[Math.min(active, list.length - 1)])
+    try {
+      if (!list) { setLoading(true); list = (await api.search(q.trim())).candidates }
+      if (my !== seq.current) return
+      if (list.length) pick(list[Math.max(0, Math.min(active, list.length - 1))]); else setCands([])
+    } catch { if (my === seq.current) { setCands(null); setError(true) } }
+    finally { if (my === seq.current || suppress.current) setLoading(false) }
   }
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown' && cands) { e.preventDefault(); setActive((a) => Math.min(a + 1, cands.length - 1)) }
@@ -52,12 +62,13 @@ export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', 
       <div className={`flex items-center gap-2 pl-4 pr-2 rounded-2xl border transition ${box} ${h}`}>
         <Search size={20} className={dark ? 'text-white/60' : 'text-muted'} />
         <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}
-          placeholder={t('home.placeholder')} className="flex-1 bg-transparent outline-none placeholder:text-current/50" />
-        <button onClick={submit} disabled={!q.trim()} className="btn-primary !rounded-xl !py-2 !px-3 sm:!px-3.5 shrink-0"><span className="hidden sm:inline">{t('home.go')}</span> <ArrowRight size={16} /></button>
+          placeholder={t('home.placeholder')} className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-current/50" />
+        <button onClick={submit} disabled={!q.trim() || loading} aria-label={t('home.go')} className="btn-primary !rounded-xl !py-2 !px-3 sm:!px-3.5 shrink-0"><span className="hidden sm:inline">{t('home.go')}</span> <ArrowRight size={16} /></button>
       </div>
-      {(cands || loading) && (
+      {(cands || loading || error) && (
         <div className={`absolute left-0 right-0 ${direction === 'up' ? 'bottom-full mb-2' : 'mt-2'} p-2 rounded-2xl border shadow-2xl z-40 max-h-[360px] overflow-auto pop ${drop}`}>
           {loading && !cands && <div className="p-3 text-sm opacity-60">…</div>}
+          {error && <div role="alert" className="p-3 text-sm">{t('search.error')}</div>}
           {cands && cands.length === 0 && !loading && <div className="p-3 text-sm opacity-70">{t('home.nothing')}</div>}
           {cands && cands.length > 0 && (
             <>

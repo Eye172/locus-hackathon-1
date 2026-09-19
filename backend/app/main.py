@@ -733,7 +733,9 @@ if _dist.exists():
         if settings.frontend_origin:
             q = f"?{request.url.query}" if request.url.query else ""
             return RedirectResponse(f"{settings.frontend_origin}/{path}{q}", status_code=307)
-        target = _dist / path
+        target = (_dist / path).resolve()
+        if not target.is_relative_to(_dist.resolve()):
+            raise HTTPException(404, "file not found")
         if path and target.is_file():
             return FileResponse(target)
         return FileResponse(_dist / "index.html")

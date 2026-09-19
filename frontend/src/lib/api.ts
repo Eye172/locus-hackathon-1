@@ -1,6 +1,6 @@
 import type { Candidate, Campus, CampusFacts, ClimatePack, ClimateStory, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SearchPlan, SourceStatus, Stage, UniPlan, UniPlanView, University } from './types'
 
-export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
+export const API_BASE: string = (import.meta.env?.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
 
 async function getJSON<T>(path: string): Promise<T> {
   const r = await fetch(API_BASE + path)
@@ -105,14 +105,16 @@ async function streamPost(path: string, body: unknown, onToken: (t: string) => v
   const reader = r.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
+  let finished = false
   const handle = (f: string) => {
+    if (finished) return
     const ev = /^event: (.*)$/m.exec(f)?.[1]
     const data = /^data: (.*)$/m.exec(f)?.[1]
     if (!data) return
     const d = JSON.parse(data)
     if (ev === 'token') onToken(d.text)
-    else if (ev === 'done') onDone(d.provider)
-    else if (ev === 'error') onError(d.message)
+    else if (ev === 'done') { finished = true; onDone(d.provider) }
+    else if (ev === 'error') { finished = true; onError(d.message) }
   }
   try {
     for (;;) {
@@ -122,9 +124,12 @@ async function streamPost(path: string, body: unknown, onToken: (t: string) => v
       buf = (buf + dec.decode(value, { stream: true })).replace(/\r\n/g, '\n')
       const frames = buf.split('\n\n'); buf = frames.pop() ?? ''
       frames.forEach(handle)
+      if (finished) { await reader.cancel(); break }
     }
-    if (buf.trim()) handle(buf)
-  } catch (e) { if (!signal?.aborted) onError(String(e)) }
+    if (buf.trim() && !finished) handle(buf)
+    if (!finished && !signal?.aborted) onError('Соединение прервано. Попробуйте ещё раз.')
+  } catch (e) { if (!finished && !signal?.aborted) onError(String(e)) }
+  finally { reader.releaseLock() }
 }
 
 export interface StreamHandlers {
@@ -158,7 +163,7 @@ export function streamProfile(qid: string, refresh: boolean, h: StreamHandlers):
   })
   es.addEventListener('error', (e) => {
     const me = e as MessageEvent
-    if (me.data) { const d = parse(me); h.onError?.(d.message, d.log ?? []) } else if (es.readyState === EventSource.CLOSED) { h.onError?.('Соединение прервано', []) }
+    if (me.data) { const d = parse(me); h.onError?.(d.message, d.log ?? []) } else { h.onError?.('Соединение прервано. Проверьте сеть и повторите попытку.', []) }
     es.close()
   })
   return () => es.close()

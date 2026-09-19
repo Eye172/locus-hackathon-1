@@ -108,7 +108,7 @@ function UniColumn({ side, p, s, t, lang }: { side: 'A' | 'B'; p: Profile; s?: A
       <div className="mt-5">
         <Fact k={t('adv.f.founded')} v={u.founded ?? '—'} />
         <Fact k={t('adv.f.students')} v={u.students ? u.students.toLocaleString(lang) : '—'} />
-        {center?.distance_km != null && <Fact k={t('adv.f.center')} v={<>{center.distance_km.toLocaleString(lang)} км{center.walk_min ? <span className="text-muted"> · {t('adv.walk')} {center.walk_min} мин</span> : null}</>} />}
+        {center?.distance_km != null && <Fact k={t('adv.f.center')} v={<>{center.distance_km.toLocaleString(lang)} км{center.walk_min ? <span className="text-muted"> · {t('adv.walk')} ≈{center.walk_min} мин</span> : null}</>} />}
         {dorms && <Fact k={t('adv.f.dorms')} v={<>{dorms.count}{dorms.nearest[0] ? <span className="text-muted"> · {t('adv.nearest')} {dorms.nearest[0].distance_m} м</span> : null}</>} />}
         {cl && <Fact k={t('adv.f.climate')} v={`${deg(cl.seasons.winter.t_mean)} / ${deg(cl.seasons.summer.t_mean)}`} />}
         {cl && <Fact k={t('adv.f.comfort')} v={cl.comfort_days.comfortable} />}

@@ -47,9 +47,9 @@ export default function App() {
               <Link to="/" aria-label="CampusLense" className={`hdr-logo flex ${home ? 'text-white' : 'text-ink'}`}><Logo /></Link>
             </div>
             <nav className="hidden md:flex items-center gap-7 text-[14px] font-medium">
-              <NavLink to="/" end className={link}>Планета</NavLink>
+              <NavLink to="/" end className={link}>{t('lvl.planet')}</NavLink>
               <NavLink to="/saved" className={link}>{t('nav.saved')}</NavLink>
-              <NavLink to="/compare" className={link}>Сравнение</NavLink>
+              <NavLink to="/compare" className={link}>{t('nav.compare')}</NavLink>
             </nav>
           </div>
           <span id="hdr-center" className="contents" />
@@ -70,6 +70,7 @@ export default function App() {
           <Route path="/saved" element={<Saved />} />
           <Route path="/settings/search" element={<SearchSettings />} />
           <Route path="/map3d/:qid" element={<ToMainMap />} />
+          <Route path="*" element={<div className="mx-auto max-w-7xl px-4 sm:px-6 py-16"><h1 className="text-3xl">{t('error.notFound')}</h1><p className="mt-3 text-muted">{t('error.notFoundHint')}</p><Link to="/" className="btn-primary mt-6">{t('lvl.planet')}</Link></div>} />
         </Routes>
       </main>
       <footer className={`border-t border-line py-8 text-[13px] text-muted ${home ? 'hidden' : ''}`}>

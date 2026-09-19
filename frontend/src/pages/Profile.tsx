@@ -130,7 +130,7 @@ export default function Profile() {
       {tourOpen && <Suspense fallback={null}><CampusTour qid={qid} name={uni ? name : undefined} photos={photos.length ? pickHero(photos, 8, profile?.cover ?? undefined) : undefined} onClose={() => setTourOpen(false)} /></Suspense>}
       <div className="mx-auto max-w-7xl px-4 sm:px-6">
         <nav className="pt-6 flex items-center gap-1.5 text-[13.5px] text-muted min-w-0">
-          <Link to="/" className="inline-flex items-center gap-1.5 hover:text-ink shrink-0"><ArrowLeft size={15} /> Планета</Link>
+          <Link to="/" className="inline-flex items-center gap-1.5 hover:text-ink shrink-0"><ArrowLeft size={15} /> {t('lvl.planet')}</Link>
           {uni?.country && <><span className="text-faint">/</span><span className="truncate">{uni.country}</span></>}
           {uni?.city && <><span className="text-faint">/</span><span className="truncate">{uni.city}</span></>}
         </nav>
@@ -166,8 +166,8 @@ export default function Profile() {
         </div>
 
         {uni && <FactsRow uni={uni} />}
-        <HeroGallery photos={hero} total={photos.length} loading={loading} onOpen={openPhoto} onAll={() => { setFilter('all'); setTab('photos') }} />
-        <BuildStatus profile={profile} photos={photos} stages={stages} sources={sources} elapsed={elapsed} cached={cached} onVerify={() => setTab('verify')} />
+        {(!error || photos.length > 0) && <HeroGallery photos={hero} total={photos.length} loading={loading} onOpen={openPhoto} onAll={() => { setFilter('all'); setTab('photos') }} />}
+        {!error && <BuildStatus profile={profile} photos={photos} stages={stages} sources={sources} elapsed={elapsed} cached={cached} onVerify={() => setTab('verify')} />}
 
         {profile?.partial && <div className="mt-4 text-[13.5px] text-likely">{t('profile.partial')}</div>}
         {error && (
@@ -251,4 +251,3 @@ export default function Profile() {
     </div>
   )
 }
-

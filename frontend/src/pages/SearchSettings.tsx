@@ -27,16 +27,16 @@ function IntentRow({ it, onChange, onRemove }: { it: Intent; onChange: (x: Inten
   const set = (patch: Partial<Intent>) => onChange({ ...it, ...patch })
   return (
     <div className="border-t border-line first:border-t-0">
-      <div className="flex items-center gap-3 px-5 py-3 hover:bg-soft/50 transition-colors">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 px-5 py-3 hover:bg-soft/50 transition-colors">
         <input type="checkbox" checked={it.enabled} onChange={(e) => set({ enabled: e.target.checked })} className="accent-ink" title="Искать эту тему" />
-        <button onClick={() => setOpen(!open)} className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer">
+        <button onClick={() => setOpen(!open)} className="flex-1 min-w-0 flex flex-wrap items-center gap-2 text-left cursor-pointer">
           <span className={`text-[15px] font-medium ${it.enabled ? '' : 'text-muted line-through'}`}>{it.label}</span>
           <span className="code text-[11px] text-faint">{it.key}</span>
           {it.fast && <span className="inline-flex items-center gap-1.5 text-[12px] text-muted"><i className="w-1.5 h-1.5 rounded-full bg-ink" />в первом профиле</span>}
-          <span className="ml-auto text-[13px] text-muted truncate">{it.platforms.map((p) => NETS.find((n) => n.key === p)?.label ?? p).join(' · ')}</span>
+          <span className="hidden md:block ml-auto text-[13px] text-muted truncate">{it.platforms.map((p) => NETS.find((n) => n.key === p)?.label ?? p).join(' · ')}</span>
           <ChevronDown size={15} className={`shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
-        <label className="flex items-center gap-2 text-[13px] text-muted" title="Сколько фото этой темы в коллаже">
+        <label className="w-full sm:w-auto sm:shrink-0 flex items-center justify-end gap-2 text-[13px] text-muted" title="Сколько фото этой темы в коллаже">
           в коллаже <input type="number" min={0} max={60} value={it.target} onChange={(e) => set({ target: Number(e.target.value) })} className="w-14 h-8 rounded-lg border border-line-2 px-2 text-[13px] text-ink outline-none focus:border-ink" />
         </label>
       </div>
@@ -124,7 +124,11 @@ export default function SearchSettings() {
     setErr(null)
     try { const r = await api.saveSearchPlan(plan); setPlan(r.plan); setBase(JSON.stringify(r.plan)); setSaved('Сохранено: применится при следующем открытии профиля'); loadUni() } catch (e) { setErr(String((e as Error).message)) }
   }
-  const reset = async () => { const r = await api.resetSearchPlan(); setPlan(r.plan); setBase(JSON.stringify(r.plan)); setSaved('Сброшено к стандартным темам'); loadUni() }
+  const reset = async () => {
+    setErr(null)
+    try { const r = await api.resetSearchPlan(); setPlan(r.plan); setBase(JSON.stringify(r.plan)); setSaved('Сброшено к стандартным темам'); loadUni() }
+    catch (e) { setErr(String((e as Error).message)) }
+  }
   const saveUni = async () => { if (qid && up) { try { await api.saveUniPlan(qid, up); setSaved('Сохранено для этого вуза'); loadUni() } catch (e) { setErr(String((e as Error).message)) } } }
   const setP = (patch: Partial<SearchPlan>) => plan && setPlan({ ...plan, ...patch })
 

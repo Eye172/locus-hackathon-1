@@ -263,7 +263,7 @@ export default function Globe() {
                   </button>
                 )
               })}
-              <button onClick={() => globe.current?.resetToGlobe()} className="inline-flex items-center h-8 px-3 rounded-full bg-white/10 border border-white/15 text-[13px] text-white/90 hover:bg-white/20 hover:text-white cursor-pointer backdrop-blur transition-colors">Вся планета</button>
+              <button onClick={() => globe.current?.resetToGlobe()} className="inline-flex items-center h-8 px-3 rounded-full bg-white/10 border border-white/15 text-[13px] text-white/90 hover:bg-white/20 hover:text-white cursor-pointer backdrop-blur transition-colors">{t('lvl.wholePlanet')}</button>
             </div>
           </div>
         </>

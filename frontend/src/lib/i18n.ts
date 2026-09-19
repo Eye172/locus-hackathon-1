@@ -1,8 +1,9 @@
 import { useCallback, useSyncExternalStore } from 'react'
+import { parseLang } from './storage.ts'
 
 export type Lang = 'ru' | 'en' | 'kk'
 const KEY = 'campuslens.lang'
-let current: Lang = (() => { try { return (localStorage.getItem(KEY) as Lang) || 'ru' } catch { return 'ru' } })()
+let current: Lang = (() => { try { return parseLang(localStorage.getItem(KEY)) } catch { return 'ru' } })()
 const listeners = new Set<() => void>()
 
 export function setLang(l: Lang) {
@@ -89,6 +90,12 @@ const D: Record<string, { ru: string; en: string; kk?: string }> = {
   'reveal.collecting': { ru: 'собираем фото', en: 'collecting photos', kk: 'фотолар жиналуда' },
   'reveal.show': { ru: 'Показать кампус', en: 'Show the campus', kk: 'Кампусты көрсету' },
   'lvl.planet': { ru: 'Планета', en: 'Planet', kk: 'Планета' },
+  'error.notFound': { ru: 'Страница не найдена', en: 'Page not found', kk: 'Бет табылмады' },
+  'error.notFoundHint': { ru: 'Проверьте адрес или вернитесь к поиску университета.', en: 'Check the address or return to university search.', kk: 'Мекенжайды тексеріңіз немесе университет іздеуге оралыңыз.' },
+  'search.error': { ru: 'Не удалось выполнить поиск. Проверьте соединение и попробуйте ещё раз.', en: 'Search failed. Check your connection and try again.', kk: 'Іздеу орындалмады. Байланысты тексеріп, қайталап көріңіз.' },
+  'lvl.wholePlanet': { ru: 'Вся планета', en: 'Whole planet', kk: 'Бүкіл планета' },
+  'photo.favorite': { ru: 'В избранное', en: 'Add to favorites', kk: 'Таңдаулыға қосу' },
+  'photo.unfavorite': { ru: 'Убрать из избранного', en: 'Remove from favorites', kk: 'Таңдаулыдан алып тастау' },
   'lvl.campus': { ru: 'Кампус', en: 'Campus', kk: 'Кампус' },
   'lvl.unis': { ru: 'вузов', en: 'universities', kk: 'ЖОО' },
   'lvl.cities': { ru: 'городов', en: 'cities', kk: 'қала' },
@@ -323,7 +330,7 @@ const D: Record<string, { ru: string; en: string; kk?: string }> = {
   'city.meters': { ru: 'м', en: 'm', kk: 'м' },
   'city.toCenterPrefix': { ru: 'до центра', en: 'to the centre', kk: 'орталыққа дейін' },
   'city.min': { ru: 'мин', en: 'min', kk: 'мин' },
-  'city.walkToCenter': { ru: 'пешком до центра', en: 'walk to the centre', kk: 'орталыққа жаяу' },
+  'city.walkToCenter': { ru: 'пешком до центра · оценка', en: 'walk to the centre · estimate', kk: 'орталыққа жаяу · шамамен' },
   'city.byCarPrefix': { ru: 'на машине', en: 'by car', kk: 'көлікпен' },
   'city.stopsWithin800': { ru: 'остановок в радиусе 800 м', en: 'stops within 800 m', kk: '800 м аумағындағы аялдамалар' },
   'city.stationFallback': { ru: 'станция', en: 'station', kk: 'станция' },

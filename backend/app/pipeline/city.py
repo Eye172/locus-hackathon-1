@@ -133,6 +133,7 @@ async def build(uni: University, campus: Campus | None) -> dict:
             "distance_km": (drive or {}).get("distance_km") or center_km,
             "drive_min": (drive or {}).get("minutes"),
             "walk_min": (walk or {}).get("minutes") or (round(center_km / 4.6 * 60 * 1.15) if center_km else None),
+            "walk_estimated": True,
             "geometry": (drive or walk or {}).get("geometry"),
             "source": "OSRM" if drive or walk else "прямая линия",
         },

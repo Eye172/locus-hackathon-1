@@ -33,7 +33,7 @@ export function PhotoTile({ p, qid, onOpen, large, showCategory }: { p: Photo; q
         <span className="inline-flex items-center gap-1.5 text-[11.5px] text-muted shrink-0 pt-px" title={t('level.' + p.level)}>
           <i className={`w-1.5 h-1.5 rounded-full ${levelDot(p.level)}`} />{Math.round(p.confidence * 100)}%
         </span>
-        <button onClick={() => store.toggleFavorite(qid, p.id)} aria-label="В избранное"
+        <button onClick={() => store.toggleFavorite(qid, p.id)} aria-label={t(fav ? 'photo.unfavorite' : 'photo.favorite')} aria-pressed={fav}
           className={`shrink-0 cursor-pointer transition-opacity ${fav ? 'text-ink' : 'text-faint hover:text-ink opacity-0 group-hover:opacity-100 focus:opacity-100'}`}>
           <Heart size={14} fill={fav ? 'currentColor' : 'none'} />
         </button>

@@ -71,6 +71,21 @@ async def init() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(SCHEMA)
+        # Older packs used OSRM's car duration for walking. Preserve the pack
+        # and its age, but replace that value with the same estimate as city.build.
+        async with db.execute("SELECT bucket, key, json FROM kv_cache WHERE bucket IN ('context', 'map3d')") as cur:
+            rows = await cur.fetchall()
+        for bucket, key, raw in rows:
+            pack = json.loads(raw)
+            route = pack.get("route_center")
+            if not route or route.get("walk_estimated"):
+                continue
+            distance = route.get("distance_km")
+            if isinstance(distance, (int, float)) and distance >= 0:
+                route["walk_min"] = round(distance / 4.6 * 60 * 1.15)
+                route["walk_estimated"] = True
+                await db.execute("UPDATE kv_cache SET json=? WHERE bucket=? AND key=?",
+                                 (json.dumps(pack, ensure_ascii=False), bucket, key))
         await db.commit()
 
 

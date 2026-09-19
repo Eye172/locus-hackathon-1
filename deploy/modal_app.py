@@ -2,12 +2,13 @@
 
     pip install modal && modal token new                # once, browser login
     cd frontend && npm run build && cd ..               # the app the container serves
-    modal deploy deploy/modal_app.py                    # -> https://<workspace>--campuslense-web.modal.run
+    modal deploy --strategy recreate deploy/modal_app.py # -> https://<workspace>--campuslense-web.modal.run
     modal volume put campuslens-data backend/data/campuslens.sqlite3 /campuslens.sqlite3   # optional: saved profiles
 
 Keys are read from backend/.env at deploy time and stored as a Modal Secret, the Vertex AI service account
 (backend/secrets/vertex-sa.json) too; nothing secret goes into the image. FRONTEND_ORIGIN is forced empty so the
-container serves the app itself. One container stays warm (MIN_CONTAINERS) so the jury never waits for a cold start.
+container serves the app itself. By default it scales to zero while idle; set MIN_CONTAINERS=1 before deploying
+only when a presentation needs a warm instance. A single container owns the SQLite database and in-memory builds.
 """
 from __future__ import annotations
 
@@ -21,7 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND, FRONTEND = ROOT / "backend", ROOT / "frontend"
 APP_DIR = "/root/campuslens"                        # same layout as the repo: data_dir.parents[1] is the repo root
 DATA = f"{APP_DIR}/backend/data"
-MIN_CONTAINERS = int(os.environ.get("MIN_CONTAINERS", "1"))
+MIN_CONTAINERS = int(os.environ.get("MIN_CONTAINERS", "0"))
+if MIN_CONTAINERS not in (0, 1):
+    raise ValueError("MIN_CONTAINERS must be 0 or 1: the SQLite deployment supports one container")
 SKIP = {"FRONTEND_ORIGIN", "HF_TOKEN", "HIGGSFIELD_API_KEY", "WORLDLABS_API_KEY"}   # not used by the running app
 
 
@@ -46,6 +49,7 @@ image = (
     .pip_install_from_requirements(str(BACKEND / "requirements.txt"), extra_index_url="https://download.pytorch.org/whl/cpu")
     .env({"HF_HOME": "/root/.cache/huggingface", "PYTHONUNBUFFERED": "1"})
     .run_commands("python -c \"import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')\"")
+    .run_commands("python -c \"from transformers import pipeline; pipeline('depth-estimation', model='depth-anything/Depth-Anything-V2-Small-hf', device=-1)\"")
     .add_local_dir(str(BACKEND / "app"), remote_path=f"{APP_DIR}/backend/app")
     .add_local_dir(str(BACKEND / "scripts"), remote_path=f"{APP_DIR}/backend/scripts")
     .add_local_file(str(BACKEND / "data" / "universities.json"), remote_path=f"{APP_DIR}/seed/universities.json")
@@ -60,7 +64,7 @@ secret = modal.Secret.from_dict(_secrets())
 
 
 @app.function(image=image, cpu=2.0, memory=6144, timeout=1800, volumes={DATA: volume}, secrets=[secret],
-              min_containers=MIN_CONTAINERS, scaledown_window=1200)
+              min_containers=MIN_CONTAINERS, max_containers=1, scaledown_window=1200)
 @modal.concurrent(max_inputs=48)
 @modal.asgi_app()
 def web():

@@ -4,19 +4,11 @@
  * storage or thumbnail capture must never break the page.
  */
 import { useSyncExternalStore } from 'react'
-
-export const KEYS = {
-  favorites: 'campuslens.favorites',   // { [qid]: string[] }  photo ids
-  saved: 'campuslens.saved',           // { [qid]: { name, city, savedAt, photos } }
-  visitPlan: 'campuslens.visitPlan',   // { [qid]: { items: { id, label, done, photoId? }[] } }
-  lang: 'campuslens.lang',
-} as const
-
-export interface SavedProfile { name: string; city?: string | null; savedAt: string; photos: number }
-export interface PlanItem { id: string; label: string; done: boolean; photoId?: string }
+import { KEYS, readRecord, type SavedProfile, type PlanItem } from './storage.ts'
+export { KEYS, type SavedProfile, type PlanItem } from './storage.ts'
 
 function read<T>(key: string, fallback: T): T {
-  try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback } catch { return fallback }
+  try { return readRecord(localStorage, key) as T } catch { return fallback }
 }
 function write(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* storage unavailable */ }
