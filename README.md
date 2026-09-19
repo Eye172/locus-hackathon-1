@@ -4,7 +4,7 @@
 
 LOCUS Startup Hackathon 2026 · кейс 1 «Визуальный профиль университета» · код сабмита `LOCUSCASE1`
 
-![Stanford University в CampusLense](docs/screens/05_3d_stanford.jpg)
+![MIT в CampusLense](docs/screens/06_3d_mit_close.jpg)
 
 Вы вводите название — планета разворачивается к вузу, камера ныряет сквозь облака и садится на фотореалистичный
 3D-кампус. Пока идёт перелёт, 20+ источников и ИИ-инспектор собирают профиль: кампус, общежития, аудитории,
@@ -47,7 +47,10 @@ LOCUS Startup Hackathon 2026 · кейс 1 «Визуальный профиль
 **Stanford University** — фотореалистичный 3D Google, корпуса и общежития подсвечены
 ![](docs/screens/05_3d_stanford.jpg)
 
-**MIT**
+**MIT вблизи** — Great Dome, корпуса по номерам, общежития, маршрут до центра
+![](docs/screens/06_3d_mit_close.jpg)
+
+**MIT и Бостон** — город фиксируется вокруг кампуса: Cambridge + Boston
 ![](docs/screens/06_3d_mit.jpg)
 
 | Nazarbayev University | Панель кампуса: центр, общежития, слои |

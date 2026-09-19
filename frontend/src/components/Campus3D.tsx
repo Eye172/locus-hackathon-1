@@ -514,6 +514,52 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     }
   }, [libs, hasBase, qid])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- right mouse drag tilts the view (up / down) and turns it (left / right), as in Google Earth. Google's own
+  // right-drag zooms, which the wheel and the touchpad already do: its events are stopped here, on their way down
+  // (capture phase), before they reach the map element
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    let drag: { x: number; y: number; tilt: number; heading: number; id: number } | null = null
+    const stop = (e: Event) => { e.stopPropagation(); e.preventDefault() }
+    const down = (e: PointerEvent) => {
+      const map = mapRef.current
+      if (e.button !== 2 || !map) return
+      stop(e)
+      introFinish.current?.()   // a gesture ends the arrival orbit, as a left drag does
+      map.stopCameraAnimation?.()
+      drag = { x: e.clientX, y: e.clientY, tilt: Number(map.tilt) || 0, heading: Number(map.heading) || 0, id: e.pointerId }
+      host.setPointerCapture?.(e.pointerId)
+    }
+    const move = (e: PointerEvent) => {
+      const map = mapRef.current
+      if (!drag || !map) return
+      stop(e)
+      map.tilt = Math.max(0, Math.min(80, drag.tilt + (drag.y - e.clientY) * 0.3))
+      map.heading = (drag.heading + (e.clientX - drag.x) * 0.3 + 360) % 360
+    }
+    const up = (e: PointerEvent) => {
+      if (!drag) return
+      stop(e)
+      host.releasePointerCapture?.(drag.id)
+      drag = null
+    }
+    const mouse = (e: MouseEvent) => { if (drag || e.button === 2) stop(e) }   // Google may listen to mouse events too
+    const opts = { capture: true }
+    host.addEventListener('pointerdown', down, opts)
+    host.addEventListener('pointermove', move, opts)
+    host.addEventListener('pointerup', up, opts)
+    host.addEventListener('pointercancel', up, opts)
+    for (const t of ['mousedown', 'mousemove', 'mouseup', 'contextmenu'] as const) host.addEventListener(t, mouse, opts)
+    return () => {
+      host.removeEventListener('pointerdown', down, opts)
+      host.removeEventListener('pointermove', move, opts)
+      host.removeEventListener('pointerup', up, opts)
+      host.removeEventListener('pointercancel', up, opts)
+      for (const t of ['mousedown', 'mousemove', 'mouseup', 'contextmenu'] as const) host.removeEventListener(t, mouse, opts)
+    }
+  }, [hasBase])
+
   useEffect(() => {
     if (!active || canFly) return
     if (steady) { setCanFly(true); return }
