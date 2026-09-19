@@ -39,3 +39,7 @@ backend/data/glb/
 backend/secrets/
 *-sa.json
 campuslens1-*.json
+
+# design scratch: downloaded third-party photos and screenshots of a rewound attempt
+docs/design/img/
+docs/design/shots/

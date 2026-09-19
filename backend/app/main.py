@@ -291,6 +291,16 @@ async def _advisor_sheet(qid: str, lang: str) -> dict:
     return sheet
 
 
+@app.get("/api/digest/{qid}")
+async def site_digest_endpoint(qid: str):
+    """Facts about the university from its official site and Wikipedia (sports, food, housing, clubs, costs...)."""
+    from .pipeline import site_digest
+    d = await site_digest.digest((await _profile_or_build(qid)).university, wait=90)
+    if d is None:
+        raise HTTPException(503, "digest not ready")
+    return d
+
+
 @app.get("/api/compare/sheets")
 async def compare_sheets(a: str, b: str, lang: str = Query("ru", pattern="^(ru|en|kk)$")):
     sa, sb = await asyncio.gather(_advisor_sheet(a, lang), _advisor_sheet(b, lang))
