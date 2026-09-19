@@ -91,6 +91,14 @@ function dotTemplate(layer: LayerKey, size = 26, ring = '#FFFFFF'): HTMLTemplate
   return t
 }
 
+/** A highlighted building. Where Google has its photo mesh the prism reaches 1.5 m over the mesh itself
+ *  (RELATIVE_TO_MESH): OSM heights there are often a 5 m default or plain wrong, and a prism of that height stayed
+ *  buried inside a 90 m tower - now it wraps the real building. Elsewhere: the OSM height over the ground. */
+function prism(ring: [number, number][], height: number | null | undefined, mesh: boolean) {
+  const alt = mesh ? 1.5 : (height ?? 12) + 0.6
+  return { path: ring.map(([la, lo]) => ({ lat: la, lng: lo, altitude: alt })), altitudeMode: mesh ? 'RELATIVE_TO_MESH' : 'RELATIVE_TO_GROUND' }
+}
+
 function plateEl(title: string, sub: string, accent: string): HTMLElement {
   const d = document.createElement('div')
   d.style.cssText = 'background:#FFFFFF;color:#0A0A0A;border-radius:14px;padding:9px 14px 10px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:280px;font-family:Inter,system-ui,sans-serif;pointer-events:none'
@@ -357,6 +365,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   // Google's 3D here: a real mesh, or flat satellite imagery on terrain (then the city gets grey buildings)
   const [surface, setSurface] = useState<'mesh' | 'flat' | null>(null)
   const greyReady = useRef(false)   // the grey city's nearest chunks are on the map
+  const mesh = surface === 'mesh'
   const surfaceRef = useRef(surface)
   useEffect(() => { surfaceRef.current = surface }, [surface])
   const steadyRef = useRef(steady)
@@ -1039,10 +1048,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     const drawn = all.length <= MAX_PRISMS ? all
       : [...all].sort((a, b) => Number(!!b.main) - Number(!!a.main) || b.area_m2 - a.area_m2).slice(0, MAX_PRISMS)
     for (const b of drawn) {
-      const h = (b.height ?? 12) + 0.6
       const el = new m3.Polygon3DInteractiveElement({
-        path: b.ring.map(([la, lo]) => ({ lat: la, lng: lo, altitude: h })), altitudeMode: 'RELATIVE_TO_GROUND', extruded: true,
-        fillColor: b.main ? 'rgba(34,211,238,0.55)' : 'rgba(34,211,238,0.30)', strokeColor: b.main ? '#FFFFFF' : c, strokeWidth: b.main ? 2 : 1,
+        ...prism(b.ring, b.height, mesh), extruded: true,
+        fillColor: b.main ? 'rgba(34,211,238,0.55)' : 'rgba(34,211,238,0.34)', strokeColor: b.main ? '#FFFFFF' : c, strokeWidth: b.main ? 2.5 : 1.5,
         drawsOccludedSegments: false,
       })
       el.addEventListener('gmp-click', () => select({
@@ -1063,7 +1071,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     plate.append(plateEl(name, bits.join(' · '), c))
     list.push(plate)
     setLayer('campus', list)
-  }, [libs, pack, mapGen, lang])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [libs, pack, mapGen, lang, mesh])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // dormitories: yellow prisms + markers
   useEffect(() => {
@@ -1072,11 +1080,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     const list: HTMLElement[] = []
     dormItems.forEach((d, i) => {
       if (d.building) {
-        const h = (d.building.height ?? 12) + 0.6
         const known = d.ownership !== 'unknown'
         const el = new m3.Polygon3DInteractiveElement({
-          path: d.building.ring.map(([la, lo]) => ({ lat: la, lng: lo, altitude: h })), altitudeMode: 'RELATIVE_TO_GROUND', extruded: true,
-          fillColor: known ? 'rgba(250,204,21,0.55)' : 'rgba(250,204,21,0.25)', strokeColor: '#FACC15', strokeWidth: known ? 2 : 1,
+          ...prism(d.building.ring, d.building.height, mesh), extruded: true,
+          fillColor: known ? 'rgba(250,204,21,0.55)' : 'rgba(250,204,21,0.3)', strokeColor: '#FACC15', strokeWidth: known ? 2.5 : 1.5,
         })
         el.addEventListener('gmp-click', () => select(d, false))
         list.push(el)
@@ -1092,7 +1099,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       list.push(mk)
     })
     setLayer('dorms', list)
-  }, [libs, dormItems, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [libs, dormItems, mapGen, mesh])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // city centre + route
   useEffect(() => {
@@ -1407,8 +1414,12 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         {active && (
           <>
             {/* the frosted glass under the transparent app header, bulging a little under the university block */}
-            <div className={`m3d-glass absolute z-20 top-0 inset-x-0 pointer-events-none ${tabBox ? 'has-tab' : ''}`}
-              style={tabBox ? { '--l': `${tabBox.l}px`, '--w': `${tabBox.w}px`, '--h': `${tabBox.h}px` } as CSSProperties : undefined} />
+            <div className="m3d-glass absolute z-20 top-0 inset-x-0 pointer-events-none" />
+            {/* the darker piece under the university block: its white text stays readable over bright imagery */}
+            {tabBox && (
+              <div className="m3d-glass-tab absolute z-20 top-0 inset-x-0 pointer-events-none"
+                style={{ '--l': `${tabBox.l}px`, '--w': `${tabBox.w}px`, '--h': `${tabBox.h}px`, '--bg': 'rgba(11,15,26,0.58)' } as CSSProperties} />
+            )}
             {/* the university, in brief, in the middle of the app header - a little taller than it, hence the bulge;
                 the whole block opens the full profile */}
             {centerSlot && createPortal(
