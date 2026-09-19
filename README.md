@@ -13,7 +13,7 @@ LOCUS Startup Hackathon 2026 · кейс 1 «Визуальный профиль
 
 | | |
 |---|---|
-| **Рабочий продукт** | _ссылка на сайт — вписать перед сабмитом_ · локальный запуск — [ниже](#запуск) |
+| **Рабочий продукт** | **[pip00sya--campuslense-web.modal.run](https://pip00sya--campuslense-web.modal.run)** — без входа и оплаты · локальный запуск — [ниже](#запуск) |
 | **Репозиторий** | [Eye172/locus-hackathon-1](https://github.com/Eye172/locus-hackathon-1) (`main`) · зеркало [pip00sya/locus](https://github.com/pip00sya/locus) (`master`) |
 | **Демо-видео** | [`docs/video/demo.mp4`](docs/video/demo.mp4) |
 | **Презентация** | [`docs/pitch/CampusLens.pdf`](docs/pitch/CampusLens.pdf) |
@@ -216,7 +216,7 @@ LOCUS Startup Hackathon 2026 · кейс 1 «Визуальный профиль
 
 ## Тестовый сценарий для жюри
 
-1. Откройте сайт и введите вуз, которого нет в демо, например «ETH Zürich», «University of Malta», «Kyrgyz State
+1. Откройте [pip00sya--campuslense-web.modal.run](https://pip00sya--campuslense-web.modal.run) и введите вуз, которого нет в демо, например «ETH Zürich», «University of Malta», «Kyrgyz State
    Technical University». Выберите кандидата.
 2. Посмотрите перелёт и 3D-кампус. Карточка вуза вверху сцены открывает профиль, время сбора видно под галереей
    («Собрано за N с»).

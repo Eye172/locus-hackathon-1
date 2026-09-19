@@ -1,4 +1,24 @@
-# Деплой
+# Развёртывание CampusLense
+
+## Рабочий сайт: Modal
+
+**https://pip00sya--campuslense-web.modal.run** — бэкенд и собранный фронтенд в одном контейнере (`deploy/modal_app.py`), кэш профилей и превью — в
+Modal Volume `campuslens-data`, один контейнер держится тёплым (`MIN_CONTAINERS=1`), чтобы у жюри не было холодного старта.
+
+```bash
+pip install modal && modal token new          # один раз, вход через браузер
+cd frontend && npm run build && cd ..         # приложение, которое отдаёт контейнер
+modal deploy deploy/modal_app.py              # образ: Python 3.12, torch CPU, CLIP, ffmpeg
+# сохранённые профили и превью (необязательно: без них вузы собираются вживую)
+modal volume put campuslens-data <slim.sqlite3> /campuslens.sqlite3 --force
+modal volume put campuslens-data backend/data/thumbs /thumbs --force
+```
+
+Ключи берутся из `backend/.env` и `backend/secrets/vertex-sa.json` при деплое и хранятся как Modal Secret, в образ
+они не попадают. Ключ Google Maps для браузера (`VITE_GOOGLE_MAPS_3D_KEY`) встраивается в сборку фронтенда.
+
+## Другие варианты
+
 
 ## Вариант A: один Space на Hugging Face (бэкенд + фронтенд + прогретый кэш)
 
