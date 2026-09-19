@@ -18,16 +18,21 @@ export const BLUE_MARBLE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/B
 
 const warmed = new Set<string>()
 const keep: HTMLImageElement[] = []  // hold references so the browser does not drop in-flight loads
-function warm(url: string): boolean {
-  if (warmed.has(url)) return false
+const inflight = new globalThis.Map<string, Promise<void>>()
+/** Start loading a tile into the HTTP cache; the promise settles when it has arrived (or failed). */
+function warm(url: string): Promise<void> | null {
+  if (warmed.has(url)) return inflight.get(url) ?? null
   warmed.add(url)
   const im = new Image()
   im.crossOrigin = 'anonymous'  // same request mode as the map's own tile requests, so the cache entry is reused
   im.decoding = 'async'
+  const done = new Promise<void>((res) => { im.onload = () => res(); im.onerror = () => res() })
+  inflight.set(url, done)
+  done.then(() => inflight.delete(url))
   im.src = url
   keep.push(im)
-  if (keep.length > 800) keep.splice(0, keep.length - 800)
-  return true
+  if (keep.length > 1200) keep.splice(0, keep.length - 1200)
+  return done
 }
 const tileUrl = (tpl: string, z: number, x: number, y: number) => tpl.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x))
 
@@ -54,9 +59,12 @@ function tileXY(lat: number, lon: number, z: number): [number, number] {
 }
 
 /** Warm exactly the imagery a scripted camera path will show: for each sample, the tiles around the view centre at the
- *  raster level MapLibre picks for 256-px tiles (round(zoom + 1)). Blue Marble up to map zoom 7.5, Esri from zoom 4. */
-export function prefetchPath(samples: { lat: number; lon: number; zoom: number }[], view: { w: number; h: number }, cap = 380): number {
+ *  raster level MapLibre picks for 256-px tiles (round(zoom + 1)). Blue Marble up to map zoom 7.5, Esri from zoom 4.
+ *  Settles when every tile it started (or was already loading) has arrived. */
+export function prefetchPath(samples: { lat: number; lon: number; zoom: number }[], view: { w: number; h: number }, cap = 600): Promise<void> {
   let n = 0
+  const loads: Promise<void>[] = []
+  const add = (p: Promise<void> | null) => { if (p) loads.push(p); return ++n >= cap }
   for (const s of samples) {
     const z = Math.round(s.zoom + 1)
     if (z < 5) continue                                   // levels 0–4 come from prefetchPlanet
@@ -71,12 +79,12 @@ export function prefetchPath(samples: { lat: number; lon: number; zoom: number }
         const y = cy + dy
         if (y < 0 || y >= N) continue
         for (let dx = -hw; dx <= hw; dx++) {
-          if (warm(tileUrl(tpl, z, (((cx + dx) % N) + N) % N, y)) && ++n >= cap) return n
+          if (add(warm(tileUrl(tpl, z, (((cx + dx) % N) + N) % N, y)))) return Promise.all(loads).then(() => {})
         }
       }
     }
   }
-  return n
+  return Promise.all(loads).then(() => {})
 }
 const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 

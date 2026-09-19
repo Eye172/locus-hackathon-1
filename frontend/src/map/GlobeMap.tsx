@@ -5,6 +5,9 @@ type MapMouseEvent = MapLayerMouseEvent
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { prefetchPath, prefetchPlanet, loadSatelliteStyle } from './darkTheme'
 
+/** How long a flight may wait for the imagery along its path before the camera starts moving. */
+const TILE_WAIT_MS = 900
+
 export interface HoverInfo { qid: string; name: string; name_en: string; city?: string; c: string; x: number; y: number; lon: number; lat: number }
 export interface GlobeHandle {
   flyToUniversity: (lat: number, lon: number) => Promise<void>
@@ -102,7 +105,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
   const mapRef = useRef<Map | null>(null)
   const spinning = useRef(true)
   const markersOn = useRef(true)
-  const motion = useRef(0)  // rAF id of the scripted camera move (turn + approach)
+  const motion = useRef(0)  // rAF id of the scripted camera move (turn + approach); -1 while its tiles load
+  const flightSeq = useRef(0)
   const resetTimers = useRef<number[]>([])
   const peekTimer = useRef<number | undefined>(undefined)
   const idleTimer = useRef<number | undefined>(undefined)
@@ -303,7 +307,10 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       const { top = 0, bottom = 0, left = 0, right = 0 } = map.getPadding(), pad0 = { top, bottom, left, right }
       const plan = planSpiral(map.getCenter(), map.getZoom(), lat, lon, zTarget)
       const canvas = map.getCanvas()
-      prefetchPath(plan.samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
+      // the imagery along the path is loaded before the camera moves (at most TILE_WAIT_MS): otherwise the country
+      // tiles come in dark, before the eyes, while the camera is already over them
+      const tilesReady = Promise.race([prefetchPath(plan.samples(), { w: canvas.clientWidth, h: canvas.clientHeight }),
+        new Promise<void>((res) => window.setTimeout(res, TILE_WAIT_MS))])
       const approachStart = Math.max(0, plan.total - approachMs)
       let fired = false
       let t0 = -1
@@ -329,7 +336,9 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         if (el >= approachStart) fire()
         motion.current = el < plan.total ? requestAnimationFrame(step) : 0
       }
-      motion.current = requestAnimationFrame(step)
+      const flight = ++flightSeq.current
+      motion.current = -1   // busy while the tiles load: peekAt and the idle spin keep off the camera
+      void tilesReady.then(() => { if (flight === flightSeq.current && motion.current === -1) motion.current = requestAnimationFrame(step) })
     },
     getMap: () => mapRef.current,
     peekAt: (lat, lon) => {
@@ -340,7 +349,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       // at home the disc keeps its size (MapLibre would scale it by 1/cos of the new latitude)
       map.easeTo({ center: [lon, lat], zoom: atHome.current ? homeView(map, lat).zoom : undefined, duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
       const canvas = map.getCanvas()
-      prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight }, 260)
+      prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
       window.clearTimeout(peekTimer.current)
       peekTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 9000)
     },
