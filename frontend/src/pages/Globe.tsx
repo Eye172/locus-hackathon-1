@@ -36,6 +36,7 @@ export default function Globe() {
   const [progress, setProgress] = useState<{ sources: number; photos: number; done: boolean } | null>(null)
   const peekSeq = useRef(0)
   const [dive, setDive] = useState(false)
+  const [diveHold, setDiveHold] = useState(false)   // the Google scene under the clouds is still loading
   const [diveRun, setDiveRun] = useState(0)
   const diveTarget = useRef<[number, number] | null>(null)
   const revealTimer = useRef<number | undefined>(undefined)
@@ -43,6 +44,7 @@ export default function Globe() {
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
   const coords = useRef<Map<string, [number, number]>>(new Map())
   const [g3d, setG3d] = useState<{ qid: string; active: boolean; at?: { lat: number; lng: number } } | null>(null)
+  const g3dReadyFor = useRef<string | null>(null)
   const landed = useRef(false)  // the planet map has jumped to the campus (only needed when the Google scene is not used)
   const g3dRef = useRef(g3d)
   useEffect(() => { g3dRef.current = g3d }, [g3d])
@@ -106,6 +108,7 @@ export default function Globe() {
     landed.current = false
     g3dRef.current = next
     setG3d(next)
+    setDiveHold(!!next && g3dReadyFor.current !== qid)   // /?u= mounts the scene before the flight: it may be ready already
     setProgress(null)
     api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos, 6, p.cover))).catch(() => {
       const pool = new Map<string, Photo>()
@@ -198,7 +201,9 @@ export default function Globe() {
     if (!target) return
     for (const p of heroPhotos.slice(0, 2)) { new Image().src = heroUrl(target.qid, p.id, p.url); new Image().src = depthUrl(p.id) }
   }, [heroPhotos, target])
+  const onG3dReady = useCallback(() => { g3dReadyFor.current = g3dRef.current?.qid ?? null; setDiveHold(false) }, [])
   const onG3dUnavailable = useCallback(() => {
+    setDiveHold(false)
     const was = g3dRef.current
     g3dRef.current = null
     setG3d(null)
@@ -209,7 +214,7 @@ export default function Globe() {
     }
   }, [])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; g3dReadyFor.current = null; setDiveHold(false); globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
 
   return (
     // the transparent header is fixed over the globe, so the page is the full viewport: one pixel more and it scrolls,
@@ -226,10 +231,10 @@ export default function Globe() {
         <Suspense fallback={null}>
           <Campus3D qid={g3d.qid} variant="arrival" active={g3d.active} start={g3d.at} onOpenProfile={openProfile} onBack={back}
             onPhotos={heroPhotos.length > 0 ? () => setReveal(true) : undefined} onUnavailable={onG3dUnavailable}
-            collecting={progress && !progress.done ? { photos: progress.photos } : null} />
+            collecting={progress && !progress.done ? { photos: progress.photos } : null} onSceneReady={onG3dReady} />
         </Suspense>
       )}
-      <CloudDive run={diveRun} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />
+      <CloudDive run={diveRun} hold={diveHold} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(5,7,15,0.55)_100%)]" />
 
       {phase === 'idle' && (

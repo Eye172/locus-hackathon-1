@@ -65,13 +65,20 @@ interface GLState { gl: WebGLRenderingContext; uRes: WebGLUniformLocation | null
  * nothing — the first run used to freeze the page for ~0.6 s exactly when the approach began. `run` > 0 starts a dive;
  * a new value restarts it; 0 stops and hides it.
  */
-export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
-  { run: number; duration?: number; onMid?: () => void; onWhite?: () => void; onDone?: () => void }) {
+const HOLD_AT = 0.8  // the deck is closed and still flying past, the white-out has not begun
+
+export function CloudDive({ run, duration = 6200, hold = false, maxHoldMs = 6000, onMid, onWhite, onDone }:
+  { run: number; duration?: number
+    /** the scene behind is not ready: the dive stays inside the clouds (they keep flying) until this goes false, at most maxHoldMs */
+    hold?: boolean; maxHoldMs?: number
+    onMid?: () => void; onWhite?: () => void; onDone?: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const glRef = useRef<GLState | null>(null)
   const cb = useRef({ onMid, onWhite, onDone })
   cb.current = { onMid, onWhite, onDone }
+  const holdRef = useRef(hold)
+  holdRef.current = hold
 
   // one-time setup + warm-up
   useEffect(() => {
@@ -123,15 +130,21 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
       return () => { window.clearTimeout(a); window.clearTimeout(b); window.clearTimeout(d) }
     }
     const { gl } = st
+    let clock = 0, last = t0, held = 0   // the dive's own clock: it stops while the dive is held inside the clouds
     const draw = () => {
-      const el = Math.max(0, performance.now() - t0)
+      const now = performance.now()
+      const dt = Math.max(0, now - last)
+      last = now
+      if (holdRef.current && clock >= duration * HOLD_AT && held < maxHoldMs) held += dt
+      else clock += dt
+      const el = clock
       const p = Math.min(1, el / duration)
       if (p >= 0.26) {  // nothing is visible before the clouds arrive: do not spend GPU time during the approach
         if (!shown) { shown = true; w.style.opacity = '1' }
         const tail = Math.max(0, (el - duration) / 900)          // dissolve after the white-out
         w.style.opacity = String(Math.max(0, 1 - tail))
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT)
-        gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, el / 1000); gl.uniform1f(st.uP, p)
+        gl.uniform2f(st.uRes, c.width, c.height); gl.uniform1f(st.uT, (now - t0) / 1000); gl.uniform1f(st.uP, p)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
         if (tail >= 1) { finish(); return }
       }
@@ -141,7 +154,7 @@ export function CloudDive({ run, duration = 6200, onMid, onWhite, onDone }:
     }
     raf = requestAnimationFrame(draw)
     return () => { cancelAnimationFrame(raf); w.style.opacity = '0' }
-  }, [run, duration])
+  }, [run, duration, maxHoldMs])
 
   return (
     <div ref={wrap} className="absolute inset-0 z-30 pointer-events-none" style={{ opacity: 0 }}>

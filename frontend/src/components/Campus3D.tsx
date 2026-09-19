@@ -24,7 +24,7 @@ import { placeLang, uniName, useLang, useT } from '../lib/i18n'
 import type { Lang } from '../lib/i18n'
 import { SearchBox } from './SearchBox'
 import {
-  GOOGLE_3D_KEY, computeRoute, earthDataSince, earthSurfaceSince, groundHeight, haversineM, loadGoogle3D, nearbyPlaces, onGoogleAuthError,
+  GOOGLE_3D_KEY, computeRoute, earthDataSince, earthLoadedSince, earthSurfaceSince, groundHeight, haversineM, loadGoogle3D, nearbyPlaces, onGoogleAuthError,
   placesQuota, rangeFor, textPlaces, walkMinutes,
 } from '../lib/gmaps'
 import type { GRoute, GoogleLibs, LatLng, PlaceGroup } from '../lib/gmaps'
@@ -256,7 +256,7 @@ function turnAt(t: number, a = 0.14, b = 0.22): number {
   return (a / 2 + (1 - b - a) + b / 2 - (r * r) / (2 * b)) / total
 }
 const ALWAYS_ON = new Set(['sel', 'city', 'grey'])  // element groups that are not user layers
-const LS_SURFACE = 'campuslens.surface2.'  // + qid: 'mesh' | 'flat', what Google's 3D map is at this campus
+const LS_SURFACE = 'campuslens.surface3.'  // + qid: 'mesh' | 'flat', what Google's 3D map is at this campus
 // grey buildings where Google is flat: the backend's z14 building tiles (~1.5-2.4 km) list their non-empty z16 chunks
 // (~0.4-0.6 km); each chunk is one model. Chunks, not tiles: the map culls a model by its origin alone, so a tile-sized
 // model vanished while its buildings were still in the foreground.
@@ -306,9 +306,11 @@ export interface Campus3DProps {
   start?: LatLng
   /** arrival: the profile is still being built - its photos keep coming while the map is open */
   collecting?: { photos: number } | null
+  /** arrival: the hidden scene has loaded well enough to be shown (the cloud dive is held until then) */
+  onSceneReady?: () => void
 }
 
-export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, onBack, onPhotos, onUnavailable, start, collecting }: Campus3DProps) {
+export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, onBack, onPhotos, onUnavailable, start, collecting, onSceneReady }: Campus3DProps) {
   const arrival = variant === 'arrival'
   const nav = useNavigate()
   const lang = useLang()
@@ -354,6 +356,13 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   const createdAt = useRef(0)
   // Google's 3D here: a real mesh, or flat satellite imagery on terrain (then the city gets grey buildings)
   const [surface, setSurface] = useState<'mesh' | 'flat' | null>(null)
+  const greyReady = useRef(false)   // the grey city's nearest chunks are on the map
+  const surfaceRef = useRef(surface)
+  useEffect(() => { surfaceRef.current = surface }, [surface])
+  const steadyRef = useRef(steady)
+  useEffect(() => { steadyRef.current = steady }, [steady])
+  const sceneReadyCb = useRef(onSceneReady)
+  sceneReadyCb.current = onSceneReady
   useEffect(() => { introRef.current = intro }, [intro])
   const onRef = useRef(on)
   useEffect(() => { onRef.current = on }, [on])
@@ -868,6 +877,25 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     return () => window.clearTimeout(timer)
   }, [mapGen, active])
 
+  // ---- arrival: tell the page when the hidden scene is worth showing - the cloud dive waits inside the clouds for it
+  // (the dive caps the wait). Enough detailed Earth nodes for the opening view (or the map says it is steady, or its
+  // downloads went quiet), and on a flat place the nearest grey buildings too.
+  useEffect(() => {
+    if (!arrival || !mapRef.current || active) return
+    const since = createdAt.current
+    let flatSince = 0
+    const timer = window.setInterval(() => {
+      const loaded = earthLoadedSince(since)
+      let ok = loaded === null || loaded || (steadyRef.current && earthDataSince(since) === true)
+      if (ok && surfaceRef.current === 'flat' && !greyReady.current) {
+        flatSince ||= performance.now()
+        ok = performance.now() - flatSince > 3500   // the grey city gets this long after the ground is in
+      }
+      if (ok) { window.clearInterval(timer); sceneReadyCb.current?.() }
+    }, 150)
+    return () => window.clearInterval(timer)
+  }, [mapGen, active])  // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---- real 3D or flat here? Read from what the renderer downloads around the campus (lib/gmaps.ts), remembered per
   // university: a revisit may be served from the renderer's cache and download nothing to judge by
   useEffect(() => {
@@ -877,14 +905,18 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     setSurface(known)
     const since = createdAt.current
     let tries = 0
+    let said: 'mesh' | 'flat' | null = null
+    // only one of the two maps is ever on, and Google's real 3D has priority: 'flat' is not final - a mesh that shows
+    // up later (a slow start, a stale remembered verdict) switches the grey city off for good
     const timer = window.setInterval(() => {
       const s = earthSurfaceSince(since)
-      if (s) {
+      if (s && s !== said) {
+        said = s
         setSurface(s)
         try { localStorage.setItem(LS_SURFACE + qid, s) } catch { /* storage unavailable */ }
       }
-      if (s || ++tries > 80) window.clearInterval(timer)   // up to a minute: a phone got its first detailed nodes at ~20 s
-    }, 750)
+      if (s === 'mesh' || ++tries > 300) window.clearInterval(timer)   // two minutes: a phone got its first detailed nodes at ~20 s
+    }, 400)
     return () => window.clearInterval(timer)
   }, [mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -898,8 +930,26 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     let alive = true
     const indexes = new Map<string, [number, number, number][] | null>()   // z14 tile -> its chunks (null: asked)
     const models = new Map<string, { el: HTMLElement; at: LatLng }>()
+    const failed = new Map<string, number>()
+    let asking = 0
     let timer = 0
     let last = 0
+    greyReady.current = false
+    // the server builds a tile's models on the first ask (seconds): the tile under the camera goes first, three at a
+    // time - asked all at once, the campus's own tile waited behind twenty others
+    const ask = (x: number, y: number, tkey: string) => {
+      asking++
+      indexes.set(tkey, null)
+      fetch(`${API_BASE}/api/map3d/${encodeURIComponent(qid)}/grey/${x}/${y}.json`)
+        .then((r) => { if (!r.ok && r.status !== 400) throw new Error(String(r.status)); return r.ok ? r.json() : { chunks: [] } })
+        .then((j) => { indexes.set(tkey, j.chunks ?? []) })
+        .catch(() => {
+          const n = (failed.get(tkey) ?? 0) + 1
+          failed.set(tkey, n)
+          if (n < 3) indexes.delete(tkey); else indexes.set(tkey, [])   // asked again on a later pass
+        })
+        .finally(() => { asking--; if (alive) schedule(indexes.has(tkey) ? 0 : 1500) })
+    }
     const update = () => {
       timer = 0
       last = performance.now()
@@ -908,6 +958,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       if (!c || !range) return
       const reach = Math.min(GREY_MAX_REACH_M, Math.max(1200, range * 1.1))
       const want: { key: string; x: number; y: number; at: LatLng; d: number }[] = []
+      const missing: { x: number; y: number; tkey: string; d: number }[] = []
       if (range <= GREY_MAX_RANGE_M) {
         const [tx, ty] = greyTileOf(c, GREY_TILE_Z)
         const side = greyTileSide(c.lat, GREY_TILE_Z)
@@ -916,15 +967,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         for (let dx = -k; dx <= k; dx++) {
           for (let dy = -k; dy <= k; dy++) {
             const x = tx + dx, y = ty + dy, tkey = `${x}/${y}`
-            if (haversineM(c, greyTileCenter(x, y, GREY_TILE_Z)) > reach + side * 0.71) continue
-            if (!indexes.has(tkey)) {   // which chunks of this tile have buildings (the server builds them on the first ask)
-              indexes.set(tkey, null)
-              fetch(`${API_BASE}/api/map3d/${encodeURIComponent(qid)}/grey/${x}/${y}.json`)
-                .then((r) => (r.ok ? r.json() : { chunks: [] }))
-                .then((j) => { indexes.set(tkey, j.chunks ?? []); if (alive) schedule() })
-                .catch(() => indexes.set(tkey, []))
-              continue
-            }
+            const dTile = haversineM(c, greyTileCenter(x, y, GREY_TILE_Z))
+            if (dTile > reach + side * 0.71) continue
+            if (!indexes.has(tkey)) { missing.push({ x, y, tkey, d: dTile }); continue }   // which chunks of this tile have buildings
             for (const [cx, cy] of indexes.get(tkey) ?? []) {
               const at = greyTileCenter(cx, cy, GREY_CHUNK_Z)
               const d = haversineM(c, at)
@@ -933,6 +978,8 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
           }
         }
         want.sort((a, b) => a.d - b.d)
+        missing.sort((a, b) => a.d - b.d)
+        for (const m of missing) { if (asking >= 3) break; ask(m.x, m.y, m.tkey) }
       }
       let added = 0
       for (const t of want.slice(0, GREY_MAX_MODELS)) {
@@ -955,6 +1002,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         models.delete(key)
       }
       els.current.grey = [...models.values()].map((m) => m.el)
+      // shown from under the clouds with its buildings already standing: the nearest chunks are on the map
+      // (the tile under the camera has answered; the tiles around it may still be on their way)
+      const under = indexes.get(greyTileOf(c, GREY_TILE_Z).join('/'))
+      if ((under || range > GREY_MAX_RANGE_M) && models.size >= Math.min(8, want.length)) greyReady.current = true
     }
     function schedule(ms = 600) { if (!timer) timer = window.setTimeout(update, Math.max(0, ms - (performance.now() - last))) }
     const onMove = () => schedule()

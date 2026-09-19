@@ -88,6 +88,7 @@ const earthNodes: EarthNode[] = []
 const earthAny: number[] = []   // start times of every Earth data request (metadata included)
 let watchingNodes = false
 let nodesObserved = false       // the observer really runs: only then can "no data" be told from "cannot see"
+let lastEarthAt = 0             // when the last Earth download finished (performance.now())
 function watchEarthNodes() {
   if (watchingNodes || typeof PerformanceObserver === 'undefined') return
   watchingNodes = true
@@ -99,6 +100,7 @@ function watchEarthNodes() {
         const status = (e as PerformanceResourceTiming & { responseStatus?: number }).responseStatus
         if (status !== undefined && (status < 200 || status >= 400)) continue
         earthAny.push(e.startTime)
+        lastEarthAt = performance.now()
         const m = /\/rt\/earth\/NodeData\/pb=!1m2!1s([0-7]+)!2u\d+!2e\d+(!3u\d+)?/.exec(e.name)
         if (m) earthNodes.push({ t: e.startTime, depth: m[1].length, mesh: !m[2] })
       }
@@ -130,7 +132,22 @@ export function earthSurfaceSince(since: number, minNodes = 40): 'mesh' | 'flat'
     if (n.depth >= 16) deep++
   }
   if (mesh >= 6 && mesh / city >= 0.02) return 'mesh'
-  return deep < minNodes ? null : 'flat'
+  // early: where Google has a mesh the first city-scale nodes already are mesh, so 16 of them without one is a flat
+  // place. A later mesh node still wins - the caller keeps asking and drops the grey city then.
+  return deep >= minNodes || (city >= 16 && mesh === 0) ? 'flat' : null
+}
+
+/** Is the scene around the camera loaded well enough to be shown (the cloud dive waits for it)? Enough detailed nodes,
+ *  or the downloads have gone quiet. null when this browser cannot tell. */
+export function earthLoadedSince(since: number, deepNodes = 120, quietMs = 900): boolean | null {
+  if (!nodesObserved) return null
+  let any = 0, deep = 0
+  for (const n of earthNodes) {
+    if (n.t < since) continue
+    any++
+    if (n.depth >= 16) deep++
+  }
+  return deep >= deepNodes || (any >= 30 && performance.now() - lastEarthAt > quietMs)
 }
 
 export function loadGoogle3D(lang: string): Promise<GoogleLibs> {
