@@ -55,7 +55,7 @@ def _glb(meshes: list[dict]) -> bytes:
                           "emissiveFactor": list(m.get("glow", (0.0, 0.0, 0.0)))})
         prims.append({"attributes": {"POSITION": a_pos, "NORMAL": a_pos + 1}, "indices": a_pos + 2, "material": len(materials) - 1})
     body = b"".join(bin_parts)
-    gltf = {"asset": {"version": "2.0", "generator": "CampusLens"}, "scene": 0, "scenes": [{"nodes": [0]}],
+    gltf = {"asset": {"version": "2.0", "generator": "CampusLense"}, "scene": 0, "scenes": [{"nodes": [0]}],
             "nodes": [{"mesh": 0}], "meshes": [{"primitives": prims}], "materials": materials,
             "accessors": accessors, "bufferViews": views, "buffers": [{"byteLength": len(body)}]}
     js = json.dumps(gltf, separators=(",", ":")).encode()

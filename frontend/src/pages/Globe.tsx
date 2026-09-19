@@ -9,15 +9,14 @@ import { SearchBox } from '../components/SearchBox'
 import { api, streamProfile, thumbUrl } from '../lib/api'
 import type { Candidate, Photo } from '../lib/types'
 import { CampusReveal, depthUrl, heroUrl, pickHero } from '../components/CampusReveal'
-import { useLang, useT } from '../lib/i18n'
-import { GOOGLE_3D_KEY } from '../lib/gmaps'
+import { uniName, useLang, useT } from '../lib/i18n'
+import { GOOGLE_3D_KEY, loadGoogle3D } from '../lib/gmaps'
 
 // after the cloud dive: Google photorealistic 3D, an orbit of the campus, then the map locked to the city
 const Campus3D = lazy(() => import('../components/Campus3D'))
 
 interface Country { qid: string; iso: string; ru: string; en: string; kk: string; count: number; center: number[]; bbox: number[] }
 const QUICK = ['KZ', 'KG', 'UZ', 'RU', 'CN', 'US', 'GB', 'DE']
-const FLAG: Record<string, string> = { KZ: '🇰🇿', KG: '🇰🇬', UZ: '🇺🇿', RU: '🇷🇺', CN: '🇨🇳', US: '🇺🇸', GB: '🇬🇧', DE: '🇩🇪' }
 
 export default function Globe() {
   const t = useT()
@@ -43,7 +42,8 @@ export default function Globe() {
   const openProfile = async () => { if (!target) return; const src = await hasCutscene(target.qid); if (src) setCutscene(src); else nav(`/u/${target.qid}`) }
   const [target, setTarget] = useState<{ qid: string; name: string; city?: string | null; photos?: { id: string; thumb: string }[] } | null>(null)
   const coords = useRef<Map<string, [number, number]>>(new Map())
-  const [g3d, setG3d] = useState<{ qid: string; active: boolean } | null>(null)
+  const [g3d, setG3d] = useState<{ qid: string; active: boolean; at?: { lat: number; lng: number } } | null>(null)
+  const landed = useRef(false)  // the planet map has jumped to the campus (only needed when the Google scene is not used)
   const g3dRef = useRef(g3d)
   useEffect(() => { g3dRef.current = g3d }, [g3d])
   const autoTimer = useRef<number | undefined>(undefined)
@@ -78,6 +78,16 @@ export default function Globe() {
     return () => window.clearTimeout(autoTimer.current)
   }, [])
 
+  // the Google 3D scene's code and libraries are fetched ahead of the first pick (after the opening shot, or at once
+  // when the page opens straight into a flight): the 3D map can then start loading the moment a university is chosen,
+  // not ~2 s into the flight. Loading the script is free; a map is billed only when one is created.
+  useEffect(() => {
+    if (!GOOGLE_3D_KEY) return
+    const warm = () => { loadGoogle3D(lang).catch(() => {}); import('../components/Campus3D').catch(() => {}) }
+    const timer = window.setTimeout(warm, params.get('u') ? 0 : 4200)
+    return () => window.clearTimeout(timer)
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
   const goTo = async (qid: string, name: string, city?: string | null) => {
     let c = coords.current.get(qid)
     const mini = api.mini(qid).catch(() => null)
@@ -92,22 +102,23 @@ export default function Globe() {
     // the arrival scene needs photos: the cached profile answers at once, otherwise the live stream feeds it as it goes
     stopStream.current?.(); setHeroPhotos([]); setReveal(false); window.clearTimeout(revealTimer.current)
     // the Google 3D scene mounts hidden right away: its tiles load during the spin and the clouds
-    const next = GOOGLE_3D_KEY ? { qid, active: false } : null
+    const next = GOOGLE_3D_KEY ? { qid, active: false, at: { lat: c[1], lng: c[0] } } : null
+    landed.current = false
     g3dRef.current = next
     setG3d(next)
     setProgress(null)
-    api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos))).catch(() => {
+    api.profile(qid).then((p) => setHeroPhotos(pickHero(p.photos, 6, p.cover))).catch(() => {
       const pool = new Map<string, Photo>()
       let sources = 0
       setProgress({ sources: 0, photos: 0, done: false })
       stopStream.current = streamProfile(qid, false, {
         onSource: (_n, s) => { if (s.status === 'done' || s.status === 'skipped' || s.status === 'error') { sources++; setProgress((p) => p && { ...p, sources }) } },
         onPhotos: (_s, photos) => { for (const p of photos) pool.set(p.id, p); const hero = pickHero([...pool.values()]); setHeroPhotos(hero); setProgress((p) => p && { ...p, photos: pool.size }) },
-        onProfile: (p) => { setHeroPhotos(pickHero(p.photos)); setProgress((x) => x && { ...x, done: true }) },
+        onProfile: (p, _cached, final) => { setHeroPhotos(pickHero(p.photos, 6, p.cover)); setProgress((x) => x && { ...x, photos: Math.max(x.photos, p.photos.length), done: final }) },
         onError: () => setProgress((x) => x && { ...x, done: true }),
       })
     })
-    mini.then((m) => { if (m) setTarget((t) => (t && t.qid === qid ? { ...t, name: m.name || t.name, city: m.city ?? t.city, photos: m.profile?.photos } : t)) })
+    mini.then((m) => { if (m) setTarget((t) => (t && t.qid === qid ? { ...t, name: uniName(m, lang) || t.name, city: m.city ?? t.city, photos: m.profile?.photos } : t)) })
     // 1. the planet turns to the university (space view)  2. the cloud dive covers the screen while the map zooms
     // 3. inside the white-out the map jumps to the campus  4. clouds clear, buildings rise  5. the arrival scene
     diveTarget.current = [c[1], c[0]]
@@ -121,6 +132,8 @@ export default function Globe() {
     const u = params.get('u')
     if (!u) return
     setPhase('flying')  // no title and search box on the way
+    // the Google scene starts loading now, not after the planet's style and the first camera move
+    if (GOOGLE_3D_KEY) { const early = { qid: u, active: false }; g3dRef.current = early; setG3d(early) }
     const mini = api.mini(u).catch(() => null)
     let timer = 0, dead = false
     const go = async () => {
@@ -128,16 +141,24 @@ export default function Globe() {
       // the 2.4 MB universities layer and every tile, ~4 s cold, all spent looking at a still planet
       if (!globe.current?.getMap()?.getLayer('unis-point')) { timer = window.setTimeout(go, 100); return }
       const m = await mini
-      if (!dead) goTo(u, m?.name || u, m?.city)
+      if (!dead) goTo(u, m ? uniName(m, lang) : u, m?.city)
     }
     go()
     return () => { dead = true; window.clearTimeout(timer) }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   const heroRef = useRef<Photo[]>([])
   useEffect(() => { heroRef.current = heroPhotos }, [heroPhotos])
-  const onDiveMid = useCallback(() => {
+  const landPlanet = () => {
     const d = diveTarget.current
-    if (d) globe.current?.landAt(d[0], d[1])
+    if (!d || landed.current) return
+    landed.current = true
+    globe.current?.landAt(d[0], d[1])
+  }
+  const onDiveMid = useCallback(() => {
+    // with the Google scene on its way the planet map stays where it is: its jump to the campus (street-level imagery,
+    // vector tiles, 3D buildings) was ~300 requests and a 150 ms stall spent on a view nobody sees - it happens only if
+    // Google turns out to be unavailable
+    if (!g3dRef.current) landPlanet()
     if (heroRef.current.length > 0 && !g3dRef.current) setRevealArmed(true)  // mount the scene hidden now: GL setup happens under the clouds
   }, [])
   // white-out complete: the campus photo takes over directly (the map with its boxes stays behind the «3D map» button);
@@ -181,6 +202,7 @@ export default function Globe() {
     const was = g3dRef.current
     g3dRef.current = null
     setG3d(null)
+    landPlanet()
     if (was?.active) {
       if (heroRef.current.length > 0) setReveal(true)
       else globe.current?.riseBuildings()
@@ -194,13 +216,17 @@ export default function Globe() {
     // and the scrollbar that appears narrows the map by 15 px mid-load. dvh: on phones 100vh includes the address bar
     <div ref={pageRef} className="relative min-h-[560px] overflow-hidden text-white globe-page" style={{ height: '100dvh' }}>
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
-      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, h.name, h.city)} onZoom={setZoom} inset={inset}
+      {/* under the Google scene the planet, its stars and clouds are not painted at all */}
+      <div className="absolute inset-0" style={{ visibility: g3d?.active ? 'hidden' : 'visible' }}>
+      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, lang === 'en' ? h.name_en : h.name, h.city)} onZoom={setZoom} inset={inset}
         onTitleOverlap={setTitleHidden} />
       <Clouds zoom={dive ? 0 : zoom} />
-      {g3d && target && (
+      </div>
+      {g3d && (
         <Suspense fallback={null}>
-          <Campus3D qid={g3d.qid} variant="arrival" active={g3d.active} onOpenProfile={openProfile} onBack={back}
-            onPhotos={heroPhotos.length > 0 ? () => setReveal(true) : undefined} onUnavailable={onG3dUnavailable} />
+          <Campus3D qid={g3d.qid} variant="arrival" active={g3d.active} start={g3d.at} onOpenProfile={openProfile} onBack={back}
+            onPhotos={heroPhotos.length > 0 ? () => setReveal(true) : undefined} onUnavailable={onG3dUnavailable}
+            collecting={progress && !progress.done ? { photos: progress.photos } : null} />
         </Suspense>
       )}
       <CloudDive run={diveRun} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />
@@ -210,7 +236,7 @@ export default function Globe() {
         <>
           <div ref={titleRef} className="absolute top-[5.5rem] left-0 right-0 flex flex-col items-center text-center px-4 pointer-events-none"
             style={{ opacity: titleHidden ? 0 : 1, transition: 'opacity 800ms ease' }}>
-            <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight leading-tight drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">CampusLens</h1>
+            <h1 className="font-sans text-[40px] sm:text-[64px] font-semibold tracking-[-0.03em] leading-none drop-shadow-[0_2px_16px_rgba(0,0,0,0.6)]">CampusLense</h1>
           </div>
           <div ref={searchRef} className="absolute left-0 right-0 bottom-10 flex flex-col items-center px-4 gap-3">
             <div className="w-full max-w-2xl"><SearchBox onPick={onPick} onCandidates={onCandidates} dark autoFocus direction="up" /></div>
@@ -220,12 +246,12 @@ export default function Globe() {
                 if (!c) return null
                 return (
                   <button key={iso} onClick={() => globe.current?.flyToCountry(c.bbox)}
-                    className="chip bg-white/10 border border-white/15 text-white hover:bg-white/20 cursor-pointer backdrop-blur">
-                    {FLAG[iso]} {c[lang]} <span className="opacity-60">{c.count}</span>
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white/10 border border-white/15 text-[13px] text-white/90 hover:bg-white/20 hover:text-white cursor-pointer backdrop-blur transition-colors">
+                    {c[lang]} <span className="opacity-50">{c.count}</span>
                   </button>
                 )
               })}
-              <button onClick={() => globe.current?.resetToGlobe()} className="chip bg-white/10 border border-white/15 text-white hover:bg-white/20 cursor-pointer">🌍 {t('profile.all')}</button>
+              <button onClick={() => globe.current?.resetToGlobe()} className="inline-flex items-center h-8 px-3 rounded-full bg-white/10 border border-white/15 text-[13px] text-white/90 hover:bg-white/20 hover:text-white cursor-pointer backdrop-blur transition-colors">Вся планета</button>
             </div>
           </div>
         </>

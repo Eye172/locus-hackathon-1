@@ -6,6 +6,7 @@ import logging
 from .. import http
 from ..geo import bbox_around
 from ..models import Campus, University
+from . import names
 from .resolve import index
 from .sources import osm, wikidata, wikipedia
 
@@ -32,11 +33,12 @@ async def facts(qid: str, log_fn=None) -> tuple[University, dict | None]:
         ent = await cache_mod.kv_get("web", qid)
         if not ent:
             raise RuntimeError("Этот вуз найден в вебе в прошлой сессии, повторите поиск")
-        uni = University(qid=qid, name=ent["name"], names={"en": ent["name"]}, website=ent.get("website"),
+        uni = University(qid=qid, name=names.web_display(ent["name"], ent.get("name_en"), ent.get("country")),
+                         name_en=ent.get("name_en") or ent["name"], names={"en": ent["name"]}, website=ent.get("website"),
                          description=ent.get("snippet"), city=ent.get("city"), lat=ent.get("lat"), lon=ent.get("lon"),
                          coord_source=ent.get("coord_source"))
         if uni.lat is None:
-            pt = await _nominatim(f"{uni.name} {uni.city or ''}")
+            pt = await _nominatim(f"{ent['name']} {uni.city or ''}")
             if pt:
                 uni.lat, uni.lon, uni.coord_source = pt[0], pt[1], "nominatim"
         if uni.lat is None:
@@ -52,6 +54,12 @@ async def facts(qid: str, log_fn=None) -> tuple[University, dict | None]:
         if uni.lat is None and row.get("coord"):
             uni.lat, uni.lon = row["coord"]
             uni.coord_source = "index"
+    # the English name shown when there is no Russian one: Wikidata's own English (checked in entity()), the index's
+    # translation, or a translation now (cached)
+    if not uni.name_en:
+        uni.name_en = (row or {}).get("name_en") or await names.english(uni.names.get("en") or uni.name, (), uni.country)
+    uni.country_qid = uni.country_qid or (row or {}).get("country")
+    uni.name = names.display(uni.names.get("ru"), uni.name_en, uni.name, uni.country_qid) or uni.name
 
     wiki = await wikipedia.best_summary(uni.wikipedia)
     if wiki:

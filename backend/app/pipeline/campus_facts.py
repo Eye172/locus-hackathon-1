@@ -98,6 +98,8 @@ async def _serper(q: str, gl: str | None, hl: str) -> dict:
     hit = await cache.kv_get("websearch", key, max_age_s=7 * 86400)
     if hit is not None:
         return hit
+    if http.serper_out():       # the balance is spent (app/http.py)
+        return {}
     try:
         r = await http.post(SEARCH, json=body, timeout=12.0,
                             headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"})
@@ -273,7 +275,7 @@ async def build(uni: University, refresh: bool = False) -> CampusFacts:
         return CampusFacts(qid=uni.qid, note="в интернете не нашлось текстов о кампусе")
     listing = "\n\n".join(f"[{s['id']}] {s['title']} ({s['url']})\n{s['text']}" for s in sources)
     topics = "\n".join(f"- {k}: {label}" for k, label, _ in TOPICS)
-    prompt = PROMPT.format(name=uni.names.get("ru") or uni.name, city=uni.city or "", topics=topics, sources=listing)
+    prompt = PROMPT.format(name=uni.name, city=uni.city or "", topics=topics, sources=listing)
     out = CampusFacts(qid=uni.qid, sources=[FactSource(id=s["id"], title=s["title"][:140], url=s["url"], kind=s["kind"])
                                             for s in sources],
                       generated_at=datetime.now(timezone.utc).isoformat())

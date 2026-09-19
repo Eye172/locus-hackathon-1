@@ -28,7 +28,8 @@ from ..models import (BROCHURE_SOURCES, CATEGORIES, Campus, CategoryStats, Photo
 from . import categorize as categorize_mod
 from . import context as context_mod
 from . import collage as collage_mod
-from . import crossdup, curate, dedup, describe, search_plan, video_frames, vision
+from . import cover as cover_mod
+from . import crossdup, curate, dedup, describe, search_learn, search_plan, video_frames, vision
 from . import enrich as enrich_mod
 from .ai_inspector import Inspector
 from .fetch import Fetched, fetch_all, fetch_waves
@@ -90,6 +91,11 @@ class Run:
         self.first_ms: int | None = None
         self.guard_end = math.inf
         self.bg_done = asyncio.Event()
+        # the cover editor (pipeline/cover.py): its last answer, for which candidates, the request in flight
+        self.cover_pick: cover_mod.Pick | None = None
+        self.cover_key: str | None = None
+        self.cover_task: asyncio.Task | None = None
+        self.final_started = False
 
     # ---------- helpers ----------
     @property
@@ -326,8 +332,11 @@ class Run:
         # a second run of a source (background pass, retry) only downloads what the first one did not
         cands = [c for c in cands if (name, fetch_id(c.url)) not in self.have]
         if not cands:
+            empty = "ничего не найдено"
+            if name in ("web_image", "map_review") and http.serper_out():
+                empty = "закончились кредиты serper.dev"
             await self.source_event(name, "done", count=self.got.get(name, 0), ms=int((time.monotonic() - t) * 1000),
-                                    detail="ничего не найдено" if not self.got.get(name) else None)
+                                    detail=empty if not self.got.get(name) else None)
             return
         await self.source_event(name, "fetching", count=len(cands), ms=int((time.monotonic() - t) * 1000))
         # downloads still running when the first profile is due are not dropped: they land in a later one
@@ -491,7 +500,8 @@ class Run:
         if "flickr" in enabled:
             factories["flickr"] = (lambda: self.after_campus(lambda: flickr.collect(bbox_pad(), 30)), 30)
         if "places" in enabled:
-            factories["places"] = (lambda: places.collect(self.uni), 10)
+            # the university's pin and its dorms, library, sports complex, canteen as their own pins on Google Maps
+            factories["places"] = (lambda: places.collect(self.uni, self.plan), 60)
         if "vk" in enabled:
             factories["vk"] = (lambda: self.after_official("vk", social.vk), 30)
             # geotagged photos of passers-by and students: the anchor is the coordinate, not the university's channel
@@ -562,6 +572,8 @@ class Run:
 
     # ---------- assembly (the first profile, the background updates, the last one) ----------
     async def finalize(self, final: bool = True) -> Profile:
+        if final:
+            self.final_started = True
         # ---------- analysis over the full set (cross-source signals need everything) ----------
         await self.stage("analyze", "running")
         reps = dedup.merge_exact(self.fetched)
@@ -570,6 +582,7 @@ class Run:
         rejected = [p for p in photos if p.rejected]
         kept = dedup.cluster_similar(good, self.embs)
         hidden = len(good) - len(kept)
+        cover_ids = await self.cover_for(kept, final)   # first: its ratings feed the album order and the collage
         kept = curate.feature(kept, self.embs)
         collage = collage_mod.build(kept, self.plan)
         rejected.sort(key=lambda p: -p.confidence)
@@ -634,7 +647,7 @@ class Run:
             sources_status=self.sources_status, log=self.log,
             generated_at=datetime.now(timezone.utc).isoformat(), elapsed_ms=elapsed, partial=self.partial,
             reference=self.reference, inspector=self.inspector.stats() if self.inspector else None,
-            collage=collage, plan=collage_mod.plan_summary(self.plan, self.uni),
+            collage=collage, plan=collage_mod.plan_summary(self.plan, self.uni), cover=cover_ids,
         )
         await self.stage("assemble", "done", count=len(kept))
         profile.stages = list(self.stages.values())
@@ -646,6 +659,43 @@ class Run:
         await self.emit({"type": "profile", "profile": profile.model_dump(), "final": final,
                          "elapsed_ms": profile.elapsed_ms})
         return profile
+
+    # ---------- the cover ----------
+    async def cover_for(self, kept: list[Photo], final: bool) -> list[str]:
+        """The photos the page opens with (pipeline/cover.py). The editor is asked in the background - the first
+        profile never waits for it, the next update carries its choice - once for the first profile's candidates and
+        once more for the last profile's if they changed; the last profile waits up to 30 s for that answer."""
+        cands = cover_mod.candidates(kept, self.embs)
+        k = cover_mod.key(self.uni.qid, cands)
+        idle = self.cover_task is None or self.cover_task.done()
+        if k and k != self.cover_key and idle:
+            hit = await cover_mod.cached(k)
+            if hit:
+                self.cover_pick, self.cover_key = hit, k
+            elif final or self.cover_pick is None:
+                self.cover_task = asyncio.create_task(self.cover_later(cands, k))
+        if final and self.cover_task and not self.cover_task.done():
+            await asyncio.wait({self.cover_task}, timeout=30.0)
+        return cover_mod.apply(self.cover_pick, kept)
+
+    async def cover_later(self, cands: list[Photo], k: str) -> None:
+        res = await cover_mod.pick(self.uni, cands, k)
+        if not res:
+            return
+        self.cover_pick, self.cover_key = res, k
+        self.logf(f"cover: {len(cands)} candidates -> {len(res.order)} picked ({res.model})")
+        if not self.final_started and self.quiet:
+            try:   # the open page gets it now, not at the next background update
+                await self.finalize(final=False)
+            except Exception as e:  # noqa: BLE001
+                self.logf(f"cover update failed: {e!r}")
+        elif self.final_started:
+            # the last profile went out without it (the editor took longer than the wait): into the saved one
+            p = await cache.get_profile(self.uni.qid)
+            if p:
+                p.cover = cover_mod.apply(res, p.photos)
+                p.cached = False
+                await cache.save_profile(p)
 
     # ---------- background pass ----------
     async def background(self) -> None:
@@ -698,6 +748,15 @@ class Run:
                 self.stages["inspect"].count, self.stages["inspect"].detail = st["photos"], self.inspect_detail()
                 self.logf(f"background pass: inspector judged {st['photos']} photos in total, "
                           f"{len(self.fetched)} images collected")
+                try:
+                    learned = await search_learn.record(self.uni.qid, search_learn.mine(self.fetched, self.inspector.verdicts))
+                    tags = search_learn.proven_tags(learned, await search_learn.generic_tags(), n=5, uni=self.uni,
+                                                    forms=search_plan.name_forms(self.uni),
+                                                    places=await search_learn.places_of(self.uni))
+                    self.logf(f"search learned: {len(learned.tags)} tags, {len(learned.authors)} authors, "
+                              f"proven tags {tags}")
+                except Exception as e:  # noqa: BLE001
+                    self.logf(f"search learning failed: {e!r}")
         finally:
             self.bg_done.set()
             await ticker
@@ -716,6 +775,7 @@ class Run:
             "tiktok_search": (lambda: social_search.tiktok(self.uni, self.plan), 4 * n),
             "instagram_search": (lambda: social_search.instagram(self.uni, self.plan), 3 * n),
             "instagram_accounts": (lambda: social_search.instagram_accounts(self.uni, self.plan), 2 * n),
+            "social_learned": (self.learned_round, 3 * n),
         }
         ig = self.uni.social.get("instagram")
         if ig:
@@ -725,6 +785,23 @@ class Run:
         if tt:
             factories["tiktok"] = (lambda: social_api.tiktok_videos(tt, n, v), n)
         return factories
+
+    async def learned_round(self) -> list[PhotoCandidate]:
+        """The social search's second round (search_learn.py): once the inspector has judged what the first searches
+        brought, their proven hashtags and authors are searched in turn."""
+        end = time.monotonic() + 90.0
+        while time.monotonic() < end:   # the first searches' posts judged (at least 15 s in), or 90 s
+            social = [f for f in self.fetched if search_learn._platform(f.cand.source)]
+            judged = sum(f.id in self.inspector.verdicts for f in social) if self.inspector else 0
+            if social and judged >= 0.8 * len(social) and time.monotonic() > end - 75.0:
+                break
+            await asyncio.sleep(3.0)
+        if not self.inspector:
+            return []
+        now = search_learn.mine(self.fetched, self.inspector.verdicts)
+        searched = {c.query.lstrip("#") for f in self.fetched for c in [f.cand, *f.extra_sources]
+                    if c.query and search_learn._platform(c.source)}
+        return await social_search.learned_round(self.uni, self.plan, now, searched)
 
     async def google_deep(self) -> list[PhotoCandidate]:
         """The classic category queries in the local language, and the themes of the search plan."""

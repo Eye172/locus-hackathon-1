@@ -11,7 +11,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", extra="ignore")
 
-    app_name: str = "CampusLens"
+    app_name: str = "CampusLense"
     contact_email: str = "nnurkhan91@gmail.com"
     data_dir: Path = BACKEND_DIR / "data"
     frontend_origin: str = ""   # e.g. https://campuslens.vercel.app when the SPA is not served by this container
@@ -23,6 +23,30 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5"
     gemini_api_key: str | None = None
+    # more Gemini keys from other Google Cloud projects: each project has its own free daily quota (500 requests a
+    # model), and a project with billing has none; the inspector moves to the next key when one is spent or blocked
+    gemini_api_key_2: str | None = None
+    gemini_api_key_3: str | None = None
+    # Gemini on Vertex AI, paid from the Google Cloud credits (pipeline/vertex.py): a service-account JSON, by default
+    # backend/secrets/vertex-sa.json. When it is there it goes first: no daily cap, many requests in parallel
+    vertex_credentials: str | None = None
+    vertex_location: str = "global"
+    vertex_models: list[str] = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    # the photo inspector's models on Vertex: 3.1-flash-lite there answers text but never an 8-photo batch (0 of 12 in
+    # 25 s, 19.09.2026), so the inspector goes from 3.5 on Vertex straight to the AI Studio key
+    vertex_inspect_models: list[str] = ["gemini-3.5-flash-lite"]
+    vertex_concurrency: int = 8
+    # Vertex runs 3.5-flash-lite on Google's shared capacity ("global" is the only location that has it): when that is
+    # short a request is queued and answered 429 after up to ~90 s, or never - a third of the inspector's requests in
+    # a live build on 19.09. A copy sent again usually gets through at once (healthy: 1.4-4.5 s for 8 photos), so the
+    # inspector sends one when the first has not answered in this many seconds, up to vertex_copies in all
+    vertex_hedge_s: float = 4.5
+    vertex_copies: int = 3
+    # where the copies go: 3.5-flash-lite's shared capacity is short for minutes at a time (19 Sep: 12 of 12 requests
+    # hung) while 2.5-flash-lite, another pool, answered 12 of 12 in ~3 s, in "global" and in us-central1 alike. It is
+    # the weaker judge (hand-labelled photos: P .81 R .80 against 3.5's P .84 R .95), so it only answers when 3.5 does
+    # not: (model, location) per copy after the first
+    vertex_fallbacks: list[tuple[str, str]] = [("gemini-2.5-flash-lite", "global"), ("gemini-2.5-flash-lite", "us-central1")]
     vk_service_token: str | None = None      # free service token of a VK app: wall photos of the official group
     higgsfield_api_key: str | None = None   # cutscene generation only, never called by the profile pipeline
     serper_api_key: str | None = None       # Google Images search (serper.dev, 2500 free queries)
@@ -139,6 +163,9 @@ class Settings(BaseSettings):
             "llm": {"enabled": self.active_llm() != "none", "needs_key": True,
                     "env": "ANTHROPIC_API_KEY or GEMINI_API_KEY", "provider": self.active_llm()},
         }
+
+    def gemini_keys(self) -> list[str]:
+        return list(dict.fromkeys(k for k in (self.gemini_api_key, self.gemini_api_key_2, self.gemini_api_key_3) if k))
 
     def active_llm(self) -> str:
         if self.llm_provider == "none":

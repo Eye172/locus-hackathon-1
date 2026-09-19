@@ -1,4 +1,4 @@
-import type { Candidate, Campus, CampusFacts, ClimatePack, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SearchPlan, SourceStatus, Stage, UniPlan, UniPlanView, University } from './types'
+import type { Candidate, Campus, CampusFacts, ClimatePack, ClimateStory, ContextPack, CostPack, Map3DBuilding, Map3DPack, Photo, Profile, RecentItem, SearchPlan, SourceStatus, Stage, UniPlan, UniPlanView, University } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
 
@@ -24,8 +24,9 @@ export const api = {
   profile: (qid: string) => getJSON<Profile>(`/api/profile/${qid}`),
   context: (qid: string) => getJSON<ContextPack>(`/api/context/${qid}`),
   climate: (qid: string) => getJSON<ClimatePack>(`/api/climate/${qid}`),
+  climateStory: (qid: string, lang: string) => getJSON<ClimateStory>(`/api/climate/${qid}/story?lang=${lang}`),
   cost: (cityQid: string) => getJSON<CostPack>(`/api/cost/${cityQid}`),
-  mini: (qid: string) => getJSON<{ qid: string; name: string; names: Record<string, string>; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; logo_url?: string | null; lat?: number | null; lon?: number | null; profile: { coverage: string; generated_at: string; photos_total: number; photos: { id: string; thumb: string; category: string }[] } | null }>(`/api/mini/${qid}`),
+  mini: (qid: string) => getJSON<{ qid: string; name: string; name_en?: string | null; country_qid?: string | null; names: Record<string, string>; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; logo_url?: string | null; lat?: number | null; lon?: number | null; profile: { coverage: string; generated_at: string; photos_total: number; photos: { id: string; thumb: string; category: string }[] } | null }>(`/api/mini/${qid}`),
   map3d: (qid: string, lang: string) => getJSON<Map3DPack>(`/api/map3d/${qid}?lang=${lang}`),
   footprints: async (points: { id: string; lat: number; lon: number }[]) => {
     const r = await fetch(`${API_BASE}/api/map3d/footprints`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points }) })
@@ -66,29 +67,64 @@ export interface FactSheet {
   budget?: { currency: string; as_of: string; total_with_dorm: number; total_with_rent: number; dorm: number; rent_1room: number }
 }
 
+/** GET /api/compare/sheets: what the compare page's advisor knows about each university (no photo counts). */
+export interface AdvisorSheet {
+  qid: string; name: string; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; website?: string | null
+  climate?: { year: number; annual_t_mean: number | null; comfort_days: Record<string, number>; sun_hours?: number
+    seasons: Record<'winter' | 'spring' | 'summer' | 'autumn', { t_mean: number | null; t_hi?: number | null; t_lo?: number | null }> }
+  budget?: FactSheet['budget']
+  city_context?: FactSheet['city_context']
+  around_campus?: {
+    dorms_nearby?: { count: number; nearest: { name: string; distance_m: number; whose: string }[] }
+    city_center?: { name?: string | null; distance_km?: number | null; walk_min?: number | null; drive_min?: number | null }
+    places_by_kind?: Record<string, { within_1km: number | string; nearest: string }>
+    campus_area_ha?: number
+  }
+}
+export const compareSheets = (a: string, b: string, lang: string) => getJSON<{ a: AdvisorSheet; b: AdvisorSheet }>(`/api/compare/sheets?a=${a}&b=${b}&lang=${lang}`)
+
+/** The compare page's advisor chat, streamed; an empty `messages` asks for the opening message. */
+export function streamAdvisor(body: { a: string; b: string; lang: string; messages: { role: string; content: string }[] },
+  onToken: (t: string) => void, onDone: () => void, onError: (m: string) => void, signal?: AbortSignal): Promise<void> {
+  return streamPost('/api/compare/advisor', body, onToken, onDone, onError, signal)
+}
+
 /** POST + SSE (EventSource cannot POST): parses `event:`/`data:` frames from a fetch stream. */
 export async function streamChat(body: { a: string; b: string; prefs: Record<string, boolean>; messages: { role: string; content: string }[] },
   onToken: (t: string) => void, onDone: (provider: string) => void, onError: (m: string) => void): Promise<void> {
-  const r = await fetch(`${API_BASE}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  return streamPost('/api/chat', body, onToken, onDone, onError)
+}
+
+async function streamPost(path: string, body: unknown, onToken: (t: string) => void, onDone: (provider: string) => void,
+  onError: (m: string) => void, signal?: AbortSignal): Promise<void> {
+  let r: Response
+  try {
+    r = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+  } catch (e) { if (!signal?.aborted) onError(String(e)); return }
   if (!r.ok || !r.body) { onError(`${r.status}`); return }
   const reader = r.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buf += dec.decode(value, { stream: true })
-    const frames = buf.split('\n\n'); buf = frames.pop() ?? ''
-    for (const f of frames) {
-      const ev = /^event: (.*)$/m.exec(f)?.[1]
-      const data = /^data: (.*)$/m.exec(f)?.[1]
-      if (!data) continue
-      const d = JSON.parse(data)
-      if (ev === 'token') onToken(d.text)
-      else if (ev === 'done') onDone(d.provider)
-      else if (ev === 'error') onError(d.message)
-    }
+  const handle = (f: string) => {
+    const ev = /^event: (.*)$/m.exec(f)?.[1]
+    const data = /^data: (.*)$/m.exec(f)?.[1]
+    if (!data) return
+    const d = JSON.parse(data)
+    if (ev === 'token') onToken(d.text)
+    else if (ev === 'done') onDone(d.provider)
+    else if (ev === 'error') onError(d.message)
   }
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      // sse-starlette ends lines with \r\n: normalise before splitting into frames
+      buf = (buf + dec.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+      const frames = buf.split('\n\n'); buf = frames.pop() ?? ''
+      frames.forEach(handle)
+    }
+    if (buf.trim()) handle(buf)
+  } catch (e) { if (!signal?.aborted) onError(String(e)) }
 }
 
 export interface StreamHandlers {

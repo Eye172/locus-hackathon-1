@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { GitCompare, Trash2, Download, Upload, Heart, ListChecks } from 'lucide-react'
+import { api } from '../lib/api'
 import { store, useStoreVersion, KEYS } from '../lib/store'
 
 export default function Saved() {
@@ -8,6 +9,8 @@ export default function Saved() {
   const nav = useNavigate()
   const saved = store.saved()
   const entries = Object.entries(saved).sort((a, b) => b[1].savedAt.localeCompare(a[1].savedAt))
+  // names are stored as they were at saving: refresh them to today's names
+  useEffect(() => { for (const qid of Object.keys(store.saved())) api.mini(qid).then((m) => store.rename(qid, m.name)).catch(() => {}) }, [])
   const [sel, setSel] = useState<string[]>([])
   const toggle = (qid: string) => setSel((s) => (s.includes(qid) ? s.filter((x) => x !== qid) : [...s, qid].slice(-2)))
   const exportJson = () => {
@@ -19,9 +22,9 @@ export default function Saved() {
     f.text().then((txt) => { const data = JSON.parse(txt) as Record<string, unknown>; for (const [k, v] of Object.entries(data)) if (v != null) localStorage.setItem(k, JSON.stringify(v)); window.location.reload() }).catch(() => alert('Не удалось прочитать файл'))
   }
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
       <div className="flex flex-wrap items-end gap-4">
-        <div><h1 className="text-3xl font-extrabold">Мои вузы</h1><div className="text-sm text-muted mt-1">Сохранённые профили, избранные фото и планы визита. Хранится в этом браузере.</div></div>
+        <div><h1 className="text-[36px] leading-tight">Мои вузы</h1><div className="text-sm text-muted mt-1">Сохранённые профили, избранные фото и планы визита. Хранится в этом браузере.</div></div>
         <div className="ml-auto flex gap-2">
           <button className="btn-ghost" onClick={exportJson}><Download size={15} /> Экспорт</button>
           <label className="btn-ghost cursor-pointer"><Upload size={15} /> Импорт<input type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} /></label>

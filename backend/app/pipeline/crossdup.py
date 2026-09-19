@@ -2,7 +2,7 @@
 
 A broad image search pulls in exactly this: a stock shot of "a university dormitory" that a dozen admission portals
 reuse, a news illustration, a photo of another campus that a blog captioned wrongly. Each of them can look perfectly
-plausible next to the reference photo. What gives them away is that CampusLens has already seen the same pixels
+plausible next to the reference photo. What gives them away is that CampusLense has already seen the same pixels
 (perceptual hash, Hamming distance <= 6) in the profile of a university somewhere else.
 
 Only search and crowd finds are checked. A photo from the university's own site or accounts stays trusted even if

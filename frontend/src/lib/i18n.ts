@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 
 export type Lang = 'ru' | 'en' | 'kk'
 const KEY = 'campuslens.lang'
@@ -14,7 +14,23 @@ export function useLang(): Lang {
   return useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb) }, () => current, () => current)
 }
 
-const D: Record<string, Record<Lang, string>> = {
+// a university's name: `name` is Russian, or English when the university has no Russian name; `name_en` is English
+// even where Wikidata's own English label is in the university's language (backend app/pipeline/names.py)
+export function uniName(u: { name: string; name_en?: string | null; names?: Record<string, string> }, lang: Lang): string {
+  if (lang === 'en') return u.name_en || u.names?.en || u.name
+  if (lang === 'kk') return u.names?.kk || u.name
+  return u.name
+}
+
+// countries where Russian is an official language (backend names.RU_PLACE_COUNTRIES): Russian place names there,
+// English ones everywhere else (Lathrop Library, Campus Drive - not «Библиотека Латроп», «Кампус Драйв»)
+const RU_PLACE_COUNTRIES = new Set(['Q159', 'Q232', 'Q813', 'Q184'])
+export function placeLang(lang: Lang, countryQid?: string | null): Lang {
+  return lang === 'en' || !countryQid || RU_PLACE_COUNTRIES.has(countryQid) ? lang : 'en'
+}
+
+// kk may be missing for new keys: the lookup falls back to ru until the Kazakh copy is written
+const D: Record<string, { ru: string; en: string; kk?: string }> = {
   'nav.compare': { ru: 'Сравнить вузы', en: 'Compare', kk: 'Салыстыру' },
   'footer.sources': { ru: 'Источники: официальные сайты, Wikimedia Commons, Википедия, Wikidata, OpenStreetMap, Open-Meteo. Фото принадлежат их авторам.', en: 'Sources: official sites, Wikimedia Commons, Wikipedia, Wikidata, OpenStreetMap, Open-Meteo. Photos belong to their authors.', kk: 'Дереккөздер: ресми сайттар, Wikimedia Commons, Wikipedia, Wikidata, OpenStreetMap, Open-Meteo.' },
   'home.title': { ru: 'Покажите университет таким, каким его увидит студент', en: 'See a university the way a student will', kk: 'Университетті студент көретіндей көріңіз' },
@@ -175,6 +191,41 @@ const D: Record<string, Record<Lang, string>> = {
   'judge.log': { ru: 'Лог пайплайна', en: 'Pipeline log', kk: 'Лог' },
   'judge.thresholds': { ru: 'Пороги', en: 'Thresholds', kk: 'Шектер' },
   'judge.json': { ru: 'Скачать JSON профиля', en: 'Download profile JSON', kk: 'JSON жүктеу' },
+  'adv.title': { ru: 'Сравнение вузов', en: 'Compare universities', kk: 'Университеттерді салыстыру' },
+  'adv.subtitle': { ru: 'По бокам — оба вуза, посередине — ИИ-советник. Он знает всё, что есть в профилях, и подсказывает по вашим предпочтениям, но не выбирает за вас.', en: 'Both universities on the sides, an AI advisor in the middle. It knows everything in both profiles and points out what fits your preferences, without choosing for you.', kk: 'Екі жағында — екі университет, ортада — ЖИ-кеңесші. Ол профильдердегі бәрін біледі және қалауыңызға қарай кеңес береді, бірақ сіз үшін таңдамайды.' },
+  'adv.change': { ru: 'изменить', en: 'change', kk: 'өзгерту' },
+  'adv.advisor': { ru: 'ИИ-советник', en: 'AI advisor', kk: 'ЖИ-кеңесші' },
+  'adv.advisorSub': { ru: 'знает оба профиля: климат, город, что рядом с кампусом, Википедия', en: 'knows both profiles: climate, city, what is around campus, Wikipedia', kk: 'екі профильді біледі: климат, қала, кампус маңы, Википедия' },
+  'adv.restart': { ru: 'Начать заново', en: 'Start over', kk: 'Қайта бастау' },
+  'adv.preparing': { ru: 'Готовлю сравнение: климат, город и то, что рядом с кампусами…', en: 'Preparing the comparison: climate, city and what is around both campuses…', kk: 'Салыстыру дайындалуда: климат, қала және кампус маңы…' },
+  'adv.placeholder': { ru: 'Расскажите, что для вас важно: бюджет, климат, город, общежитие, специальность…', en: 'Tell me what matters to you: budget, climate, city, dorm, major…', kk: 'Сіз үшін не маңызды: бюджет, климат, қала, жатақхана, мамандық…' },
+  'adv.note': { ru: 'Отвечает только по данным двух профилей. Не выбирает за вас и не обещает поступление.', en: 'Answers only from the two profiles. It does not choose for you or promise admission.', kk: 'Тек екі профиль деректері бойынша жауап береді. Сіз үшін таңдамайды.' },
+  'adv.error': { ru: 'Советник не ответил', en: 'The advisor did not answer', kk: 'Кеңесші жауап бермеді' },
+  'adv.s1': { ru: 'Бюджет ограничен, важна недорогая жизнь', en: 'I am on a tight budget', kk: 'Бюджетім шектеулі' },
+  'adv.s2': { ru: 'Не люблю холод и долгую зиму', en: 'I do not like cold, long winters', kk: 'Суық пен ұзақ қысты ұнатпаймын' },
+  'adv.s3': { ru: 'Хочу жить в большом городе', en: 'I want to live in a big city', kk: 'Үлкен қалада тұрғым келеді' },
+  'adv.s4': { ru: 'Нужны общежитие и спорт рядом', en: 'I need a dorm and sports nearby', kk: 'Жатақхана мен спорт жақын болсын' },
+  'adv.s5': { ru: 'Хочу тихий зелёный кампус', en: 'I want a quiet green campus', kk: 'Тыныш жасыл кампус керек' },
+  'adv.map3d': { ru: '3D-карта', en: '3D map', kk: '3D-карта' },
+  'adv.profile': { ru: 'Профиль', en: 'Profile', kk: 'Профиль' },
+  'adv.f.city': { ru: 'Город', en: 'City', kk: 'Қала' },
+  'adv.f.founded': { ru: 'Основан', en: 'Founded', kk: 'Құрылған' },
+  'adv.f.students': { ru: 'Студентов', en: 'Students', kk: 'Студенттер' },
+  'adv.f.center': { ru: 'До центра', en: 'To the centre', kk: 'Орталыққа дейін' },
+  'adv.f.dorms': { ru: 'Общежития рядом', en: 'Dorms nearby', kk: 'Жақын жатақханалар' },
+  'adv.f.climate': { ru: 'Зима / лето', en: 'Winter / summer', kk: 'Қыс / жаз' },
+  'adv.f.comfort': { ru: 'Комфортных дней', en: 'Comfortable days', kk: 'Жайлы күндер' },
+  'adv.f.sun': { ru: 'Солнца в год', en: 'Sunshine a year', kk: 'Жылына күн' },
+  'adv.f.budget': { ru: 'Месяц с общежитием', en: 'A month with a dorm', kk: 'Жатақханамен бір ай' },
+  'adv.nearest': { ru: 'ближайшее', en: 'nearest', kk: 'ең жақыны' },
+  'adv.walk': { ru: 'пешком', en: 'walk', kk: 'жаяу' },
+  'adv.photosTitle': { ru: 'Кампусы рядом', en: 'Campuses side by side', kk: 'Кампустар қатар' },
+  'adv.photosSub': { ru: 'лучшие подтверждённые фото по разделам', en: 'the best verified photos by section', kk: 'бөлімдер бойынша ең жақсы суреттер' },
+  'adv.noPhotos': { ru: 'нет подтверждённых фото', en: 'no verified photos', kk: 'расталған сурет жоқ' },
+  'adv.you': { ru: 'Вы', en: 'You', kk: 'Сіз' },
+  'adv.typing': { ru: 'печатает…', en: 'typing…', kk: 'жазып жатыр…' },
+  'adv.stop': { ru: 'Остановить', en: 'Stop', kk: 'Тоқтату' },
+  'adv.keys': { ru: 'Enter — отправить · Shift+Enter — новая строка', en: 'Enter to send · Shift+Enter for a new line', kk: 'Enter — жіберу · Shift+Enter — жаңа жол' },
   'compare.title': { ru: 'Сравнение двух университетов', en: 'Compare two universities', kk: 'Екі университетті салыстыру' },
   'compare.a': { ru: 'Первый вуз', en: 'First university', kk: 'Бірінші университет' },
   'compare.b': { ru: 'Второй вуз', en: 'Second university', kk: 'Екінші университет' },
@@ -224,13 +275,46 @@ const D: Record<string, Record<Lang, string>> = {
   'climate.windWord': { ru: 'ветер', en: 'wind', kk: 'жел' },
   'climate.comfortTitle': { ru: 'Индекс комфорта студента', en: 'Student comfort index', kk: 'Студент жайлылық индексі' },
   'climate.comfortSubtitle': { ru: 'дней в году', en: 'days a year', kk: 'жылына күн' },
-  'climate.comfortLegend': { ru: 'комфортно: ощущается +10…+25 °C без сильного ветра и дождя · морозно: ниже −15 °C · жарко: выше +30 °C · дождливо: ≥ 3 мм', en: 'comfortable: feels +10…+25 °C with light wind and no rain · freezing: below −15 °C · hot: above +30 °C · rainy: ≥ 3 mm', kk: 'жайлы: сезілуі +10…+25 °C, жел мен жаңбырсыз · аязды: −15 °C-тан төмен · ыстық: +30 °C-тан жоғары · жаңбырлы: ≥ 3 мм' },
+  'climate.comfortLegend': { ru: 'по ощущаемой температуре: морозно — ниже −15 °C · прохладно — ниже +10 °C или сильный ветер · комфортно — +10…+25 °C · тепло — +25…+30 °C · жарко — выше +30 °C · дождливо — осадки от 3 мм', en: 'by feels-like temperature: freezing below −15 °C · cool below +10 °C or strong wind · comfortable +10…+25 °C · warm +25…+30 °C · hot above +30 °C · rainy: 3 mm or more', kk: 'сезілетін температура бойынша: аязды — −15 °C-тан төмен · салқын — +10 °C-тан төмен немесе қатты жел · жайлы — +10…+25 °C · жылы — +25…+30 °C · ыстық — +30 °C-тан жоғары · жаңбырлы — 3 мм-ден бастап' },
+  'climate.warm': { ru: 'тепло', en: 'warm', kk: 'жылы' },
   'climate.windRoseTitle': { ru: 'Роза ветров', en: 'Wind rose', kk: 'Жел раушаны' },
   'climate.liveMapTitle': { ru: 'Живая карта региона', en: 'Live regional map', kk: 'Аймақтың тірі картасы' },
+  'inset.open': { ru: 'Открыть 3D-карту', en: 'Open the 3D map', kk: '3D-картаны ашу' },
+  'inset.unavailable': { ru: '3D-карта сейчас недоступна', en: 'The 3D map is unavailable right now', kk: '3D-карта қазір қолжетімсіз' },
   'climate.cloudsWord': { ru: 'облака', en: 'clouds', kk: 'бұлттар' },
   'climate.temperatureWord': { ru: 'температура', en: 'temperature', kk: 'температура' },
   'climate.sourceLabel': { ru: 'источник', en: 'source', kk: 'дереккөз' },
   'climate.timezoneLabel': { ru: 'часовой пояс', en: 'timezone', kk: 'уақыт белдеуі' },
+  'climate.today': { ru: 'сегодня', en: 'today', kk: 'бүгін' },
+  'climate.nowShort': { ru: 'сейчас', en: 'now', kk: 'қазір' },
+  'climate.yearAvg': { ru: 'в среднем за год', en: 'yearly average', kk: 'жылдық орташа' },
+  'climate.ringNote': { ru: 'Лепестки — месяцы {year} года: цвет — температура, длина — осадки. Обведён текущий месяц.', en: 'Petals are the months of {year}: colour is temperature, length is precipitation. The current month is outlined.', kk: 'Жапырақтар — {year} жылдың айлары: түсі — температура, ұзындығы — жауын-шашын. Ағымдағы ай белгіленген.' },
+  'climate.storyTitle': { ru: 'Как ощущается климат', en: 'What the climate feels like', kk: 'Климат қалай сезіледі' },
+  'climate.packTitle': { ru: 'Что взять с собой', en: 'What to pack', kk: 'Өзіңізбен не алу керек' },
+  'climate.bestTitle': { ru: 'Когда приехать посмотреть кампус', en: 'When to visit the campus', kk: 'Кампусқа қашан келген жөн' },
+  'climate.aiNote': { ru: 'Текст составил ИИ по данным Open-Meteo (реанализ ERA5) за {year} год', en: 'Written by AI from Open-Meteo data (ERA5 reanalysis) for {year}', kk: 'Мәтінді ЖИ Open-Meteo (ERA5) {year} жылғы деректері бойынша құрастырды' },
+  'climate.templateNote': { ru: 'Сводка по данным Open-Meteo (реанализ ERA5) за {year} год', en: 'Summary of Open-Meteo data (ERA5 reanalysis) for {year}', kk: 'Open-Meteo (ERA5) {year} жылғы деректерінің қорытындысы' },
+  'climate.yearTitle': { ru: 'Год по месяцам', en: 'The year month by month', kk: 'Жыл айлар бойынша' },
+  'climate.yearSub': { ru: 'средняя температура днём и ночью, °C · {year}', en: 'average daytime high and night low, °C · {year}', kk: 'күндізгі және түнгі орташа температура, °C · {year}' },
+  'climate.chartLegend': { ru: 'сверху — днём, снизу — ночью', en: 'top: day, bottom: night', kk: 'жоғарыда — күндіз, төменде — түнде' },
+  'climate.southNote': { ru: 'южное полушарие: зима здесь в июне–августе', en: 'southern hemisphere: winter is June to August', kk: 'оңтүстік жарты шар: қыс — маусым–тамыз' },
+  'climate.day': { ru: 'днём', en: 'day', kk: 'күндіз' },
+  'climate.night': { ru: 'ночью', en: 'night', kk: 'түнде' },
+  'climate.rowPrecip': { ru: 'Дней с осадками', en: 'Days with rain or snow', kk: 'Жауын-шашынды күн' },
+  'climate.rowSnow': { ru: 'Дней со снегом', en: 'Snowy days', kk: 'Қарлы күн' },
+  'climate.rowSun': { ru: 'Солнца, ч в день', en: 'Sunshine, h a day', kk: 'Күн, тәулігіне сағ' },
+  'climate.winter': { ru: 'Зима', en: 'Winter', kk: 'Қыс' },
+  'climate.spring': { ru: 'Весна', en: 'Spring', kk: 'Көктем' },
+  'climate.summer': { ru: 'Лето', en: 'Summer', kk: 'Жаз' },
+  'climate.autumn': { ru: 'Осень', en: 'Autumn', kk: 'Күз' },
+  'climate.comfortHeading': { ru: 'Сколько дней в году комфортно', en: 'How many days a year are comfortable', kk: 'Жылына неше күн жайлы' },
+  'climate.comfortCells': { ru: 'каждая клетка — день {year} года, точка — дождь', en: 'each cell is a day of {year}, a dot means rain', kk: 'әр ұяшық — {year} жылдың бір күні, нүкте — жаңбыр' },
+  'climate.windMost': { ru: 'Чаще всего дует {dir}: {share} % дней, в среднем {speed} м/с.', en: 'Most often from the {dir}: {share}% of days, {speed} m/s on average.', kk: 'Жел көбіне {dir} соғады: күндердің {share} %, орташа {speed} м/с.' },
+  'climate.windiest': { ru: 'Самый ветреный сезон — {season}, {speed} м/с.', en: 'Windiest season: {season}, {speed} m/s.', kk: 'Ең желді маусым — {season}, {speed} м/с.' },
+  'climate.liveMapSub': { ru: 'ветер, облака и температура сейчас · Windy.com', en: 'wind, clouds and temperature right now · Windy.com', kk: 'қазіргі жел, бұлт және температура · Windy.com' },
+  'climate.liveMapShow': { ru: 'Показать карту', en: 'Show the map', kk: 'Картаны көрсету' },
+  'climate.loadingYear': { ru: 'Загружаем погоду за год — в первый раз до 30 секунд', en: 'Loading a year of weather — up to 30 s the first time', kk: 'Бір жылдық ауа райы жүктелуде — алғаш рет 30 секундқа дейін' },
+  'climate.writing': { ru: 'ИИ пишет, как здесь ощущается погода…', en: 'AI is writing what the weather feels like…', kk: 'ЖИ ауа райы қалай сезілетінін жазуда…' },
 
   // --- CityTab ---
   'city.unavailable': { ru: 'Данные о городе недоступны', en: 'City data unavailable', kk: 'Қала деректері қолжетімсіз' },
@@ -272,16 +356,13 @@ const D: Record<string, Record<Lang, string>> = {
   'walk.kindAcademic': { ru: 'корпус', en: 'building', kk: 'корпус' },
   'walk.kindStudentLife': { ru: 'кафе', en: 'cafe', kk: 'кафе' },
   'walk.kindOther': { ru: 'здание', en: 'building', kk: 'ғимарат' },
-  'walk.searchingMapillary': { ru: 'Ищем ближайшие снимки Mapillary…', en: 'Looking for nearby Mapillary images…', kk: 'Жақын маңдағы Mapillary суреттерін іздеп жатырмыз…' },
-  'walk.noMapillaryNearby': { ru: 'Рядом с этой точкой нет снимков Mapillary', en: 'No Mapillary images near this point', kk: 'Бұл нүктенің маңында Mapillary суреттері жоқ' },
+  'walk.searching': { ru: 'Ищем ближайшую панораму Google Street View…', en: 'Looking for the nearest Google Street View panorama…', kk: 'Ең жақын Google Street View панорамасын іздеп жатырмыз…' },
+  'walk.noPanorama': { ru: 'Рядом с этой точкой нет панорам Google Street View', en: 'No Google Street View panoramas near this point', kk: 'Бұл нүктенің маңында Google Street View панорамалары жоқ' },
   'walk.panoramasDisabled': { ru: 'Панорамы отключены: нет ключа', en: 'Panoramas disabled: no key', kk: 'Панорамалар өшірілген: кілт жоқ' },
-  'walk.addKey1': { ru: 'Добавьте', en: 'Add', kk: 'Қосыңыз' },
-  'walk.addKey2': { ru: '(Maps Embed API, бесплатно) или', en: '(Maps Embed API, free) or', kk: '(Maps Embed API, тегін) немесе' },
-  'walk.addKey3': { ru: '(бесплатный клиентский токен) в', en: '(a free client token) in', kk: '(тегін клиенттік токен) мына жерде' },
-  'walk.addKey4': { ru: '— и здесь появится уличный обход у входа в кампус и у каждого корпуса.', en: '— and a street walk-through will appear at the campus entrance and each building.', kk: '— осында кампус кіреберісінде және әрбір корпуста көше серуені пайда болады.' },
+  'walk.addKey': { ru: 'Панорамы идут через тот же ключ Google, что и 3D-карта: добавьте VITE_GOOGLE_MAPS_3D_KEY в frontend/.env.', en: 'Panoramas use the same Google key as the 3D map: add VITE_GOOGLE_MAPS_3D_KEY to frontend/.env.', kk: 'Панорамалар 3D-картамен бірдей Google кілтін қолданады: frontend/.env ішіне VITE_GOOGLE_MAPS_3D_KEY қосыңыз.' },
   'walk.title': { ru: 'Уличный обход', en: 'Street walk-through', kk: 'Көшедегі серуен' },
   'walk.entranceLabel': { ru: 'Вход в кампус', en: 'Campus entrance', kk: 'Кампус кіреберісі' },
-  'walk.panoramaCaption': { ru: 'Панорамы — реальные снимки Google Street View / Mapillary у выбранной точки. Ничего не дорисовываем.', en: 'Panoramas are real Google Street View / Mapillary images at the selected point. Nothing is drawn in.', kk: 'Панорамалар — таңдалған нүктедегі нақты Google Street View / Mapillary суреттері. Ештеңе қосымша салынбайды.' },
+  'walk.panoramaCaption': { ru: 'Панорамы — реальные снимки Google Street View у выбранной точки, тот же Google, что и 3D-карта. Ничего не дорисовываем.', en: 'Panoramas are real Google Street View images at the selected point, the same Google as the 3D map. Nothing is drawn in.', kk: 'Панорамалар — таңдалған нүктедегі нақты Google Street View суреттері, 3D-картадағы Google. Ештеңе қосымша салынбайды.' },
   'walk.threeDTitle': { ru: '3D-фото', en: '3D photos', kk: '3D фото' },
   'walk.threeDSubtitle': { ru: 'двигайте мышью, на телефоне — наклоняйте', en: 'move your mouse, tilt on phone', kk: 'тінтуірді қозғаңыз, телефонда еңкейтіңіз' },
   'walk.no3dPhotos': { ru: 'Нет подтверждённых фото для 3D-режима.', en: 'No verified photos for 3D mode.', kk: '3D режимі үшін расталған суреттер жоқ.' },
@@ -408,9 +489,10 @@ export const CATEGORY_LABELS: Record<string, Record<Lang, string>> = {
   city: { ru: 'Город', en: 'City', kk: 'Қала' },
 }
 
+/** Stable per language: components put `t` in effect/memo deps, a fresh function every render rebuilt them. */
 export function useT() {
   const lang = useLang()
-  return (key: string) => D[key]?.[lang] ?? D[key]?.ru ?? key
+  return useCallback((key: string) => D[key]?.[lang] ?? D[key]?.ru ?? key, [lang])
 }
 export function catLabel(cat: string, lang: Lang) {
   return CATEGORY_LABELS[cat]?.[lang] ?? cat

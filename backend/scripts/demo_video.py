@@ -102,7 +102,7 @@ def main() -> None:
         page.wait_for_timeout(2500)
         # 5. outro
         page.goto(BASE + "/", wait_until="networkidle")
-        cap("CampusLens — честный визуальный профиль университета. LOCUS 2026, кейс 1.", 5)
+        cap("CampusLense — честный визуальный профиль университета. LOCUS 2026, кейс 1.", 5)
         page.evaluate(CAPTION_JS, "")
         page.wait_for_timeout(800)
         ctx.close()

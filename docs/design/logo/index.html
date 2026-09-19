@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>CampusLense · знак</title>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Literata:opsz,wght@7..72,500&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#0B0D12; --muted:#6B7180; --line:#E9EBEF; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#fff; color:var(--ink); font:15px/1.55 Onest, system-ui, sans-serif; }
+  .wrap { max-width:1120px; margin:0 auto; padding:56px 40px 72px; }
+  h1 { font:500 40px/1.1 Literata, serif; font-variation-settings:'opsz' 72; letter-spacing:-0.015em; margin:0; }
+  .lead { color:var(--muted); max-width:640px; margin:12px 0 0; }
+  h2 { font:500 13px/1 Onest; color:var(--muted); margin:0 0 18px; }
+  section { padding:40px 0; border-top:1px solid var(--line); }
+  section:first-of-type { border-top:0; }
+  .row { display:flex; gap:20px; flex-wrap:wrap; }
+  .tile { flex:1; min-width:240px; border:1px solid var(--line); border-radius:12px; padding:28px; display:flex; flex-direction:column; gap:14px; }
+  .tile.ink { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .cap { font-size:13px; color:var(--muted); } .ink .cap { color:#A0A5B0; }
+  .big svg { width:200px; height:200px; display:block; }
+  .sizes { display:flex; align-items:flex-end; gap:26px; }
+  .sizes div { display:flex; flex-direction:column; align-items:center; gap:8px; font-size:11px; color:var(--muted); }
+  .sizes svg { color:var(--ink); } .ink .sizes svg { color:#fff; }
+  .lock { display:flex; align-items:center; gap:10px; font:600 22px/1 Onest; letter-spacing:-0.02em; }
+  .lock svg { width:34px; height:34px; transform:translateY(2px); }
+  .app { width:112px; height:112px; }
+  ul { margin:0; padding-left:18px; color:#3B414E; font-size:14px; } li { margin:4px 0; } b { color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Знак CampusLense</h1>
+  <p class="lead">Линза с античным портиком: «рассмотреть кампус вблизи». Два начертания одного рисунка. Сплошное одним цветом: портик — фронтон, балка, колонны, ступень — вырезан из линзы. Контурное — те же линии штрихом.</p>
+
+  <section>
+    <h2>Начертания</h2>
+    <div class="row">
+      <div class="tile"><div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg></div><div class="cap">Сплошное — основной знак, держится до 16 px</div></div>
+      <div class="tile"><div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg></div><div class="cap">Контурное — для крупных размеров и состояний загрузки</div></div>
+      <div class="tile ink"><div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg></div><div class="cap">На тёмном — тот же знак белым</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Малые размеры, реальные пиксели</h2>
+    <div class="row">
+      <div class="tile"><div class="sizes"><div><svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>64</div><div><svg width="48" height="48" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>48</div><div><svg width="32" height="32" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>32</div><div><svg width="24" height="24" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>24</div><div><svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>16</div></div></div>
+      <div class="tile ink"><div class="sizes"><div><svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>64</div><div><svg width="48" height="48" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>48</div><div><svg width="32" height="32" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>32</div><div><svg width="24" height="24" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>24</div><div><svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>16</div></div></div>
+      <div class="tile"><div class="sizes"><div><svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg>64</div><div><svg width="48" height="48" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg>48</div><div><svg width="32" height="32" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg>32</div><div><svg width="24" height="24" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg>24</div><div><svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor"><circle cx="26" cy="26" r="19.5" stroke-width="3"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z" fill="currentColor" stroke="none"/><g stroke-width="2.6"><path d="M14.4 19.2L26 13.2L37.6 19.2z" stroke-linejoin="miter"/><path d="M13.2 22.6H38.8M17.9 25.6V33.4M23.3 25.6V33.4M28.7 25.6V33.4M34.1 25.6V33.4M14 36.2H38M12.22 39.8H39.78"/></g></svg>16</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Знак и название · иконка приложения</h2>
+    <div class="row">
+      <div class="tile"><div class="lock"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>CampusLense</div><div class="cap">Onest 600, −2 %; знак на 2 px ниже, чтобы по строке выравнивалась линза, а не ручка</div></div>
+      <div class="tile ink"><div class="lock"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 26A21 21 0 1 1 47 26A21 21 0 1 1 5 26zM26 11.9L38.2 17H13.8zM13.8 19.2H38.2V22H13.8zM14.8 24.2H18.2V34.6H14.8zM21.13 24.2H24.53V34.6H21.13zM27.47 24.2H30.87V34.6H27.47zM33.8 24.2H37.2V34.6H33.8zM11.4 36.9H40.6V39.3H11.4z"/><path d="M39.88 44.97L53.29 58.39A3.6 3.6 0 0 0 58.39 53.29L44.97 39.88A23.5 23.5 0 0 1 39.88 44.97z"/></svg>CampusLense</div><div class="cap">Шапка главной над планетой</div></div>
+      <div class="tile"><img class="app" src="app-icon.svg" alt=""><div class="cap">Иконка приложения и соцсетей</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Построение</h2>
+    <ul>
+      <li><b>Сетка 64.</b> Центр линзы 26/26, радиус 21. Ручка под 45°, отделена от линзы ровным зазором 2,5: её внутренний торец — дуга, концентричная линзе.</li>
+      <li><b>Портик вырезан из линзы.</b> Сверху вниз: фронтон, балка под ним, колонны, ступень. Балка той же ширины, что основание фронтона, и чуть шире колоннады; она немного толще ступени, чтобы читаться и в шапке (30 px). Зазоры между частями одинаковые — 2,2.</li>
+      <li><b>Три колонны, четыре просвета.</b> При 24–32 px пять просветов сливаются, четыре читаются как портик.</li>
+      <li><b>Один цвет.</b> В интерфейсе знак всегда цвета текста (#0B0D12 или белый). Синий — только для иконки приложения, если нужна.</li>
+      <li><b>Не рядом с полем поиска:</b> лупа сама по себе значит «поиск», поэтому знак живёт в шапке, а поле — внизу страницы.</li>
+    </ul>
+  </section>
+</div>
+</body>
+</html>

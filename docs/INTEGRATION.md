@@ -1,7 +1,7 @@
 # Интеграция с частью проекта на Next.js / Node
 
 Этот документ описывает, как вторая часть проекта (Next.js + React + TypeScript, Node.js, Sharp + SHA-1/dHash,
-Leaflet, Gemini + Zod, localStorage) стыкуется с Python-пайплайном CampusLens без переписывания ни одной из сторон.
+Leaflet, Gemini + Zod, localStorage) стыкуется с Python-пайплайном CampusLense без переписывания ни одной из сторон.
 
 ## 1. Точки стыковки
 

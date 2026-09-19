@@ -30,9 +30,10 @@ from datetime import datetime
 from ... import cache
 from ...geo import haversine_km
 from ...models import PhotoCandidate, University
+from .. import search_learn
 from .. import search_plan as sp
 from .. import video_frames
-from .social_api import _date, _jpeg, _sc, handle_of
+from .social_api import _date, _jpeg, _sc, best_play, handle_of
 
 log = logging.getLogger("campuslens.social_search")
 
@@ -97,7 +98,7 @@ def _tt_post(raw: dict, intent: str, query: str) -> Post | None:
     if not images:
         images = [u for im in ((a.get("image_post_info") or {}).get("images") or [])
                   if (u := _jpeg(im.get("display_image")))]
-    play = ((v.get("play_addr") or {}).get("url_list") or [None])[0]
+    play = best_play(v)
     dur = v.get("duration") or 0
     return Post(platform="tiktok", source="tiktok_search", id=pid, page=f"https://www.tiktok.com/@{uid}/video/{pid}",
                 caption=" ".join((a.get("desc") or "").split()), author=uid, author_name=au.get("nickname") or "",
@@ -404,6 +405,16 @@ async def tiktok(uni: University, plan: sp.Plan, fast: bool = False) -> list[Pho
         (en_tag if 8 <= len(en_tag) <= 30 else None)
     if main_tag and "atmosphere" in keys:
         jobs.append(("hashtag", "atmosphere", main_tag))
+    # what earlier builds of this university learned (search_learn.py): its proven hashtags are searched from the
+    # first profile on; a query that has never returned a good post waits for the background pass
+    learned = await search_learn.load(uni.qid)
+    if learned.builds:
+        generic = await search_learn.generic_tags()
+        jobs += [("hashtag", "atmosphere" if "atmosphere" in keys else intents[0].key, t)
+                 for t in search_learn.proven_tags(learned, generic, n=2 if fast else 3, uni=uni, forms=forms,
+                                                   places=await search_learn.places_of(uni))]
+        if fast:
+            jobs = [j for j in jobs if j[0] != "keyword" or not search_learn.dead(learned, "tiktok", j[2])]
     jobs = list(dict.fromkeys(jobs))
 
     def call(kind: str, q: str):
@@ -430,6 +441,65 @@ async def tiktok(uni: University, plan: sp.Plan, fast: bool = False) -> list[Pho
     return await _media(picked, max_videos, uni)
 
 
+# ---------- the learned round ----------
+async def learned_round(uni: University, plan: sp.Plan, now: search_learn.Learned,
+                        searched: set[str] = frozenset()) -> list[PhotoCandidate]:
+    """A second round in the background pass, on what this build's own verdicts (plus earlier builds') proved:
+    the hashtags that carry good posts of this university by several authors, on TikTok and Instagram, and the feeds
+    of the people whose posts about it were good. Their posts are ranked like any other (an author proven here counts
+    as tied to the university) and go to the inspector like any other."""
+    up = await sp.load_uni(uni.qid)
+    forms, iso, center = _context(uni, up)
+    known = search_learn.combined(await search_learn.load(uni.qid), now)
+    generic = await search_learn.generic_tags()
+    tags = search_learn.proven_tags(known, generic, skip={s.lower() for s in searched}, n=3, uni=uni, forms=forms,
+                                    places=await search_learn.places_of(uni))
+    tt_authors = search_learn.proven_authors(known, "tiktok", skip=searched, n=3)
+    ig_authors = search_learn.proven_authors(known, "instagram", skip=searched, n=3)
+    if not (tags or tt_authors or ig_authors):
+        log.info("learned round %s: nothing proven yet", uni.qid)
+        return []
+    live = {i.key: i for i in plan.intents if i.enabled}
+    first = "atmosphere" if "atmosphere" in live else next(iter(live), "")
+    jobs: list[tuple[str, str]] = [("tt_tag", t) for t in tags] + [("ig_tag", t) for t in tags] + \
+        [("tt_user", a) for a in tt_authors] + [("ig_user", a) for a in ig_authors]
+
+    def call(kind: str, q: str):
+        if kind == "tt_tag":
+            return _sc("/v1/tiktok/search/hashtag", _max_age=SEARCH_TTL, hashtag=q)
+        if kind == "ig_tag":
+            return _sc("/v1/instagram/search/hashtag", _max_age=SEARCH_TTL, hashtag=q, media_type="all")
+        if kind == "tt_user":
+            return _sc("/v3/tiktok/profile/videos", _max_age=SEARCH_TTL, handle=q)
+        return _sc("/v2/instagram/user/posts", _max_age=SEARCH_TTL, handle=q)
+
+    answers = await video_frames.until_deadline([call(k, q) for k, q in jobs], margin=8.0)
+    posts: list[Post] = []
+    for (kind, q), j in zip(jobs, answers):
+        j = j or {}
+        raws = j.get("aweme_list") or j.get("search_item_list") or j.get("items") or j.get("posts") or []
+        for raw in raws:
+            label = f"#{q}" if kind.endswith("tag") else f"@{q}"
+            p = _tt_post(raw, first, label) if kind.startswith("tt") else \
+                _ig_post(raw, first, label, source="instagram_search")
+            if not p:
+                continue
+            # the caption's own theme, when it names one (a dorm tour found by the campus tag belongs to dorms)
+            low = p.caption.lower()
+            p.intent = next((k for k, i in live.items() if any(w in low for w in i.caption_words)), first)
+            if kind.endswith("user"):
+                p.affiliated = True        # proven by its own earlier posts about this university
+                if kind == "tt_user":
+                    p.author = p.author or q
+            score(p, forms, iso, center, live.get(p.intent))
+            posts.append(p)
+    per_intent, max_videos = _budget(plan, False)
+    picked = _select(posts, plan, per_intent)
+    log.info("learned round %s: tags %s, tiktok %s, instagram %s -> %d posts, %d picked", uni.qid, tags, tt_authors,
+             ig_authors, len(posts), len(picked))
+    return await _media(picked, max_videos, uni)
+
+
 # ---------- Instagram ----------
 async def instagram(uni: University, plan: sp.Plan, fast: bool = False) -> list[PhotoCandidate]:
     """Hashtags people use for the university (found by Instagram's own search, with their post counts) and the
@@ -447,6 +517,12 @@ async def instagram(uni: University, plan: sp.Plan, fast: bool = False) -> list[
     if not tags and 8 <= len(en_tag) <= 30:
         tags = [{"tag": en_tag, "intent": "atmosphere"}]    # discovery not in yet: the English name run together
     jobs += [("hashtag", t["intent"], t["tag"]) for t in tags]
+    learned = await search_learn.load(uni.qid)
+    if learned.builds:
+        generic = await search_learn.generic_tags()
+        jobs += [("hashtag", "atmosphere" if "atmosphere" in keys else intents[0].key, t)
+                 for t in search_learn.proven_tags(learned, generic, skip={t["tag"] for t in tags}, n=2 if fast else 3,
+                                                   uni=uni, forms=forms, places=await search_learn.places_of(uni))]
     en = uni.names.get("en") or uni.name
     jobs.append(("popular", "atmosphere" if "atmosphere" in keys else intents[0].key, en))
     for i in intents:
@@ -491,6 +567,10 @@ async def instagram_accounts(uni: University, plan: sp.Plan, fast: bool = False)
             order.append(a)
     order += [a for a in accounts if a not in order]
     order = order[:(3 if fast else 8)]
+    learned = await search_learn.load(uni.qid)
+    have = {a["username"].lower() for a in order}
+    order += [{"username": u, "intent": "atmosphere", "full_name": ""}
+              for u in search_learn.proven_authors(learned, "instagram", skip=have, n=2 if fast else 4)]
     answers = await video_frames.until_deadline(
         [_sc("/v2/instagram/user/posts", _max_age=SEARCH_TTL, handle=a["username"]) for a in order], margin=8.0)
     posts: list[Post] = []

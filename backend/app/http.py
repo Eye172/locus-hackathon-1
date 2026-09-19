@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -74,12 +75,32 @@ async def get_json(url: str, **kw) -> Any:
     return r.json()
 
 
+# serper.dev with its balance spent answers every request "400 Not enough credits": after the first such answer the
+# rest are refused here for a while instead of each costing a round trip (a build sends ~40 of them)
+SERPER_PAUSE_S = 1800.0
+_serper_out_until = 0.0
+
+
+def serper_out() -> bool:
+    return time.monotonic() < _serper_out_until
+
+
 async def post(url: str, *, data: dict | None = None, json: Any = None, headers: dict | None = None,
                timeout: float | None = None) -> httpx.Response:
+    global _serper_out_until
+    serper = "google.serper.dev" in url
+    if serper and serper_out():
+        return httpx.Response(402, json={"message": "Not enough credits"}, request=httpx.Request("POST", url))
     kw: dict[str, Any] = {"data": data, "json": json, "headers": headers}
     if timeout is not None:
         kw["timeout"] = timeout
-    return await client().post(url, **kw)
+    r = await client().post(url, **kw)
+    if serper and r.status_code in (400, 402, 403) and "credits" in r.text.lower():
+        if not serper_out():
+            log.warning("serper.dev: no credits left - Google Images, Maps reviews and web search paused for %d min",
+                        SERPER_PAUSE_S // 60)
+        _serper_out_until = time.monotonic() + SERPER_PAUSE_S
+    return r
 
 
 async def close() -> None:

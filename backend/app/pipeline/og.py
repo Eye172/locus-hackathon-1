@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from ..config import settings
+from .names import row_name
 from ..models import CATEGORIES, Profile
 
 W, H = 1200, 630
@@ -79,11 +80,11 @@ def render(p: Profile | None, row: dict | None) -> bytes:
         cw = 640
 
     x = cw + 48
-    name = (p.university.name if p else None) or (row.get("ru") or row.get("en") if row else "") or ""
+    name = (p.university.name if p else None) or (row_name(row) if row else "") or ""
     city = (p.university.city if p else None) or (row.get("city") if row else None)
     country = p.university.country if p else None
     d.rounded_rectangle((x, 56, x + 26, 82), radius=13, fill=BLUE)
-    d.text((x + 36, 54), "CampusLens", font=_font(True, 24), fill=INK)
+    d.text((x + 36, 54), "CampusLense", font=_font(True, 24), fill=INK)
     y = 130
     for line in _wrap(d, name, _font(True, 46), W - x - 48, 3):
         d.text((x, y), line, font=_font(True, 46), fill=INK)

@@ -8,7 +8,7 @@ import json, sys, time, pathlib, re
 import httpx
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "data" / "universities.json"
-UA = {"User-Agent": "CampusLens/0.1 (LOCUS hackathon; contact: nnurkhan91@gmail.com)",
+UA = {"User-Agent": "CampusLense/0.1 (LOCUS hackathon; contact: nnurkhan91@gmail.com)",
       "Accept": "application/sparql-results+json"}
 
 # (country QID, use subclass closure?)  Central Asia first, then neighbours and popular destinations.

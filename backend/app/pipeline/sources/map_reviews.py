@@ -40,6 +40,8 @@ def _hi(url: str, w: int = 1600, h: int = 1200) -> str:
 
 
 async def _post(url: str, body: dict) -> dict:
+    if http.serper_out():       # the balance is spent (app/http.py)
+        return {}
     r = await http.post(url, json=body, timeout=8.0, headers={
         "X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"})
     r.raise_for_status()

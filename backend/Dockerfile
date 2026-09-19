@@ -1,4 +1,4 @@
-# CampusLens backend — CPU only, weights baked in so the first request is fast.
+# CampusLense backend — CPU only, weights baked in so the first request is fast.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HF_HUB_DISABLE_SYMLINKS_WARNING=1 \

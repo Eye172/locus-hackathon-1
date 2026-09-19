@@ -5,57 +5,59 @@ import { API_BASE, thumbUrl } from '../lib/api'
 import { DepthPhoto } from './DepthPhoto'
 import { SourceLink } from './SourceLink'
 import { catLabel, useLang, useT } from '../lib/i18n'
+import { GOOGLE_3D_KEY, loadStreetView } from '../lib/gmaps'
 
-const GKEY = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined) || ''
-const MTOKEN = (import.meta.env.VITE_MAPILLARY_TOKEN as string | undefined) || ''
 const KIND_LABEL_KEY: Record<string, string> = { dormitory: 'walk.kindDormitory', library: 'walk.kindLibrary', sports: 'walk.kindSports', academic: 'walk.kindAcademic', student_life: 'walk.kindStudentLife', other: 'walk.kindOther' }
 
-/** Street-level panorama: Google Street View Embed (free) or MapillaryJS (free token). */
+/** Compass bearing from a to b, degrees: the panorama opens facing the building. */
+function bearing(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const r = Math.PI / 180
+  const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r)
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r)
+  return (Math.atan2(y, x) / r + 360) % 360
+}
+
+/** Street-level panorama: Google Street View through the same Maps JavaScript API and key as the 3D map. */
 function Panorama({ lat, lon, t }: { lat: number; lon: number; t: (key: string) => string }) {
+  const lang = useLang()
   const box = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<'idle' | 'ok' | 'none'>('idle')
   useEffect(() => {
-    if (!MTOKEN || GKEY) return
-    let viewer: { remove?: () => void; moveTo?: (id: string) => Promise<unknown> } | null = null
+    if (!GOOGLE_3D_KEY) return
     let alive = true
-    ;(async () => {
-      try {
-        const d = 0.004
-        const r = await fetch(`https://graph.mapillary.com/images?access_token=${MTOKEN}&fields=id,computed_geometry&bbox=${lon - d},${lat - d},${lon + d},${lat + d}&limit=30`)
-        const j = await r.json()
-        const imgs: { id: string; computed_geometry?: { coordinates: [number, number] } }[] = j.data ?? []
-        if (!imgs.length) { setState('none'); return }
-        imgs.sort((a, b) => { const da = a.computed_geometry ? Math.hypot(a.computed_geometry.coordinates[0] - lon, a.computed_geometry.coordinates[1] - lat) : 9; const db = b.computed_geometry ? Math.hypot(b.computed_geometry.coordinates[0] - lon, b.computed_geometry.coordinates[1] - lat) : 9; return da - db })
-        const mod = await import('mapillary-js')
-        await import('mapillary-js/dist/mapillary.css')
-        if (!alive || !box.current) return
-        viewer = new mod.Viewer({ accessToken: MTOKEN, container: box.current, imageId: imgs[0].id, component: { cover: false } })
-        setState('ok')
-      } catch { setState('none') }
-    })()
-    return () => { alive = false; viewer?.remove?.() }
-  }, [lat, lon])
+    let pano: { setVisible?: (v: boolean) => void } | null = null
+    setState('idle')
+    loadStreetView(lang).then(async (sv) => {
+      const { data } = await new sv.StreetViewService().getPanorama({
+        location: { lat, lng: lon }, radius: 250, preference: sv.StreetViewPreference.NEAREST, sources: [sv.StreetViewSource.OUTDOOR],
+      })
+      if (!alive || !box.current) return
+      const at = data.location.latLng.toJSON()
+      pano = new sv.StreetViewPanorama(box.current, {
+        pano: data.location.pano, pov: { heading: bearing(at, { lat, lng: lon }), pitch: 4 }, zoom: 0,
+        addressControl: false, motionTracking: false, motionTrackingControl: false, fullscreenControl: true,
+      })
+      setState('ok')
+    }).catch(() => { if (alive) setState('none') })   // ZERO_RESULTS: no panorama within reach
+    return () => { alive = false; pano?.setVisible?.(false) }
+  }, [lat, lon, lang])
 
-  if (GKEY) {
-    return <iframe title="streetview" className="w-full h-[420px] rounded-lg border border-line" loading="lazy" allowFullScreen
-      src={`https://www.google.com/maps/embed/v1/streetview?key=${GKEY}&location=${lat},${lon}&heading=0&pitch=0&fov=90`} />
-  }
-  if (MTOKEN) {
+  if (!GOOGLE_3D_KEY) {
     return (
-      <div className="relative">
-        <div ref={box} className="w-full h-[420px] rounded-lg border border-line bg-black overflow-hidden" />
-        {state === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.searchingMapillary')}</div>}
-        {state === 'none' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.noMapillaryNearby')}</div>}
+      <div className="card topo-soft p-8 text-center">
+        <div className="relative">
+          <KeyRound className="mx-auto text-muted" />
+          <div className="mt-2 font-bold">{t('walk.panoramasDisabled')}</div>
+          <div className="mt-1 text-sm text-muted max-w-xl mx-auto">{t('walk.addKey')}</div>
+        </div>
       </div>
     )
   }
   return (
-    <div className="card topo-soft p-8 text-center">
-      <div className="relative">
-        <KeyRound className="mx-auto text-muted" />
-        <div className="mt-2 font-bold">{t('walk.panoramasDisabled')}</div>
-        <div className="mt-1 text-sm text-muted max-w-xl mx-auto">{t('walk.addKey1')} <span className="mono">VITE_GOOGLE_MAPS_KEY</span> {t('walk.addKey2')} <span className="mono">VITE_MAPILLARY_TOKEN</span> {t('walk.addKey3')} <span className="mono">frontend/.env</span> {t('walk.addKey4')}</div>
-      </div>
+    <div className="relative">
+      <div ref={box} className="w-full h-[420px] rounded-lg border border-line bg-black overflow-hidden" />
+      {state === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.searching')}</div>}
+      {state === 'none' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.noPanorama')}</div>}
     </div>
   )
 }

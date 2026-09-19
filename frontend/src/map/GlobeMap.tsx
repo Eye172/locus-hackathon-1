@@ -409,6 +409,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       clearResetTimers()
       atHome.current = true
       map.flyTo({ center: HOME, ...homeView(map, HOME[1]), pitch: 0, bearing: 0, duration: 2000 })
+      map.once('idle', prefetchPlanet)  // no-op when the planet is already warm
       resetTimers.current = [
         window.setTimeout(() => showMarkers(true, 900), 900),
         window.setTimeout(() => { spinning.current = true }, 2100),
@@ -468,7 +469,10 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       map.resize()
       if (map.getSource('unis')) return
       map.setProjection({ type: 'globe' })
-      map.once('idle', prefetchPlanet)  // after the first view is in: the prefetch must not compete with its tiles
+      // after the first view is in: the prefetch must not compete with its tiles - nor with a flight already under way
+      // (a page opened straight into one): 229 planet tiles used to download during the arrival scene's first seconds.
+      // They are fetched on the way back to the planet instead (resetToGlobe)
+      map.once('idle', () => { if (markersOn.current || introRef.current !== 'done') prefetchPlanet() })
       map.addSource('unis', { type: 'geojson', data: '/universities.geojson', cluster: true, clusterRadius: 38, clusterMaxZoom: 7 })
       map.addLayer({ id: 'unis-glow', type: 'circle', source: 'unis', filter: ['!', ['has', 'point_count']],
         paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 7, 6, 11, 12, 18], 'circle-color': '#9CD3FF', 'circle-opacity': 0.35, 'circle-blur': 0.9 } })

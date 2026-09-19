@@ -34,7 +34,7 @@
    Файл `README.md` Space должен начинаться с:
    ```
    ---
-   title: CampusLens API
+   title: CampusLense API
    sdk: docker
    app_port: 7860
    ---

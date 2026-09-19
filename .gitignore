@@ -34,3 +34,8 @@ docs/video/_rec/
 docs/video/levels_*.png
 backend/data/tiles/
 backend/data/glb/
+
+# service-account keys (Vertex AI) and other secrets: never in git
+backend/secrets/
+*-sa.json
+campuslens1-*.json

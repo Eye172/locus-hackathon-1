@@ -151,9 +151,12 @@ async def search(q: str) -> list[Candidate]:
         city = _first(claims, "P131")
         country = _first(claims, "P17")
         logo = _first(claims, "P154") or _first(claims, "P18")
+        from ..names import display, english_alternative
+        lab = {l: v["value"] for l, v in e.get("labels", {}).items()}
         out.append(Candidate(
             qid=qid,
-            label=_label(e) or qid,
+            label=display(lab.get("ru"), english_alternative(lab.get("en")) or lab.get("en"), _label(e),
+                          country.get("id") if isinstance(country, dict) else None) or qid,
             description=_desc(e),
             city=_label(refs.get(city["id"], {})) if city else None,
             country=_label(refs.get(country["id"], {})) if country else None,
@@ -219,9 +222,16 @@ async def entity(qid: str) -> University:
     city = _first(claims, "P131")
     country = _first(claims, "P17")
 
+    # the "en" label is often the name in the university's own language (Hochschule Mittweida): an English Wikipedia
+    # title or an English alias is taken instead; with neither, enrich.facts() finds a translation
+    from ..names import display, english_alternative
+    name_en = english_alternative(labels.get("en"), [sitelinks.get("en"), *aliases])
+    country_qid = country.get("id") if isinstance(country, dict) else None
     uni = University(
         qid=qid,
-        name=labels.get("ru") or labels.get("en") or labels.get("kk") or qid,
+        name=display(labels.get("ru"), name_en or labels.get("en"), labels.get("ru") or labels.get("kk"), country_qid) or qid,
+        name_en=name_en,
+        country_qid=country_qid,
         names=labels,
         aliases=aliases,
         description=_desc(e),

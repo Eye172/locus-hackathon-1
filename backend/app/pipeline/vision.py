@@ -131,7 +131,21 @@ class Clip:
         return res
 
 
+    def texts(self, prompts: tuple[str, ...]) -> np.ndarray:
+        """Unit embeddings of arbitrary prompts (cached per tuple): zero-shot readings beyond the categories."""
+        import torch
+        self.load()
+        hit = self._texts.get(prompts)
+        if hit is None:
+            with torch.no_grad():
+                te = self.model.encode_text(self.tokenizer(list(prompts))).float()
+                te = te / te.norm(dim=-1, keepdim=True)
+            hit = self._texts[prompts] = te.cpu().numpy()
+        return hit
+
+
 clip = Clip()
+clip._texts = {}
 
 
 async def warmup() -> None:

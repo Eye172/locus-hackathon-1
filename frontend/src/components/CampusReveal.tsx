@@ -13,7 +13,15 @@ import { catLabel, useLang, useT } from '../lib/i18n'
 const HERO_CATS = new Set(['campus', 'dormitory', 'library', 'sports', 'student_life', 'classroom', 'lab'])
 const HOLD_MS = 5200
 
-export function pickHero(photos: Photo[], limit = 6): Photo[] {
+export function pickHero(photos: Photo[], limit = 6, cover?: string[]): Photo[] {
+  // the cover editor's order first (backend pipeline/cover.py), then the rule below for the rest
+  const by = new Map(photos.map((p) => [p.id, p]))
+  const first = (cover ?? []).map((id) => by.get(id)).filter((p): p is Photo => !!p && !(p as { rejected?: boolean }).rejected)
+  if (first.length >= 3) return [...first, ...pickHeroByRule(photos.filter((p) => !first.includes(p)), limit)].slice(0, limit)
+  return pickHeroByRule(photos, limit)
+}
+
+function pickHeroByRule(photos: Photo[], limit: number): Photo[] {
   const seen = new Set<string>()
   const ok = photos.filter((p) => !(p as { rejected?: boolean }).rejected && HERO_CATS.has(p.category)
     && (p.level === 'verified' || p.level === 'likely') && !p.outdated && p.width >= 500)
@@ -82,7 +90,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
       <div className="absolute top-6 left-6 right-6 flex items-start justify-between gap-4 text-white">
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-[0.18em] text-blue-200/80">{t('reveal.title')}</div>
-          <div className="mt-1 text-2xl sm:text-4xl font-extrabold leading-tight drop-shadow-[0_2px_14px_rgba(0,0,0,0.6)] truncate">{name}</div>
+          <div className="mt-1 display text-[28px] sm:text-[44px] font-medium leading-tight drop-shadow-[0_2px_14px_rgba(0,0,0,0.6)] truncate">{name}</div>
           {city && <div className="text-sm text-white/75">{city}</div>}
         </div>
         <div className="flex gap-2 shrink-0">

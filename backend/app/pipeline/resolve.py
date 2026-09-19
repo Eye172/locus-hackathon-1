@@ -19,6 +19,7 @@ from rapidfuzz import fuzz, process
 
 from ..config import settings
 from ..models import Candidate
+from .names import row_name
 from .sources import websearch, wikidata
 
 log = logging.getLogger("campuslens.resolve")
@@ -222,7 +223,7 @@ class Index:
         for row, score in ranked:
             r = self.rows[row]
             out.append(Candidate(
-                qid=r["id"], label=r.get("ru") or r.get("en") or r.get("kk") or r["id"],
+                qid=r["id"], label=row_name(r),
                 city=r.get("city"), country=COUNTRY_NAMES.get(r["country"]),
                 score=min(score, 110) / 100.0, origin="index",
             ))

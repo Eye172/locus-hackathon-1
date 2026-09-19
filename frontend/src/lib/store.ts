@@ -43,6 +43,8 @@ export const store = {
   saved(): Record<string, SavedProfile> { return read(KEYS.saved, {}) },
   save(qid: string, p: SavedProfile) { const all = store.saved(); all[qid] = p; write(KEYS.saved, all); bump() },
   unsave(qid: string) { const all = store.saved(); delete all[qid]; write(KEYS.saved, all); bump() },
+  // a name saved under an older naming rule («Стэнфордский университет» -> Stanford University)
+  rename(qid: string, name: string) { const all = store.saved(); if (all[qid] && name && all[qid].name !== name) { all[qid] = { ...all[qid], name }; write(KEYS.saved, all); bump() } },
   plan(qid: string): PlanItem[] { return read<Record<string, { items: PlanItem[] }>>(KEYS.visitPlan, {})[qid]?.items ?? [] },
   addPlan(qid: string, label: string, photoId?: string) {
     const all = read<Record<string, { items: PlanItem[] }>>(KEYS.visitPlan, {})

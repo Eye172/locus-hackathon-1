@@ -1,4 +1,4 @@
-// Builds docs/pitch/CampusLens.pptx (8 slides). Run: node docs/pitch/build_deck.mjs
+// Builds docs/pitch/CampusLense.pptx (8 slides). Run: node docs/pitch/build_deck.mjs
 // Uses docs/screens/*.png when present (scripts/screenshots.py), otherwise real photo thumbnails from the cache.
 import pptxgen from 'pptxgenjs'
 import { existsSync, readdirSync } from 'node:fs'
@@ -20,8 +20,8 @@ const F = { h: 'Arial', b: 'Calibri', m: 'Courier New' }
 
 const pres = new pptxgen()
 pres.layout = 'LAYOUT_WIDE' // 13.33 x 7.5
-pres.author = 'CampusLens team'
-pres.title = 'CampusLens — LOCUS Startup Hackathon 2026'
+pres.author = 'CampusLense team'
+pres.title = 'CampusLense — LOCUS Startup Hackathon 2026'
 
 const title = (s, text, opts = {}) => s.addText(text, { x: 0.6, y: 0.45, w: 12.1, h: 0.8, fontFace: F.h, fontSize: 32, bold: true, color: opts.color ?? C.ink, isTextBox: true, margin: 0, charSpacing: -1 })
 const caps = (s, text, x, y, w, color = C.muted) => s.addText(text.toUpperCase(), { x, y, w, h: 0.25, fontFace: F.b, fontSize: 10, color, bold: true, charSpacing: 2, isTextBox: true, margin: 0 })
@@ -35,14 +35,14 @@ const img = (s, path, x, y, w, h, caption) => {
   else s.addImage({ path, x, y, w, h, sizing: { type: 'cover', w, h } })
   if (caption) s.addText(caption, { x, y: y + h + 0.05, w, h: 0.3, fontFace: F.b, fontSize: 10, color: C.muted, isTextBox: true, margin: 0 })
 }
-const footer = (s, dark = false) => s.addText('CampusLens · LOCUS Startup Hackathon 2026 · кейс 1 · LOCUSCASE1', { x: 0.6, y: 7.05, w: 12, h: 0.3, fontFace: F.b, fontSize: 9, color: dark ? '93A4D8' : C.muted, isTextBox: true, margin: 0 })
+const footer = (s, dark = false) => s.addText('CampusLense · LOCUS Startup Hackathon 2026 · кейс 1 · LOCUSCASE1', { x: 0.6, y: 7.05, w: 12, h: 0.3, fontFace: F.b, fontSize: 9, color: dark ? '93A4D8' : C.muted, isTextBox: true, margin: 0 })
 
 // 1 — title (space)
 {
   const s = pres.addSlide(); s.background = { color: C.space }
   const g = shot('globe') ?? shot('flight-arrival')
   if (g) s.addImage({ path: g, x: 6.6, y: 0.6, w: 6.2, h: 3.5, sizing: { type: 'cover', w: 6.2, h: 3.5 } })
-  s.addText('CampusLens', { x: 0.6, y: 1.2, w: 6, h: 1.1, fontFace: F.h, fontSize: 54, bold: true, color: C.white, isTextBox: true, margin: 0, charSpacing: -2 })
+  s.addText('CampusLense', { x: 0.6, y: 1.2, w: 6, h: 1.1, fontFace: F.h, fontSize: 54, bold: true, color: C.white, isTextBox: true, margin: 0, charSpacing: -2 })
   s.addText('Покажите университет таким, каким его увидит студент', { x: 0.6, y: 2.35, w: 5.8, h: 1.2, fontFace: F.b, fontSize: 22, color: 'C7D2FE', isTextBox: true, margin: 0 })
   s.addText('Проверенный визуальный профиль любого вуза мира за 25 секунд: фото кампуса, общежитий, аудиторий, библиотек и города — с источником, датой и объяснимым показателем достоверности у каждого снимка.', { x: 0.6, y: 3.7, w: 5.8, h: 1.4, fontFace: F.b, fontSize: 13, color: '93A4D8', isTextBox: true, margin: 0 })
   s.addText('Команда — заполнить · LOCUS Startup Hackathon 2026 · кейс 1', { x: 0.6, y: 5.6, w: 8, h: 0.4, fontFace: F.b, fontSize: 12, color: 'C7D2FE', isTextBox: true, margin: 0 })
@@ -158,10 +158,10 @@ const footer = (s, dark = false) => s.addText('CampusLens · LOCUS Startup Hacka
     s.addText(h, { x, y: 1.6, w: 3.9, h: 0.45, fontFace: F.h, fontSize: 18, bold: true, color: 'C7D2FE', isTextBox: true, margin: 0 })
     s.addText(items.map((t, j) => ({ text: t, options: { bullet: true, breakLine: j < items.length - 1, paraSpaceAfter: 8 } })), { x, y: 2.15, w: 3.9, h: 3.2, fontFace: F.b, fontSize: 13, color: 'DCE4FF', isTextBox: true, margin: 0, valign: 'top' })
   })
-  s.addText('CampusLens — покажите университет таким, каким его увидит студент.', { x: 0.6, y: 5.9, w: 12, h: 0.5, fontFace: F.h, fontSize: 16, bold: true, color: C.white, isTextBox: true, margin: 0 })
+  s.addText('CampusLense — покажите университет таким, каким его увидит студент.', { x: 0.6, y: 5.9, w: 12, h: 0.5, fontFace: F.h, fontSize: 16, bold: true, color: C.white, isTextBox: true, margin: 0 })
   footer(s, true)
 }
 
-const out = join(here, 'CampusLens.pptx')
+const out = join(here, 'CampusLense.pptx')
 await pres.writeFile({ fileName: out })
 console.log('written', out)

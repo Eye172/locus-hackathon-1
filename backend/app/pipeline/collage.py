@@ -25,8 +25,9 @@ PHASH_NEAR = 10
 
 
 def quality(p: Photo) -> float:
+    from .curate import looks
     q = p.quality / 3 if p.quality is not None else 0.5
-    s = 0.45 * p.confidence + 0.35 * q
+    s = 0.45 * p.confidence + 0.35 * q + looks(p)
     flags = set(p.ai.flags) if p.ai else set()
     if p.ai:
         s += 0.1 * p.ai.rel / 3

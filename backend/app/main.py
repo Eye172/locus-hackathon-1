@@ -1,4 +1,4 @@
-"""CampusLens API."""
+"""CampusLense API."""
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +19,7 @@ from . import cache, http
 from .config import settings
 from .models import CATEGORY_LABELS, SOURCE_LABELS, ExternalCandidates, Photo, PhotoCandidate, Profile
 from .pipeline import og, orchestrator, vision
+from .pipeline.names import row_en, row_name
 from .pipeline.resolve import index, resolve
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -95,7 +96,7 @@ async def lifespan(app: FastAPI):
     await http.close()
 
 
-app = FastAPI(title="CampusLens API", version="0.1", lifespan=lifespan)
+app = FastAPI(title="CampusLense API", version="0.1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 from .api_search import router as _search_router  # noqa: E402  (search settings and campus facts)
 app.include_router(_search_router)
@@ -127,7 +128,9 @@ async def mini(qid: str):
             ent = await cache.kv_get("web", qid)
             if not ent:
                 raise HTTPException(404, "unknown university")
-            return {"qid": qid, "name": ent["name"], "names": {}, "city": ent.get("city"), "country": None, "founded": None,
+            from .pipeline.names import web_display
+            return {"qid": qid, "name": web_display(ent["name"], ent.get("name_en"), ent.get("country")), "name_en": ent.get("name_en"), "country_qid": None,
+                    "names": {}, "city": ent.get("city"), "country": None, "founded": None,
                     "students": None, "logo_url": None, "lat": ent.get("lat"), "lon": ent.get("lon"), "profile": None,
                     "website": ent.get("website"), "origin": "web"}
         try:
@@ -135,7 +138,7 @@ async def mini(qid: str):
             uni = await wikidata.entity(qid)
         except Exception:
             raise HTTPException(404, "unknown university")
-        return {"qid": qid, "name": uni.name, "names": uni.names, "city": uni.city, "country": uni.country,
+        return {"qid": qid, "name": uni.name, "name_en": uni.name_en, "country_qid": uni.country_qid, "names": uni.names, "city": uni.city, "country": uni.country,
                 "founded": uni.founded, "students": uni.students, "logo_url": uni.logo_url,
                 "lat": uni.lat, "lon": uni.lon, "profile": None}
     u = p.university if p else None
@@ -153,7 +156,9 @@ async def mini(qid: str):
             pass
     return {
         "qid": qid,
-        "name": (u.name if u else None) or row.get("ru") or row.get("en"),
+        "name": u.name if u else row_name(row),
+        "name_en": (u.name_en if u else None) or (row_en(row) if row else None),
+        "country_qid": (u.country_qid if u else None) or (row or {}).get("country"),
         "names": u.names if u else {k: row.get(k) for k in ("ru", "en", "kk") if row.get(k)},
         "city": (u.city if u else None) or (row or {}).get("city"),
         "country": u.country if u else None,
@@ -272,6 +277,67 @@ async def chat(body: ChatIn):
     return EventSourceResponse(gen())
 
 
+_advisor_sheets: dict[tuple[str, str], tuple[float, dict]] = {}
+
+
+async def _advisor_sheet(qid: str, lang: str) -> dict:
+    """The advisor's facts about one university, kept for 10 minutes (the cards and every chat turn use them)."""
+    from .pipeline import compare as cmp
+    hit = _advisor_sheets.get((qid, lang))
+    if hit and time.monotonic() - hit[0] < 600:
+        return hit[1]
+    sheet = await cmp.advisor_sheet(await _profile_or_build(qid), lang)
+    _advisor_sheets[(qid, lang)] = (time.monotonic(), sheet)
+    return sheet
+
+
+@app.get("/api/compare/sheets")
+async def compare_sheets(a: str, b: str, lang: str = Query("ru", pattern="^(ru|en|kk)$")):
+    sa, sb = await asyncio.gather(_advisor_sheet(a, lang), _advisor_sheet(b, lang))
+    return {"a": sa, "b": sb}
+
+
+class AdvisorIn(BaseModel):
+    a: str
+    b: str
+    lang: str = "ru"
+    messages: list[dict] = []
+
+
+@app.post("/api/compare/advisor")
+async def compare_advisor(body: AdvisorIn):
+    """The compare page's chat, streamed. With no messages it writes the opening message - strengths and weak
+    points of both and the main differences - which is cached per pair and language."""
+    from .pipeline import compare as cmp
+    lang = body.lang if body.lang in cmp.LANG_NAME else "ru"
+    intro_key = f"v{cmp.ADVISOR_VERSION}:{body.a}|{body.b}|{lang}"
+
+    async def gen():
+        try:
+            if not body.messages:
+                hit = await cache.kv_get("compare_intro", intro_key, max_age_s=3 * 86400)
+                if hit and hit.get("text"):
+                    text = hit["text"]
+                    for i in range(0, len(text), 60):      # the saved intro still types itself out, quickly
+                        yield {"event": "token", "data": json.dumps({"text": text[i:i + 60]}, ensure_ascii=False)}
+                        await asyncio.sleep(0.012)
+                    yield {"event": "done", "data": json.dumps({"cached": True})}
+                    return
+            sa, sb = await asyncio.gather(_advisor_sheet(body.a, lang), _advisor_sheet(body.b, lang))
+            out = []
+            async for chunk in cmp.advisor_stream(sa, sb, body.messages, lang):
+                out.append(chunk)
+                yield {"event": "token", "data": json.dumps({"text": chunk}, ensure_ascii=False)}
+            if not body.messages and "".join(out).strip():
+                await cache.kv_set("compare_intro", intro_key, {"text": "".join(out)})
+            yield {"event": "done", "data": json.dumps({"cached": False})}
+        except Exception as e:  # noqa: BLE001
+            log.warning("advisor failed: %r", e)
+            yield {"event": "error", "data": json.dumps({"message": f"{type(e).__name__}: {e}"}, ensure_ascii=False)}
+
+    return EventSourceResponse(gen())
+
+
 async def _profile_or_build(qid: str) -> Profile:
     p = await cache.get_profile(qid)
     return p or await _generate_silent(qid)
@@ -338,6 +404,9 @@ async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pa
         c = await cache.kv_get("map3d", key, max_age_s=7 * 86400)
         from .pipeline.map3d import PACK_VERSION
         if c and c.get("v") == PACK_VERSION:
+            row = index.by_id.get(qid)
+            if row:  # names as the globe and the search show them, also in packs saved under older naming rules
+                c["university"].update(name=row_name(row), name_en=row_en(row), country_qid=row.get("country"))
             return c
     # requests for a pack that is being built join that build (the scene and its retries ask at the same time)
     t = _pack_builds.get(key)
@@ -450,19 +519,55 @@ async def map3d_grey_chunk(qid: str, cx: int, cy: int, ver: int, request: Reques
     return Response(gzip.decompress(body), media_type="model/gltf-binary", headers=headers)
 
 
-@app.get("/api/climate/{qid}")
-async def climate(qid: str, refresh: bool = False):
+_climate_builds: dict[str, asyncio.Task] = {}
+
+
+async def _climate_pack(qid: str, refresh: bool = False):
+    """The year's climate pack. One build per university at a time (the story and the tab ask together); it runs on
+    even if the page is closed. When a rebuild fails, an older saved pack is better than an error."""
     from .pipeline import climate as climate_mod
     uni, _ = await _facts(qid)
     if uni.lat is None:
         raise HTTPException(404, "no coordinates")
+    old = await cache.kv_get("climate", qid)
     pack = None if refresh else await cache.kv_get("climate", qid, max_age_s=30 * 86400)
-    if not pack:
-        try:
-            pack = await asyncio.wait_for(climate_mod.build(uni.lat, uni.lon, uni.city), timeout=20)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(503, f"climate unavailable: {type(e).__name__}")
-        await cache.kv_set("climate", qid, pack)
+    if pack and pack.get("v") == climate_mod.PACK_VERSION:
+        return uni, pack
+    task = _climate_builds.get(qid)
+    if task is None or task.done():
+        async def run():
+            p = await climate_mod.build(uni.lat, uni.lon, uni.city)
+            await cache.kv_set("climate", qid, p)
+            return p
+        task = _climate_builds[qid] = asyncio.ensure_future(run())
+    try:
+        return uni, await asyncio.wait_for(asyncio.shield(task), timeout=75)
+    except Exception as e:  # noqa: BLE001
+        if old:
+            return uni, old
+        raise HTTPException(503, f"climate unavailable: {type(e).__name__}")
+
+
+@app.get("/api/climate/{qid}/story")
+async def climate_story(qid: str, lang: str = "ru"):
+    """How the climate feels for a student: written by the LLM from the climate pack's own numbers, cached per language."""
+    from .pipeline import climate as climate_mod
+    lang = lang if lang in climate_mod.LANG_NAME else "ru"
+    uni, pack = await _climate_pack(qid)
+    key = f"v{climate_mod.STORY_VERSION}:{qid}:{lang}:{pack['year']}"
+    hit = await cache.kv_get("climate_story", key, max_age_s=30 * 86400)
+    if hit:
+        return hit
+    out = await climate_mod.story(pack, uni.name, uni.city, lang)
+    if out["mode"] == "ai":
+        await cache.kv_set("climate_story", key, out)
+    return out
+
+
+@app.get("/api/climate/{qid}")
+async def climate(qid: str, refresh: bool = False):
+    from .pipeline import climate as climate_mod
+    uni, pack = await _climate_pack(qid, refresh)
     live = await cache.kv_get("weather_now", qid, max_age_s=3600)
     if not live:
         live = await climate_mod.now(uni.lat, uni.lon)
@@ -585,15 +690,15 @@ async def share_page(qid: str, tab: str = "photos", photo: str | None = None):
     row = index.by_id.get(qid)
     if not p and not row:
         raise HTTPException(404)
-    name = (p.university.name if p else None) or (row.get("ru") or row.get("en") if row else qid)
+    name = (p.university.name if p else None) or (row_name(row) if row else qid)
     city = (p.university.city if p else None) or (row.get("city") if row else None)
     verified = sum(1 for ph in p.photos if ph.level == "verified") if p else 0
     desc = og.description(p, row)
     target = f"{settings.frontend_origin}/u/{qid}?tab={tab}" + (f"&photo={photo}" if photo else "")
     esc = lambda x: (x or "").replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")  # noqa: E731
     html = f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
-<title>{esc(name)} · CampusLens</title>
-<meta property="og:type" content="website"><meta property="og:site_name" content="CampusLens">
+<title>{esc(name)} · CampusLense</title>
+<meta property="og:type" content="website"><meta property="og:site_name" content="CampusLense">
 <meta property="og:title" content="{esc(name)}{(' · ' + esc(city)) if city else ''}">
 <meta property="og:description" content="{esc(desc)}">
 <meta property="og:image" content="/api/og/{qid}.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">

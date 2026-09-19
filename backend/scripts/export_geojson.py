@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "backend"))
+from app.pipeline.names import row_en, row_name  # noqa: E402
 SRC = ROOT / "backend" / "data" / "universities.json"
 OUT = ROOT / "frontend" / "public" / "universities.geojson"
 OUT_C = ROOT / "frontend" / "public" / "countries.json"
@@ -55,7 +58,8 @@ def main() -> None:
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [round(lon, 5), round(lat, 5)]},
             "properties": {k: v for k, v in {
-                "qid": r["id"], "name": r.get("ru") or r.get("en"), "name_en": r.get("en") or r.get("ru"),
+                # Russian if the university has a Russian name, else English (see app/pipeline/names.py)
+                "qid": r["id"], "name": row_name(r), "name_en": row_en(r) or r.get("ru"),
                 "name_kk": r.get("kk"), "city": r.get("city"), "c": iso,
             }.items() if v},
         })

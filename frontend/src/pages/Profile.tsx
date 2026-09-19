@@ -1,28 +1,26 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { RefreshCw, Share2, GitCompare, Gavel, ExternalLink, Bookmark, BookmarkCheck, ArrowLeft, LayoutGrid, Rows3, Check, Map as MapIcon, CalendarDays, Users, MapPin, Globe, Database, SearchCheck, Camera, type LucideIcon } from 'lucide-react'
-import { streamProfile, thumbUrl, API_BASE } from '../lib/api'
+import { RefreshCw, Share2, GitCompare, Bookmark, BookmarkCheck, ArrowLeft, Check, Map as MapIcon, Footprints } from 'lucide-react'
+import { streamProfile, API_BASE } from '../lib/api'
 import type { Campus, Photo, Profile as ProfileT, SourceStatus, Stage, University } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
-import { catLabel, useLang, useT } from '../lib/i18n'
-import { AgentsStrip, CoverageMatrix, DescriptionBlock, ContextCards, Timeline, JudgePanel, VisitPlan } from '../components/ProfileParts'
+import { catLabel, uniName, useLang, useT } from '../lib/i18n'
 import { PhotoGrid, PhotoAlbums, PhotoPassport, BrochureVsReality, EmptyState } from '../components/Photos'
 import { ClimateTab } from '../components/ClimateTab'
 import { CityTab } from '../components/CityTab'
 import { WalkTab } from '../components/WalkTab'
-import { CollageTab } from '../components/CollageTab'
 import { AboutCampus } from '../components/AboutCampus'
-import { SourceLink } from '../components/SourceLink'
-import { api } from '../lib/api'
+import { BuildStatus, FactsRow, HeroGallery, OverviewTab, VerifyTab, heroPicks } from '../components/ProfileSections'
 import type { ContextPack } from '../lib/types'
 import { store, useStoreVersion } from '../lib/store'
 
-type Tab = 'collage' | 'about' | 'photos' | 'bvr' | 'climate' | 'city' | 'timeline' | 'walk' | 'rejected' | 'judge'
+type Tab = 'overview' | 'photos' | 'campus' | 'city' | 'climate' | 'verify'
+type View = 'album' | 'grid' | 'bvr'
 const FILTERS: string[] = ['all', ...CATEGORIES]
-
-const PHOTO_NETS = new Set(['telegram', 'youtube', 'vk', 'instagram', 'tiktok'])  // networks we actually fetch photos from; the rest are links
-const SOCIAL_NAME: Record<string, string> = { instagram: 'Instagram', telegram: 'Telegram', youtube: 'YouTube', vk: 'VK', facebook: 'Facebook', tiktok: 'TikTok' }
-type Fact = { key: string; icon: LucideIcon; label: string; value: ReactNode }
+// old links (?tab=collage, ?tab=judge…) land on the tab that holds that content now
+const LEGACY: Record<string, Tab> = { collage: 'overview', about: 'campus', walk: 'campus', bvr: 'photos', timeline: 'photos', rejected: 'verify', judge: 'verify' }
+const TABS: Tab[] = ['overview', 'photos', 'campus', 'city', 'climate', 'verify']
+const asTab = (v: string | null): Tab => (v && (TABS as string[]).includes(v) ? v as Tab : v && LEGACY[v] ? LEGACY[v] : 'overview')
 
 export default function Profile() {
   const { qid = '' } = useParams()
@@ -44,21 +42,21 @@ export default function Profile() {
   const [run, setRun] = useState(0)
   const refresh = params.get('refresh') === '1'
 
-  // the collage ("what is this university like") opens first; every other view is one click away
-  const [tab, setTabState] = useState<Tab>((params.get('tab') as Tab) || 'collage')
-  const setTab = (next: Tab) => { setTabState(next); setParams((prev) => { const n = new URLSearchParams(prev); if (next === 'collage') n.delete('tab'); else n.set('tab', next); return n }, { replace: true }) }
-  const [view, setView] = useState<'grid' | 'album'>('album')
+  const [tab, setTabState] = useState<Tab>(asTab(params.get('tab')))
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next)
+    setParams((prev) => { const n = new URLSearchParams(prev); if (next === 'overview') n.delete('tab'); else n.set('tab', next); return n }, { replace: true })
+  }, [setParams])
+  const [view, setView] = useState<View>(params.get('tab') === 'bvr' ? 'bvr' : 'album')
   const [filter, setFilter] = useState<string>('all')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
   const [recent3, setRecent3] = useState(false)
   const [year, setYear] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(params.get('photo'))
   const [copied, setCopied] = useState(false)
+  const [walk, setWalk] = useState(params.get('tab') === 'walk')
   const [ctx, setCtx] = useState<ContextPack | null>(null)
-  useEffect(() => { setCtx(null) }, [qid])
-  useEffect(() => {
-    if (tab === 'city' && !ctx && profile) api.context(qid).then(setCtx).catch(() => {})
-  }, [tab, ctx, profile, qid])
+  useEffect(() => { setCtx(null); setWalk(false) }, [qid])
 
   useEffect(() => {
     setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false)
@@ -74,7 +72,7 @@ export default function Profile() {
         setProfile(p); setUni(p.university); setCampus(p.campus ?? null); setCached(c); setElapsed(p.elapsed_ms)
         setStages((st) => (c && Object.keys(st).length ? st : Object.fromEntries(p.stages.map((s) => [s.key, s]))))
         setSources((ss) => (c && Object.keys(ss).length ? ss : p.sources_status))
-        if (refresh) setParams({})
+        if (refresh) setParams((prev) => { const n = new URLSearchParams(prev); n.delete('refresh'); return n }, { replace: true })
       },
       onError: (m) => setError(m),
     })
@@ -91,207 +89,161 @@ export default function Profile() {
   ), [photos, filter, verifiedOnly, recent3, year])
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f, f === 'all' ? photos.length : photos.filter((p) => p.category === f).length])), [photos])
   const allForPassport = useMemo(() => (profile ? [...profile.photos, ...profile.rejected] : prelim), [profile, prelim])
+  const hero = useMemo(() => heroPicks(photos, 5, profile?.cover), [photos, profile?.cover])
   const open = openId ? allForPassport.find((p) => p.id === openId) ?? null : null
   const openPhoto = useCallback((p: Photo) => { setOpenId(p.id); setParams((prev) => { const n = new URLSearchParams(prev); n.set('photo', p.id); return n }, { replace: true }) }, [setParams])
   const closePhoto = useCallback(() => { setOpenId(null); setParams((prev) => { const n = new URLSearchParams(prev); n.delete('photo'); return n }, { replace: true }) }, [setParams])
-  const idx = open ? shown.findIndex((p) => p.id === open.id) : -1
-  const prev = idx > 0 ? () => openPhoto(shown[idx - 1]) : undefined
-  const next = idx >= 0 && idx < shown.length - 1 ? () => openPhoto(shown[idx + 1]) : undefined
+  // arrows walk through what the viewer came from: the filtered grid, else every photo
+  const seq = tab === 'photos' ? shown : allForPassport
+  const idx = open ? seq.findIndex((p) => p.id === open.id) : -1
+  const prev = idx > 0 ? () => openPhoto(seq[idx - 1]) : undefined
+  const next = idx >= 0 && idx < seq.length - 1 ? () => openPhoto(seq[idx + 1]) : undefined
 
   // the share link goes through /s/{qid}: crawlers get Open Graph tags + a preview card, people get redirected here
   const share = async () => { try { const u = new URL(window.location.href); await navigator.clipboard.writeText(`${API_BASE || u.origin}/s/${qid}${u.search}`); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
   const saved = !!store.saved()[qid]
-  const doRefresh = () => { setParams({ refresh: '1' }); setRun((r) => r + 1) }
+  useEffect(() => { if (uni?.name) store.rename(qid, uni.name) }, [qid, uni?.name])
+  const doRefresh = () => { setParams((prev) => { const n = new URLSearchParams(prev); n.set('refresh', '1'); return n }, { replace: true }); setRun((r) => r + 1) }
   const doneSources = Object.entries(sources).filter(([, s]) => s.status === 'done').map(([, s]) => s.label)
+  const showCategory = (c: string) => { setFilter(c); setView('grid'); setTab('photos'); window.scrollTo({ top: 0 }) }
+  const years = Object.keys(profile?.timeline ?? {}).sort().reverse()
 
-  const tabs: { key: Tab; label: string; badge?: number; hide?: boolean }[] = [
-    { key: 'collage', label: t('profile.collage'), badge: profile?.collage?.reduce((n, s) => n + s.photos.length, 0) },
-    { key: 'about', label: t('profile.about') },
-    { key: 'photos', label: t('profile.photos'), badge: photos.length },
-    { key: 'bvr', label: t('profile.bvr') },
-    { key: 'walk', label: t('profile.walk') },
-    { key: 'climate', label: t('profile.climateTab') },
+  const tabs: { key: Tab; label: string; badge?: number }[] = [
+    { key: 'overview', label: 'Обзор' },
+    { key: 'photos', label: t('profile.photos'), badge: photos.length || undefined },
+    { key: 'campus', label: 'Кампус' },
     { key: 'city', label: t('profile.cityTab') },
-    { key: 'timeline', label: t('profile.timeline') },
-    { key: 'rejected', label: t('profile.rejected'), badge: profile?.rejected.length },
-    { key: 'judge', label: t('profile.judge') },
+    { key: 'climate', label: t('profile.climateTab') },
+    { key: 'verify', label: 'Проверка' },
   ]
-  const name = uni ? (uni.names[lang] || uni.name) : ''
-  // a city view must never stand in for the university in the header
-  const hero = profile?.photos.find((p) => p.category === 'campus' && p.level === 'verified') ?? profile?.photos.find((p) => p.category !== 'city')
-  const subtitle = uni ? [uni.names.en && uni.names.en !== name ? uni.names.en : null, uni.description].filter(Boolean).join(' · ') : ''
-  const facts: Fact[] = !uni ? [] : ([
-    uni.founded ? { key: 'founded', icon: CalendarDays, label: t('profile.founded'), value: <span className="tabular-nums">{uni.founded}</span> } : null,
-    uni.students ? { key: 'students', icon: Users, label: t('profile.students'), value: <span className="tabular-nums">{uni.students.toLocaleString('ru-RU')}</span> } : null,
-    uni.city ? { key: 'city', icon: MapPin, label: t('profile.city'), value: `${uni.city}${uni.country ? `, ${uni.country}` : ''}` } : null,
-    uni.website ? { key: 'site', icon: Globe, label: t('profile.site'), value: (
-      <a href={uni.website} target="_blank" rel="noreferrer" title={uni.website} className="inline-flex items-center gap-1 max-w-full hover:text-brand">
-        <span className="truncate">{uni.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}</span><ExternalLink size={12} className="shrink-0 text-muted" />
-      </a>) } : null,
-    uni.qid.startsWith('Q')
-      ? { key: 'wikidata', icon: Database, label: 'Wikidata', value: <a href={`https://www.wikidata.org/wiki/${uni.qid}`} target="_blank" rel="noreferrer" className="mono hover:text-brand">{uni.qid}</a> }
-      : { key: 'via', icon: SearchCheck, label: t('profile.foundVia'), value: t('search.webLong') },
-  ] as (Fact | null)[]).filter((f): f is Fact => f !== null)
-  const social = Object.entries(uni?.social ?? {})
+  const name = uni ? uniName(uni, lang) : ''
+  const nameEn = uni ? uniName(uni, 'en') : ''
+  const subtitle = uni ? [nameEn !== name ? nameEn : null, uni.description].filter(Boolean).join(' · ') : ''
+  const loading = !profile && !error
 
   return (
-    <div>
-      {/* header: who (name + actions) → key facts → how the profile was built */}
-      <div className="bg-surface border-b border-line topo-soft">
-        <div className="relative mx-auto max-w-7xl px-4 pt-5 pb-4">
-          <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> Планета</Link>
+    <div className="pb-24">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <nav className="pt-6 flex items-center gap-1.5 text-[13.5px] text-muted min-w-0">
+          <Link to="/" className="inline-flex items-center gap-1.5 hover:text-ink shrink-0"><ArrowLeft size={15} /> Планета</Link>
+          {uni?.country && <><span className="text-faint">/</span><span className="truncate">{uni.country}</span></>}
+          {uni?.city && <><span className="text-faint">/</span><span className="truncate">{uni.city}</span></>}
+        </nav>
 
-          <div className="mt-3 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
-            <div className="min-w-0 flex-1 flex items-center gap-4">
-              <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-line grid place-items-center">
-                {uni?.logo_url ? <img src={uni.logo_url} alt="" className="w-full h-full object-contain p-1.5" /> : hero ? <img src={thumbUrl(hero)} alt="" className="w-full h-full object-cover" /> : <div className="shimmer w-full h-full" />}
+        <div className="mt-5 flex flex-col lg:flex-row lg:items-end gap-6">
+          <div className="min-w-0 flex-1 flex items-start gap-5">
+            {uni?.logo_url && (
+              <div className="hidden sm:grid w-16 h-16 rounded-xl border border-line bg-white place-items-center overflow-hidden shrink-0 mt-1">
+                <img src={uni.logo_url} alt="" className="w-full h-full object-contain p-2" />
               </div>
-              <div className="min-w-0">
-                {uni ? (
-                  <>
-                    <h1 className="text-[26px] sm:text-[32px] leading-[1.1] font-extrabold">{name}</h1>
-                    {subtitle && <div className="mt-1.5 text-sm text-muted">{subtitle}</div>}
-                  </>
-                ) : <div className="space-y-2 w-72 max-w-full"><div className="shimmer h-8 w-full rounded" /><div className="shimmer h-4 w-2/3 rounded" /></div>}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 w-full lg:w-auto">
-              {/* one map for the whole app: the campus scene of the main page, not a map of its own here */}
-              <Link to={`/?u=${qid}`} className="btn-primary !h-10 !py-0 whitespace-nowrap justify-center flex-1 lg:flex-none"><MapIcon size={15} /> {t('profile.map')}</Link>
-              <div className="inline-flex h-10 rounded-lg border border-line-2 bg-surface divide-x divide-line-2 overflow-hidden">
-                <button className="tool" onClick={doRefresh} title={t('profile.refresh')} aria-label={t('profile.refresh')} disabled={!profile}><RefreshCw size={15} /></button>
-                <button className="tool" onClick={share} title={t('profile.share')} aria-label={t('profile.share')}>{copied ? <Check size={15} className="text-verified" /> : <Share2 size={15} />}</button>
-                <button className="tool" title={saved ? 'Убрать из сохранённых' : 'Сохранить'} aria-label={saved ? 'Убрать из сохранённых' : 'Сохранить'} disabled={!profile}
-                  onClick={() => saved ? store.unsave(qid) : store.save(qid, { name: uni?.name ?? qid, city: uni?.city, savedAt: new Date().toISOString(), photos: photos.length })}>
-                  {saved ? <BookmarkCheck size={15} className="text-brand" /> : <Bookmark size={15} />}
-                </button>
-                <Link to={`/compare?a=${qid}`} className="tool" title={t('profile.compare')} aria-label={t('profile.compare')}><GitCompare size={15} /></Link>
-                <button className={`tool ${tab === 'judge' ? 'tool-on' : ''}`} onClick={() => setTab(tab === 'judge' ? 'photos' : 'judge')} title={t('profile.judge')} aria-label={t('profile.judge')}><Gavel size={15} /></button>
-              </div>
+            )}
+            <div className="min-w-0">
+              {uni ? (
+                <>
+                  <h1 className={`leading-[1.08] text-ink ${name.length > 56 ? 'text-[26px] sm:text-[32px]' : name.length > 34 ? 'text-[28px] sm:text-[38px]' : 'text-[32px] sm:text-[44px]'}`}>{name}</h1>
+                  {subtitle && <p className="mt-2 text-[15px] text-muted max-w-[70ch]">{subtitle}</p>}
+                </>
+              ) : <div className="space-y-3 w-96 max-w-full"><div className="shimmer h-11 w-full rounded-lg" /><div className="shimmer h-4 w-2/3 rounded" /></div>}
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
+            {/* one map for the whole app: the campus scene of the main page */}
+            <Link to={`/?u=${qid}`} className="btn-primary w-full sm:w-auto justify-center"><MapIcon size={17} /> 3D-карта кампуса</Link>
+            <button className="btn-ghost flex-1 sm:flex-none justify-center" disabled={!profile}
+              onClick={() => saved ? store.unsave(qid) : store.save(qid, { name: uni?.name ?? qid, city: uni?.city, savedAt: new Date().toISOString(), photos: photos.length })}>
+              {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />} {saved ? 'Сохранено' : 'Сохранить'}
+            </button>
+            <Link to={`/compare?a=${qid}`} className="btn-ghost flex-1 sm:flex-none justify-center"><GitCompare size={17} /> Сравнить</Link>
+            <button className="btn-icon" onClick={share} title={t('profile.share')} aria-label={t('profile.share')}>{copied ? <Check size={17} className="text-verified" /> : <Share2 size={17} />}</button>
+            <button className="btn-icon max-sm:!hidden" onClick={doRefresh} title={t('profile.refresh')} aria-label={t('profile.refresh')} disabled={!profile}><RefreshCw size={17} /></button>
+          </div>
+        </div>
 
-          {uni && (
-            <div className="mt-5 rounded-xl border border-line bg-surface overflow-hidden">
-              {/* -ml/-mt hide the outer edge of the cell borders, so only the lines between cells show at any column count */}
-              <dl className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] -ml-px -mt-px">
-                {facts.map((f) => (
-                  <div key={f.key} className="min-w-0 px-4 py-3 border-l border-t border-line">
-                    <dt className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold text-muted"><f.icon size={12} />{f.label}</dt>
-                    <dd className="mt-1 text-[15px] font-semibold text-ink">{f.value}</dd>
-                  </div>
-                ))}
-              </dl>
-              {social.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-line bg-canvas/60">
-                  <span className="mr-1 text-[11px] uppercase tracking-wider font-semibold text-muted">{t('profile.social')}</span>
-                  {social.map(([net, url]) => (
-                    <a key={net} href={url} target="_blank" rel="noreferrer" title={PHOTO_NETS.has(net) ? t('profile.socialLegend') : undefined}
-                      className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-line-2 bg-surface text-[13px] font-medium text-ink-2 hover:border-brand hover:text-brand transition-colors">
-                      {SOCIAL_NAME[net] ?? net}{PHOTO_NETS.has(net) && <Camera size={12} className="text-brand" />}
-                    </a>
-                  ))}
-                  {social.some(([net]) => PHOTO_NETS.has(net)) && (
-                    <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted"><Camera size={12} className="text-brand" /> {t('profile.socialLegend')}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+        {uni && <FactsRow uni={uni} />}
+        <HeroGallery photos={hero} total={photos.length} loading={loading} onOpen={openPhoto} onAll={() => { setFilter('all'); setTab('photos') }} />
+        <BuildStatus profile={profile} photos={photos} stages={stages} sources={sources} elapsed={elapsed} cached={cached} onVerify={() => setTab('verify')} />
 
-          <AgentsStrip stages={stages} sources={sources} elapsed={elapsed} coverage={profile?.coverage.overall} cached={cached} />
+        {profile?.partial && <div className="mt-4 text-[13.5px] text-likely">{t('profile.partial')}</div>}
+        {error && (
+          <div className="mt-6 rounded-xl border border-unverified/30 p-5">
+            <div className="font-semibold text-unverified">{t('profile.error')}</div>
+            <div className="text-sm text-muted mt-1">{error}</div>
+            <button className="btn-ghost mt-3" onClick={() => nav('/')}><ArrowLeft size={16} /> К поиску</button>
+          </div>
+        )}
+      </div>
+
+      <div className="sticky top-14 z-30 mt-10 bg-white/95 backdrop-blur-md border-b border-line">
+        <div role="tablist" className="mx-auto max-w-7xl px-4 sm:px-6 flex gap-7 overflow-x-auto no-scrollbar">
+          {tabs.map((x) => (
+            <button key={x.key} role="tab" aria-selected={tab === x.key} onClick={() => setTab(x.key)} className={`tab ${tab === x.key ? 'tab-active' : ''}`}>
+              {x.label}{x.badge != null && <span className="ml-1.5 text-muted font-normal mono">{x.badge}</span>}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4">
-        {profile?.partial && <div className="mt-4 rounded-lg bg-likely-soft text-likely px-4 py-2 text-sm">{t('profile.partial')}</div>}
-        {error && (
-          <div className="card p-6 mt-4 border-unverified/40">
-            <div className="font-semibold text-unverified">{t('profile.error')}</div>
-            <div className="text-sm text-muted mt-1">{error}</div>
-            <button className="btn-primary mt-3" onClick={() => nav('/')}>← Назад к поиску</button>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-10">
+        {tab === 'overview' && <OverviewTab profile={profile} uni={uni} qid={qid} onOpen={openPhoto} onTab={setTab} onCategory={showCategory} />}
+
+        {tab === 'photos' && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center gap-1">
+              {FILTERS.map((f) => counts[f] > 0 || f === 'all' ? (
+                <button key={f} onClick={() => setFilter(f)} className={`filter ${filter === f ? 'filter-active' : ''}`}>
+                  {f === 'all' ? t('profile.all') : catLabel(f, lang)} <span className={`mono text-[12px] ${filter === f ? 'text-white/60' : 'text-muted'}`}>{counts[f]}</span>
+                </button>
+              ) : null)}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-[13.5px] text-ink-2">
+              <div className="seg">
+                <button className={view === 'album' ? 'on' : ''} onClick={() => setView('album')}>Альбомы</button>
+                <button className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>Сетка</button>
+                <button className={view === 'bvr' ? 'on' : ''} onClick={() => setView('bvr')}>{t('profile.bvr')}</button>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={verifiedOnly} onChange={(e) => setVerifiedOnly(e.target.checked)} className="accent-ink" />Только подтверждённые</label>
+              <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={recent3} onChange={(e) => setRecent3(e.target.checked)} className="accent-ink" />Снято за 3 года</label>
+              {years.length > 0 && (
+                <select value={year ?? ''} onChange={(e) => setYear(e.target.value || null)} className="h-8 rounded-lg border border-line-2 bg-white px-2 text-[13.5px] cursor-pointer outline-none focus:border-ink">
+                  <option value="">Любой год</option>
+                  {years.map((y) => <option key={y} value={y}>{y} · {profile!.timeline[y]} фото</option>)}
+                </select>
+              )}
+            </div>
+            {loading && photos.length === 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-lg shimmer" />)}</div>
+            )}
+            {view === 'bvr' ? <BrochureVsReality photos={shown} onOpen={openPhoto} />
+              : view === 'album' && filter === 'all' && !verifiedOnly && !recent3 && !year && profile
+                ? <PhotoAlbums photos={photos} qid={qid} onOpen={openPhoto} coverage={profile.coverage} />
+                : <PhotoGrid photos={shown} qid={qid} onOpen={openPhoto}
+                    empty={photos.length > 0 || profile ? <EmptyState category={filter === 'all' ? undefined : filter} sources={doneSources} /> : null} />}
           </div>
         )}
 
-        <div className="sticky top-14 z-30 bg-canvas/95 backdrop-blur border-b border-line -mx-4 px-4">
-          <div className="flex gap-6 overflow-auto">
-            {tabs.filter((x) => !x.hide).map((x) => (
-              <button key={x.key} onClick={() => setTab(x.key)} className={`tab ${tab === x.key ? 'tab-active' : ''}`}>
-                {x.label}{x.badge != null ? <span className="ml-1.5 mono text-xs text-muted">{x.badge}</span> : null}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-10 py-6">
-          <div className="min-w-0 space-y-5">
-            {tab === 'photos' && (
-              <>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {FILTERS.map((f) => (
-                    <button key={f} onClick={() => setFilter(f)} className={`filter ${filter === f ? 'filter-active' : ''}`}>
-                      {f === 'all' ? t('profile.all') : catLabel(f, lang)} <span className={`mono text-[11px] ${filter === f ? 'text-white/70' : 'text-muted'}`}>{counts[f]}</span>
-                    </button>
-                  ))}
-                  <span className="mx-2 h-5 border-l border-line" />
-                  <label className="filter"><input type="checkbox" checked={verifiedOnly} onChange={(e) => setVerifiedOnly(e.target.checked)} className="accent-ink" />{t('profile.onlyVerified')}</label>
-                  <label className="filter"><input type="checkbox" checked={recent3} onChange={(e) => setRecent3(e.target.checked)} className="accent-ink" />{t('profile.recent3')}</label>
-                  {year && <button className="filter filter-active" onClick={() => setYear(null)}>{year} ×</button>}
-                  <span className="ml-auto flex gap-1">
-                    <button onClick={() => setView('album')} className={`btn-icon !h-8 !w-8 ${view === 'album' ? '!bg-ink !text-white' : ''}`} title="Альбомы"><Rows3 size={14} /></button>
-                    <button onClick={() => setView('grid')} className={`btn-icon !h-8 !w-8 ${view === 'grid' ? '!bg-ink !text-white' : ''}`} title="Сетка"><LayoutGrid size={14} /></button>
-                  </span>
+        {tab === 'campus' && (
+          <div className="space-y-16">
+            <AboutCampus qid={qid} />
+            {uni && (
+              <section className="border-t border-line pt-10">
+                <div className="flex flex-wrap items-baseline gap-3 mb-5">
+                  <h2 className="text-[20px] font-semibold tracking-[-0.015em]">Прогулка по кампусу</h2>
+                  <span className="text-[13.5px] text-muted">уличные панорамы и снимки с геометкой рядом с корпусами</span>
                 </div>
-                {!profile && !error && photos.length === 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-lg shimmer" />)}</div>
-                )}
-                {view === 'album' && filter === 'all' && !verifiedOnly && !recent3 && !year && profile
-                  ? <PhotoAlbums photos={photos} qid={qid} onOpen={openPhoto} coverage={profile.coverage} />
-                  : <PhotoGrid photos={shown} qid={qid} onOpen={openPhoto}
-                      empty={photos.length > 0 || profile ? <EmptyState category={filter === 'all' ? undefined : filter} sources={doneSources} /> : null} />}
-              </>
+                {walk ? <WalkTab uni={uni} campus={campus} photos={photos} walk={profile?.walk ?? []} onOpen={openPhoto} />
+                  : <button className="btn-ghost" onClick={() => setWalk(true)}><Footprints size={17} /> Открыть прогулку</button>}
+              </section>
             )}
-            {tab === 'collage' && (profile ? <CollageTab profile={profile} onOpen={openPhoto} />
-              : !error && <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-lg shimmer" />)}</div>)}
-            {tab === 'about' && <AboutCampus qid={qid} />}
-            {tab === 'bvr' && <BrochureVsReality photos={photos} onOpen={openPhoto} />}
-            {tab === 'climate' && uni && <ClimateTab qid={qid} lat={uni.lat} lon={uni.lon} />}
-            {tab === 'city' && uni && <CityTab qid={qid} uni={uni} ctx={ctx} onCtx={setCtx} />}
-            {tab === 'timeline' && profile && <Timeline timeline={profile.timeline} selected={year} onSelect={(y) => { setYear(y); if (y) setTab('photos') }} />}
-            {tab === 'walk' && uni && <WalkTab uni={uni} campus={campus} photos={photos} walk={profile?.walk ?? []} onOpen={openPhoto} />}
-            {tab === 'rejected' && profile && (
-              <div className="space-y-3">
-                <div className="text-sm text-muted">Отклонённые кандидаты остаются видимыми: это доказательство, что отбор автоматический, а не ручной.</div>
-                <div className="card divide-y divide-line">
-                  {profile.rejected.map((p) => (
-                    <div key={p.id} className="flex items-center gap-4 p-3 hover:bg-slate-50">
-                      <button onClick={() => openPhoto(p)} className="w-20 h-14 rounded-md bg-slate-100 overflow-hidden shrink-0 grayscale cursor-pointer"><img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover" /></button>
-                      <div className="min-w-0 flex-1">
-                        <button onClick={() => openPhoto(p)} className="block max-w-full text-left text-sm text-unverified truncate cursor-pointer">{p.reject_reason}</button>
-                        <div className="text-xs text-muted truncate">{p.source_label}{p.title ? ` · ${p.title}` : ''}</div>
-                        <SourceLink p={p} />
-                      </div>
-                      <span className="mono text-xs text-muted shrink-0">{Math.round(p.confidence * 100)}%</span>
-                    </div>
-                  ))}
-                  {profile.rejected.length === 0 && <div className="p-4 text-sm text-muted">Ничего не отклонено</div>}
-                </div>
-              </div>
-            )}
-            {tab === 'judge' && profile && <JudgePanel p={profile} />}
           </div>
-
-          <aside className="space-y-8 lg:border-l lg:border-line lg:pl-8">
-            {profile && <CoverageMatrix categories={profile.categories} overall={profile.coverage.overall} />}
-            {profile?.description && <DescriptionBlock d={profile.description} />}
-            {profile?.context && <ContextCards c={profile.context} />}
-            {profile && <VisitPlan qid={qid} />}
-            {!profile && !error && <div className="text-sm text-muted">{t('profile.generating')}</div>}
-          </aside>
-        </div>
+        )}
+        {tab === 'city' && uni && <CityTab qid={qid} uni={uni} ctx={ctx} onCtx={setCtx} />}
+        {tab === 'climate' && uni && <ClimateTab qid={qid} lat={uni.lat} lon={uni.lon} city={uni.city} />}
+        {tab === 'verify' && (profile ? <VerifyTab profile={profile} stages={stages} sources={sources} onOpen={openPhoto} />
+          : <div className="text-[15px] text-muted">{t('profile.generating')}</div>)}
       </div>
 
-      {open && <PhotoPassport p={open} qid={qid} campus={campus} all={allForPassport} onClose={closePhoto} onOpen={openPhoto} onPrev={prev} onNext={next} />}
+      {open && <PhotoPassport p={open} qid={qid} all={allForPassport} onClose={closePhoto} onOpen={openPhoto} onPrev={prev} onNext={next} />}
     </div>
   )
 }
+

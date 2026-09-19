@@ -119,6 +119,7 @@ async def osm_lookup(q: str) -> dict | None:
     if site and not site.startswith("http"):
         site = "https://" + site
     out = {"name": x.get("name") or (x.get("namedetails") or {}).get("name") or q, "lat": float(x["lat"]), "lon": float(x["lon"]),
+           "name_en": (x.get("namedetails") or {}).get("name:en"),
             "city": addr.get("city") or addr.get("town") or addr.get("village") or addr.get("county") or addr.get("state"),
             "country": addr.get("country"), "website": site, "osm_type": x.get("osm_type"), "osm_id": x.get("osm_id"),
             "match": best[0]}
@@ -326,8 +327,13 @@ async def find_university(q: str, city_hint: str | None = None) -> Candidate | N
                "city": place.get("city") or city_hint, "country": place.get("country"),
                "osm_type": place.get("osm_type"), "osm_id": place.get("osm_id"), "snippet": None, "query": q}
         await cache.kv_set("web", qid, ent)
+    if "name_en" not in ent:  # also for places saved before names were translated
+        from ..names import english
+        ent["name_en"] = await english(place.get("name_en") or ent["name"], (), ent.get("country"), timeout=3.0)
+        await cache.kv_set("web", qid, ent)
     where = " · ".join(x for x in (ent.get("city"), ent.get("domain") or "сайт не найден") if x)
     # a place that really stands in the city the query named beats a fuzzy name match in another country
     score = 0.99 if _same_city(ent.get("city"), city_hint) else 0.92
-    return Candidate(qid=qid, label=ent["name"], description=f"найден на {on_map} · {where}", city=ent.get("city"),
+    from ..names import web_display
+    return Candidate(qid=qid, label=web_display(ent["name"], ent.get("name_en"), ent.get("country")), description=f"найден на {on_map} · {where}", city=ent.get("city"),
                      country=ent.get("country"), score=score, origin="web")

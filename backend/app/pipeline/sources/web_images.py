@@ -79,6 +79,8 @@ async def _serper(q: str, gl: str | None, hl: str, num: int = 10) -> list[dict]:
     hit = await cache.kv_get("serper", key, max_age_s=3 * 86400)   # the same query in a rebuild costs nothing
     if hit is not None:
         return hit
+    if http.serper_out():       # the balance is spent (app/http.py): cached answers only
+        return []
     async with _serper_sem:
         r = None
         for attempt in range(2):     # a 6 s timeout used to drop two of seven queries now and then

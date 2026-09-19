@@ -1,4 +1,4 @@
-"""CampusLens on Modal (free $30/month, no card): backend + built frontend in one container, cache on a Volume.
+"""CampusLense on Modal (free $30/month, no card): backend + built frontend in one container, cache on a Volume.
 
     pip install modal && modal setup                    # once, browser login
     modal deploy deploy/modal_app.py                    # -> https://<user>--campuslens-web.modal.run

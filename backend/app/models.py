@@ -30,7 +30,7 @@ SOURCE_LABELS: dict[str, str] = {
     "city_cat": "Wikimedia Commons (город)",
     "mapillary": "Mapillary",
     "flickr": "Flickr",
-    "places": "Google Places",
+    "places": "Google Карты: фото мест кампуса",
     "telegram": "Telegram-канал вуза",
     "youtube": "YouTube-канал вуза (кадры видео)",
     "instagram": "Instagram вуза",
@@ -47,6 +47,7 @@ SOURCE_LABELS: dict[str, str] = {
     "tiktok_hashtag": "TikTok (хэштег вуза)",
     "tiktok_top": "TikTok (поиск по названию: видео и фото)",
     "instagram_search": "Instagram: хэштеги и поиск по темам",
+    "social_learned": "Соцсети: хэштеги и авторы, которые дали хорошие фото этого вуза",
     "instagram_accounts": "Instagram: клубы, библиотека и службы вуза",
     "youtube_search": "YouTube: кампус-туры и влоги",
 }
@@ -73,7 +74,9 @@ class Candidate(BaseModel):
 
 class University(BaseModel):
     qid: str
-    name: str
+    name: str  # for display: Russian for a university in Russia, English elsewhere (pipeline/names.py)
+    name_en: str | None = None  # for display in English; `names` keep the labels as they are, for the search
+    country_qid: str | None = None
     names: dict[str, str] = Field(default_factory=dict)
     aliases: list[str] = Field(default_factory=list)
     description: str | None = None
@@ -160,6 +163,7 @@ class AiVerdict(BaseModel):
     era: str = "unknown"                  # 2020s | 2010s | 2000s | older | unknown
     why: str = ""
     model: str = ""
+    beauty: int | None = Field(default=None, ge=0, le=3)   # as a picture (verdicts before 19 Sep 2026 have none)
 
 
 class PhotoRef(BaseModel):
@@ -168,6 +172,15 @@ class PhotoRef(BaseModel):
     source: str
     page_url: str
     similarity: float | None = None
+
+
+class Look(BaseModel):
+    """How a photo looks as a picture, from the cover editor (pipeline/cover.py): what kind of view it is, how much of
+    the campus it shows, how beautiful it is, whether people pose for it."""
+    view: Literal["aerial", "exterior_wide", "exterior_building", "courtyard", "interior_space", "room", "people", "detail"]
+    campus: int = Field(ge=0, le=3)
+    beauty: int = Field(ge=0, le=3)
+    posed: bool = False
 
 
 class Photo(BaseModel):
@@ -219,6 +232,7 @@ class Photo(BaseModel):
     intent: str | None = None            # the search theme that found it
     query: str | None = None
     collage: str | None = None           # the collage section it was placed in (pipeline/collage.py)
+    look: Look | None = None             # the cover editor's ratings, for the photos it was shown
 
 
 class Stage(BaseModel):
@@ -295,5 +309,6 @@ class Profile(BaseModel):
     reference: dict | None = None        # {url, page_url, source} of the trusted reference photo shown to the inspector
     inspector: dict | None = None        # {model, photos, calls, tokens_in, tokens_out, ms, errors}
     collage: list[CollageSection] = Field(default_factory=list)
+    cover: list[str] = Field(default_factory=list)   # photo ids the page opens with, cover first (pipeline/cover.py)
     plan: dict | None = None             # {hash, intents: [{key, label, target, queries: {platform: [...]}}]}
     version: str = "0.2"

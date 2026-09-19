@@ -16,6 +16,7 @@ export interface Candidate {
 export interface University {
   qid: string
   name: string
+  name_en?: string | null
   names: Record<string, string>
   aliases: string[]
   description?: string | null
@@ -74,6 +75,13 @@ export interface AiVerdict {
 }
 export interface PhotoRef { id: string; thumb: string; source: string; page_url: string; similarity?: number | null }
 
+export interface Look {
+  view: 'aerial' | 'exterior_wide' | 'exterior_building' | 'courtyard' | 'interior_space' | 'room' | 'people' | 'detail'
+  campus: number
+  beauty: number
+  posed: boolean
+}
+
 export interface Photo {
   id: string
   url: string
@@ -121,6 +129,8 @@ export interface Photo {
   intent?: string | null
   query?: string | null
   collage?: string | null
+  /** the cover editor's ratings (backend pipeline/cover.py), for the photos it was shown */
+  look?: Look | null
 }
 
 export interface InspectorStats {
@@ -187,6 +197,8 @@ export interface Profile {
   reference?: { url: string } | null
   inspector?: InspectorStats | null
   collage?: CollageSection[]
+  /** photo ids the page opens with, cover first, chosen by the cover editor */
+  cover?: string[]
   plan?: PlanSummary | null
   version: string
 }
@@ -232,17 +244,25 @@ export interface ContextPack {
   generated_at: string
   sources: { label: string; url: string }[]
 }
-export interface ClimateAgg { t_mean: number | null; t_max: number | null; t_min: number | null; feels: number | null; humidity: number | null; precip_mm: number; precip_days: number; snow_days: number; sun_h_day: number | null; wind_ms: number | null; cloud: number | null }
+export interface ClimateAgg { t_mean: number | null; t_max: number | null; t_min: number | null; t_hi?: number | null; t_lo?: number | null; feels: number | null; humidity: number | null; precip_mm: number; precip_days: number; snow_days: number; sun_h_day: number | null; wind_ms: number | null; cloud: number | null }
 export interface ClimatePack {
   year: number; timezone?: string; source: { label: string; url: string }
   annual: ClimateAgg & { sun_hours: number }
   months: (ClimateAgg & { m: number; label: string })[]
-  seasons: Record<'winter' | 'spring' | 'summer' | 'autumn', ClimateAgg & { label: string }>
-  comfort: { comfortable: number; cool: number; freezing: number; hot: number; rainy: number }
+  seasons: Record<'winter' | 'spring' | 'summer' | 'autumn', ClimateAgg & { label: string; months?: number[] }>
+  v?: number; hemisphere?: 'north' | 'south'
+  /** one entry per day of the year: comfort class letter (c comfortable, k cool, f freezing, w warm, h hot, r rainy), feels-like °C, mm */
+  days?: { start: string; cls: string; feels: (number | null)[]; precip: number[] }
+  comfort: { comfortable: number; cool: number; freezing: number; warm?: number; hot: number; rainy: number }
   wind_rose: { dir: string; share: number; speed: number }[]
   feels_text: { mode: string; text: string }
   now?: { t: number; feels: number; humidity: number; wind_ms: number; code: number; time: string }
   forecast?: { date: string; t_max: number; t_min: number; code: number }[]
+}
+/** GET /api/climate/{qid}/story: how the climate feels for a student, written by the LLM from the pack's numbers */
+export interface ClimateStory {
+  mode: 'ai' | 'template'; model?: string; lead: string; story: string
+  seasons: Partial<Record<'winter' | 'spring' | 'summer' | 'autumn', string>>; packing: string[]; best: string
 }
 export interface CostPack {
   city: string; currency: string; as_of: string; city_qid: string
@@ -262,7 +282,7 @@ export interface Map3DDorm {
 }
 export interface Map3DPlace { id: string; name: string | null; type: string; lat: number; lon: number; distance_m: number; source: 'osm' }
 export interface Map3DPack {
-  university: { qid: string; name: string; names: Record<string, string>; aliases: string[]; city?: string | null; country?: string | null; website?: string | null; lat: number; lon: number }
+  university: { qid: string; name: string; name_en?: string | null; country_qid?: string | null; names: Record<string, string>; aliases: string[]; city?: string | null; country?: string | null; website?: string | null; lat: number; lon: number }
   anchor: { lat: number; lon: number; elevation: number | null }
   campus: { mode: 'polygon' | 'radius'; outline: [number, number][] | null; area_ha: number | null; osm_url: string | null; buildings: Map3DBuilding[] }
   dorms: Map3DDorm[]

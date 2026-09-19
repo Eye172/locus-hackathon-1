@@ -133,7 +133,7 @@ export default function SearchSettings() {
       <div>
         {qid ? <Link to={`/u/${qid}`} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> К профилю</Link>
           : <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> Планета</Link>}
-        <h1 className="mt-2 text-[28px] font-extrabold">Настройки поиска</h1>
+        <h1 className="mt-2 text-[36px] leading-tight">Настройки поиска</h1>
         <p className="mt-1 text-sm text-muted max-w-3xl">
           Фото ищутся по темам — так, как о вузе пишут студенты: «атмосфера», «один день из жизни», «кампус», «общежития», «ивенты»…
           Для каждой темы — запросы на английском и на языке страны вуза, сети, где искать, и сколько фото этой темы попадёт в коллаж «Какой это вуз».

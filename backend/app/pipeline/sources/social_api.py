@@ -17,8 +17,10 @@ expire within days, the profile shows our 640 px preview and the link to the ori
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from itertools import zip_longest
 
@@ -52,6 +54,21 @@ def _date(ts) -> str | None:
 _locks: dict[str, asyncio.Lock] = {}
 
 
+_EXPIRY = re.compile(r"(?:x-expires|[?&]expire)=(\d{10})|[?&]oe=([0-9A-Fa-f]{8})")
+
+
+def _links_expired(hit: dict, margin_s: float = 900.0) -> bool:
+    """A cached answer whose signed media links (TikTok's x-expires / expire, Instagram's oe) are past due or about to
+    be: the posts are still right, but their videos and images no longer download - measured 19 Sep, TikTok links
+    live 5-23 h while search answers were kept for three days, so a rebuild a day later cut no frames at all."""
+    if not hit:
+        return False
+    stamps = []
+    for m in _EXPIRY.finditer(json.dumps(hit)):
+        stamps.append(int(m.group(1)) if m.group(1) else int(m.group(2), 16))
+    return bool(stamps) and min(stamps) < time.time() + margin_s
+
+
 async def _sc(path: str, _max_age: float = 12 * 3600, **params) -> dict | None:
     if not settings.scrapecreators_api_key:
         return None
@@ -60,7 +77,7 @@ async def _sc(path: str, _max_age: float = 12 * 3600, **params) -> dict | None:
     # without this lock the same page would be bought twice
     async with _locks.setdefault(key, asyncio.Lock()):
         hit = await cache.kv_get("social", key, max_age_s=_max_age)
-        if hit is not None:
+        if hit is not None and not _links_expired(hit):
             return hit
         return await _sc_fetch(path, key, params)
 
@@ -172,6 +189,25 @@ def _jpeg(img: dict | None) -> str | None:
     return next((u for u in urls if ".jpeg" in u or ".jpg" in u), None)
 
 
+def best_play(v: dict | None) -> str | None:
+    """The sharpest stream of a clip. play_addr is TikTok's 576p default; bit_rate lists the same clip at 720p for
+    ~40% and 1080p for ~35% of the posts (cache of 19 Sep, 7971 posts). Of the sharpest size, the lowest bitrate:
+    the pixels are what the frames need, the smaller file is what the download deadline needs."""
+    v = v or {}
+
+    def side(b: dict) -> int:
+        pa = b.get("play_addr") or {}
+        return min(pa.get("width") or 0, pa.get("height") or 0)
+
+    # play_addr itself competes too: now and then it is 720p while bit_rate stops at 576p
+    streams = [b for b in [*(v.get("bit_rate") or []), {"play_addr": v.get("play_addr"), "bit_rate": 1 << 40}]
+               if ((b.get("play_addr") or {}).get("url_list") or [None])[0]]
+    if not streams:
+        return None
+    best = max(streams, key=lambda b: (side(b), -(b.get("bit_rate") or 0)))
+    return best["play_addr"]["url_list"][0]
+
+
 MAX_VIDEOS = 4      # videos we open per source: each costs one small download and two ffmpeg seeks
 
 
@@ -223,7 +259,7 @@ async def _tiktok_frames(awemes: list[dict], source: str, limit: int,
         a = _aweme(raw)
         author = (a.get("author") or {}).get("unique_id") or ""
         v = a.get("video") or {}
-        url = ((v.get("play_addr") or {}).get("url_list") or [None])[0]
+        url = best_play(v)
         if not url or (a.get("image_post_info") or {}).get("images"):
             continue          # photo carousels already carry real photos: _tiktok_items handles them
         if author in seen_authors:
@@ -234,7 +270,7 @@ async def _tiktok_frames(awemes: list[dict], source: str, limit: int,
             break
     if not picked:
         return []
-    jobs = [(((a.get("video") or {}).get("play_addr") or {}).get("url_list")[0],
+    jobs = [(best_play(a.get("video")),
              (a.get("video") or {}).get("duration", 0) / 1000,
              str(a.get("aweme_id") or a.get("id"))) for a in picked]
     out: list[PhotoCandidate] = []
@@ -354,7 +390,7 @@ def _latin_ext(text: str) -> bool:
 
 
 def social_queries(uni: University, deep: bool = False) -> list[str]:
-    """Every query CampusLens itself sends to TikTok and Instagram for this university - any university in the world.
+    """Every query CampusLense itself sends to TikTok and Instagram for this university - any university in the world.
 
     The bare name finds the university's own posts and videos about admission. The photos that show what it is like
     to be there come from queries about the place - "<name> campus", "<name> student life", "<name> dorm",
@@ -408,7 +444,7 @@ async def _paged(path: str, pages: int, key: str = "cursor", items: str = "items
 
 async def tiktok_top(uni: University, limit: int = 14, max_videos: int | None = None,
                      pages: int = 1, deep: bool = False) -> list[PhotoCandidate]:
-    """TikTok's "Top" search, run by CampusLens for the name and for the place queries (campus, student life,
+    """TikTok's "Top" search, run by CampusLense for the name and for the place queries (campus, student life,
     atmosphere, dorm). It is the only endpoint that also returns the slideshow posts of the Photo tab."""
     qs = social_queries(uni, deep)
     found = await video_frames.until_deadline([_paged("/v1/tiktok/search/top", pages if i == 0 else 1, query=q)

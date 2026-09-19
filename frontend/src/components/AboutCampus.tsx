@@ -3,16 +3,16 @@ import { RefreshCw, ExternalLink } from 'lucide-react'
 import type { CampusFacts } from '../lib/types'
 import { api } from '../lib/api'
 
-const RATING: Record<string, { label: string; cls: string }> = {
-  good: { label: 'хорошо', cls: 'bg-verified-soft text-verified' },
-  mixed: { label: 'по-разному', cls: 'bg-likely-soft text-likely' },
-  poor: { label: 'плохо', cls: 'bg-unverified-soft text-unverified' },
+const RATING: Record<string, { label: string; dot: string }> = {
+  good: { label: 'хорошо', dot: 'bg-verified' },
+  mixed: { label: 'по-разному', dot: 'bg-likely' },
+  poor: { label: 'плохо', dot: 'bg-unverified' },
 }
 const KIND: Record<string, string> = { official: 'сайт вуза', wikipedia: 'Википедия', reviews: 'отзывы', web: 'веб' }
 
 function Refs({ ids }: { ids: number[] }) {
   if (!ids.length) return null
-  return <>{ids.map((k) => <a key={k} href={`#src-${k}`} className="ml-0.5 align-super text-[10px] text-brand hover:underline">[{k}]</a>)}</>
+  return <sup className="ml-0.5 text-[10.5px] text-faint whitespace-nowrap">{ids.map((k, i) => <a key={k} href={`#src-${k}`} className="hover:text-ink">{i ? ',' : ''}{k}</a>)}</sup>
 }
 
 /** What is on the campus and what it is like - an LLM brief from texts found on the web (pipeline/campus_facts.py),
@@ -29,66 +29,70 @@ export function AboutCampus({ qid }: { qid: string }) {
 
   if (busy && !facts) {
     return (
-      <div className="space-y-3">
-        <div className="text-sm text-muted">Ищу в интернете тексты о корпусах, общежитиях, библиотеке, лабораториях, Wi-Fi и питании и собираю справку… обычно 20–60 секунд.</div>
-        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-20 rounded-lg" />)}
+      <div className="space-y-4 max-w-3xl">
+        <div className="text-[15px] text-muted">Читаем сайт вуза, Википедию и отзывы о корпусах, общежитиях, библиотеке, лабораториях, Wi-Fi и питании. Первый раз это занимает 20–60 секунд.</div>
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-16 rounded-lg" />)}
       </div>
     )
   }
-  if (error) return <div className="text-sm text-unverified">Не удалось собрать справку: {error}</div>
+  if (error) return <div className="text-[15px] text-unverified">Не удалось собрать справку: {error}</div>
   if (!facts) return null
   return (
-    <div className="space-y-6">
-      <div className="flex items-start gap-3">
+    <div className="space-y-12">
+      <div className="flex items-start gap-6">
         <div className="min-w-0">
-          <h2 className="text-xl font-extrabold">Что есть на кампусе</h2>
-          {facts.summary && <p className="mt-1.5 text-[15px] leading-relaxed text-ink-2">{facts.summary}</p>}
-          {facts.note && <p className="mt-1.5 text-sm text-likely">{facts.note}</p>}
+          <h2 className="text-[20px] font-semibold tracking-[-0.015em]">Что есть на кампусе</h2>
+          {facts.summary && <p className="mt-3 text-[17px] leading-[1.65] text-ink-2 max-w-[68ch]">{facts.summary}</p>}
+          {facts.note && <p className="mt-2 text-[14px] text-likely">{facts.note}</p>}
         </div>
-        <button onClick={() => load(true)} disabled={busy} className="ml-auto shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line-2 bg-surface text-[13px] hover:border-brand hover:text-brand disabled:opacity-50" title="Собрать заново">
-          <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> Обновить
+        <button onClick={() => load(true)} disabled={busy} className="btn-ghost !h-9 ml-auto shrink-0" title="Собрать справку заново">
+          <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Обновить
         </button>
       </div>
 
       {facts.quick.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-10 gap-y-5 max-w-5xl">
           {facts.quick.map((q, i) => (
-            <span key={i} className="inline-flex items-baseline gap-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
-              <span className="text-muted">{q.label}:</span> <span className="font-semibold">{q.value}</span><Refs ids={q.sources} />
-            </span>
+            <div key={i} className="min-w-0">
+              <dt className="text-[13px] text-muted">{q.label}</dt>
+              <dd className="mt-0.5 text-[16px] font-medium text-ink">{q.value}<Refs ids={q.sources} /></dd>
+            </div>
           ))}
-        </div>
+        </dl>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-x-16 gap-y-10 md:grid-cols-2 max-w-6xl">
         {facts.sections.map((s) => (
-          <div key={s.key} className="rounded-xl border border-line bg-surface p-4">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold">{s.title}</h3>
-              {RATING[s.rating] && <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold ${RATING[s.rating].cls}`} title={s.rating_note}>{RATING[s.rating].label}</span>}
+          <section key={s.key} className="border-t border-line pt-5">
+            <div className="flex items-baseline gap-3">
+              <h3 className="text-[16px] font-semibold">{s.title}</h3>
+              {RATING[s.rating] && (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] text-muted" title={s.rating_note}>
+                  <i className={`w-1.5 h-1.5 rounded-full ${RATING[s.rating].dot}`} />{RATING[s.rating].label}
+                </span>
+              )}
             </div>
-            <ul className="mt-2 space-y-1.5 text-[14px] leading-snug text-ink-2">
-              {s.items.map((it, i) => <li key={i} className="pl-3 relative before:content-[''] before:absolute before:left-0 before:top-[0.55em] before:w-1 before:h-1 before:rounded-full before:bg-line-2">{it.text}<Refs ids={it.sources} /></li>)}
+            <ul className="mt-3 space-y-2 text-[14.5px] leading-[1.55] text-ink-2">
+              {s.items.map((it, i) => <li key={i} className="pl-4 relative before:content-[''] before:absolute before:left-0 before:top-[0.7em] before:w-1.5 before:h-px before:bg-faint">{it.text}<Refs ids={it.sources} /></li>)}
             </ul>
-            {s.rating_note && <div className="mt-2 text-xs text-muted">{s.rating_note}</div>}
-          </div>
+            {s.rating_note && <div className="mt-3 text-[13px] text-muted">{s.rating_note}</div>}
+          </section>
         ))}
       </div>
 
       {facts.sources.length > 0 && (
-        <div>
-          <div className="text-xs uppercase tracking-wider font-semibold text-muted mb-1.5">Источники</div>
-          <ol className="space-y-1 text-[12px] text-muted">
+        <details className="group max-w-5xl border-t border-line pt-4">
+          <summary className="cursor-pointer list-none text-[14px] font-medium text-ink-2 hover:text-ink">Источники справки · {facts.sources.length}<span className="ml-2 text-muted font-normal">составлена ИИ ({facts.model || '—'}) только по найденным текстам</span></summary>
+          <ol className="mt-3 space-y-1.5 text-[13px] text-muted">
             {facts.sources.map((s) => (
-              <li key={s.id} id={`src-${s.id}`} className="flex gap-1.5">
-                <span className="mono">[{s.id}]</span>
-                <span className="rounded bg-canvas px-1">{KIND[s.kind] ?? s.kind}</span>
-                {s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="truncate hover:text-brand inline-flex items-center gap-1">{s.title} <ExternalLink size={10} /></a> : <span className="truncate">{s.title}</span>}
+              <li key={s.id} id={`src-${s.id}`} className="flex gap-2 min-w-0">
+                <span className="tnum w-6 shrink-0 text-right">{s.id}</span>
+                <span className="shrink-0 text-faint w-20">{KIND[s.kind] ?? s.kind}</span>
+                {s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="truncate hover:text-ink inline-flex items-center gap-1">{s.title} <ExternalLink size={11} className="shrink-0" /></a> : <span className="truncate">{s.title}</span>}
               </li>
             ))}
           </ol>
-          <div className="mt-2 text-[11px] text-muted">Справка составлена ИИ ({facts.model || '—'}) только по найденным текстам; где данных нет — так и написано.</div>
-        </div>
+        </details>
       )}
     </div>
   )

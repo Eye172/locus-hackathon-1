@@ -1,58 +1,88 @@
 @import "tailwindcss";
-@import "leaflet/dist/leaflet.css";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+  /* type: Onest for everything you read and click, Literata (optical size) only for names and page titles,
+     JetBrains Mono only for code, hashes and logs. Numbers use tabular figures of the sans. */
+  --font-sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Literata", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* colour: ink on white, one accent. Status colours are for small marks (dots, numbers), never for fills. */
   --color-brand: #1D4ED8;
   --color-brand-deep: #0B1F4B;
-  --color-brand-soft: #E8EEFF;
-  --color-ink: #0A0A0A;
-  --color-ink-2: #3A3F4B;
-  --color-muted: #6B7280;
-  --color-line: #E3E6EC;
-  --color-line-2: #D3D8E2;
+  --color-brand-soft: #EEF2FF;
+  --color-ink: #0B0D12;
+  --color-ink-2: #3B414E;
+  --color-muted: #6B7180;
+  --color-faint: #A0A5B0;
+  --color-line: #E9EBEF;
+  --color-line-2: #D6DAE1;
   --color-surface: #FFFFFF;
-  --color-canvas: #F7F8FA;
+  --color-canvas: #FFFFFF;
+  --color-soft: #F4F5F7;
+  --color-panel: #EEF1F6;          /* a raised window's own background (the compare advisor) */
   --color-verified: #15803D;
-  --color-verified-soft: #DCFCE7;
+  --color-verified-soft: #E7F5EC;
   --color-likely: #B45309;
-  --color-likely-soft: #FEF3C7;
+  --color-likely-soft: #FDF3E4;
   --color-unverified: #B91C1C;
-  --color-unverified-soft: #FEE2E2;
+  --color-unverified-soft: #FDECEC;
   --color-brochure: #6D28D9;
-  --color-brochure-soft: #EDE9FE;
+  --color-brochure-soft: #F1ECFD;
   --color-reality: #0F766E;
-  --color-reality-soft: #CCFBF1;
+  --color-reality-soft: #E6F6F4;
 }
 
 :root { color-scheme: light; }
 html, body, #root { height: 100%; }
-body { margin: 0; background: var(--color-canvas); color: var(--color-ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; font-size: 15px; }
-h1, h2, h3, .display { font-family: var(--font-display); letter-spacing: -0.02em; }
-.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.caps { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+body { margin: 0; background: var(--color-canvas); color: var(--color-ink); font-family: var(--font-sans); font-size: 15px;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
 
-/* surfaces */
-.card { @apply bg-surface rounded-xl border border-line; }
-.rule { @apply border-t border-line; }
-.chip { @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap; }
-.btn-primary, .btn-ghost, .btn-icon { @apply inline-flex items-center gap-2 rounded-lg px-3.5 h-10 text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed; }
-.btn-primary { @apply bg-ink text-white hover:bg-brand; }
-.btn-ghost { @apply bg-transparent text-ink border border-line-2 hover:border-ink; }
-.btn-icon { @apply px-0 w-10 justify-center bg-transparent text-ink border border-line-2 hover:border-ink; }
-/* icon buttons joined into one toolbar (profile header) */
-.tool { @apply w-9 sm:w-10 h-full grid place-items-center text-ink-2 hover:bg-canvas hover:text-ink transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed; }
-.tool-on { @apply bg-ink text-white hover:bg-ink hover:text-white; }
-.tab { @apply relative px-1 py-3 text-sm text-muted hover:text-ink cursor-pointer whitespace-nowrap; }
-.tab-active { @apply text-ink; }
-.tab-active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--color-ink); }
-.filter { @apply px-2.5 h-8 rounded-md text-sm text-ink-2 hover:bg-slate-100 cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5; }
-.filter-active { @apply bg-ink text-white hover:bg-ink; }
+@layer base {
+  h1, .display { font-family: var(--font-display); font-weight: 500; letter-spacing: -0.015em; font-variation-settings: "opsz" 72; }
+  h2, h3, h4 { letter-spacing: -0.01em; }
+  svg.lucide { stroke-width: 1.75; }
+  ::selection { background: #DCE4FF; }
+  :focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; border-radius: 6px; }
+}
+
+@layer components {
+  .mono { font-variant-numeric: lining-nums; }            /* numbers in the UI face; real monospace is .code */
+  .tnum { font-variant-numeric: tabular-nums; }           /* only where columns of numbers must align */
+  .code { font-family: var(--font-mono); font-size: 0.92em; }
+  .caps { font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+  .eyebrow { font-size: 12px; font-weight: 500; color: var(--color-muted); }
+
+  /* surfaces: hairlines, not shadows */
+  .card { @apply bg-surface rounded-xl border border-line; }
+  .rule { @apply border-t border-line; }
+  .chip { @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap; }
+
+  /* controls: 40 px tall, 8 px radius, one primary per view */
+  .btn-primary, .btn-ghost, .btn-icon { @apply inline-flex items-center gap-2 rounded-lg px-4 h-10 text-sm font-medium transition-colors duration-150 cursor-pointer select-none disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply bg-ink text-white hover:bg-[#262A33]; }
+  .btn-ghost { @apply bg-surface text-ink border border-line-2 hover:bg-soft; }
+  .btn-icon { @apply px-0 w-10 justify-center bg-surface text-ink-2 border border-line-2 hover:bg-soft hover:text-ink; }
+  .btn-text { @apply inline-flex items-center gap-1.5 text-sm font-medium text-ink-2 hover:text-ink cursor-pointer; }
+  .link { @apply text-ink underline decoration-line-2 underline-offset-[3px] hover:decoration-ink transition-colors; }
+  .tool { @apply w-9 sm:w-10 h-full grid place-items-center text-ink-2 hover:bg-soft hover:text-ink transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed; }
+  .tool-on { @apply bg-ink text-white hover:bg-ink hover:text-white; }
+
+  /* tabs: text + 2 px ink underline; counts in the muted colour */
+  .tab { @apply relative py-3.5 text-[14.5px] font-medium text-muted hover:text-ink cursor-pointer whitespace-nowrap transition-colors; }
+  .tab-active { @apply text-ink; }
+  .tab-active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--color-ink); }
+
+  /* filters: quiet pills, the active one is ink */
+  .filter { @apply px-3 h-8 rounded-full text-[13.5px] text-ink-2 border border-transparent hover:bg-soft cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5 transition-colors; }
+  .filter-active { @apply bg-ink text-white hover:bg-ink; }
+  .seg { @apply inline-flex h-8 p-0.5 rounded-lg bg-soft; }
+  .seg > button { @apply px-3 rounded-md text-[13px] font-medium text-muted hover:text-ink cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap; }
+  .seg > button.on { @apply bg-surface text-ink shadow-[0_1px_2px_rgba(11,13,18,0.08),0_0_0_1px_rgba(11,13,18,0.04)]; }
+}
+
 .topo { background-image: url('/topo.svg'); background-size: 1100px; color: var(--color-brand); }
 .topo-soft { position: relative; }
-.topo-soft::before { content: ""; position: absolute; inset: 0; background-image: url('/topo.svg'); background-size: 1200px; opacity: 0.06; color: var(--color-brand); pointer-events: none; }
 
 /* status bars */
 .conf-bar { height: 3px; background: #E3E6EC; }
@@ -61,9 +91,49 @@ h1, h2, h3, .display { font-family: var(--font-display); letter-spacing: -0.02em
 .conf-likely { background: var(--color-likely); }
 .conf-unverified { background: var(--color-unverified); }
 
-.leaflet-container { font-family: inherit; border-radius: 0.75rem; }
 .globe-page .maplibregl-ctrl-attrib { background: rgba(5,7,15,.6); color: #93A4D8; font-size: 10px; }
 .globe-page .maplibregl-ctrl-attrib a { color: #C7D2FE; }
+/* the 3D campus scene's glass under the (transparent) app header: a clear, all but unfrosted strip (.m3d-glass) and, under
+   the university block in its middle, a darker, more frosted piece that bulges a little below the strip
+   (.m3d-glass-tab). The scene sets the block's box in px: --l, --w and --h (its bottom edge). The piece's mask: in the
+   header, a band that fades out --fade px past the block on each side, so the two glasses blend instead of meeting at
+   a seam; below it the bulge (without its bottom corners; its middle down to the bottom; the two rounded bottom
+   corners) and the two concave corners where it leaves the strip. */
+.m3d-glass, .m3d-glass-tab { --hdr: 3.5rem; }
+.m3d-glass {
+  height: var(--hdr);
+  background: rgba(11, 15, 26, 0.03);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+}
+.m3d-glass-tab {
+  --r: 10px;       /* the bulge's bottom corners */
+  --f: 6px;        /* the concave corners */
+  --fade: 56px;
+  --fill: linear-gradient(#000 0 0);
+  --dot: radial-gradient(circle closest-side, #000 calc(100% - .5px), transparent);
+  height: max(var(--hdr), var(--h));
+  background: var(--bg, rgba(11, 15, 26, 0.32));
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  mask:
+    linear-gradient(90deg, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent)
+      calc(var(--l) - var(--fade)) 0 / calc(var(--w) + 2 * var(--fade)) var(--hdr) no-repeat,
+    var(--fill) var(--l) 0 / var(--w) calc(var(--h) - var(--r)) no-repeat,
+    var(--fill) calc(var(--l) + var(--r)) 0 / calc(var(--w) - 2 * var(--r)) var(--h) no-repeat,
+    var(--dot) var(--l) calc(var(--h) - 2 * var(--r)) / calc(2 * var(--r)) calc(2 * var(--r)) no-repeat,
+    var(--dot) calc(var(--l) + var(--w) - 2 * var(--r)) calc(var(--h) - 2 * var(--r)) / calc(2 * var(--r)) calc(2 * var(--r)) no-repeat,
+    radial-gradient(circle var(--f) at 0 100%, transparent calc(var(--f) - .5px), #000 var(--f))
+      calc(var(--l) - var(--f)) var(--hdr) / var(--f) var(--f) no-repeat,
+    radial-gradient(circle var(--f) at 100% 100%, transparent calc(var(--f) - .5px), #000 var(--f))
+      calc(var(--l) + var(--w)) var(--hdr) / var(--f) var(--f) no-repeat;
+}
+/* the header's own text over that light glass: a soft shadow keeps it readable without clouding the map */
+header:has(#hdr-back > *) { text-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
+/* ...and its right end is where the camera buttons hang from: no language switch there */
+header:has(#hdr-back > *) .hdr-lang { display: none; }
+/* the university in the middle of that header needs the room: the logo steps aside below lg (the arrow is there) */
+@media (max-width: 1023px) { header:has(#hdr-center > *) .hdr-logo { display: none; } }
 .globe-page .btn-primary { @apply bg-brand hover:bg-blue-600; box-shadow: 0 0 0 1px rgba(147,197,253,.25), 0 8px 30px rgba(29,78,216,.35); }
 .clouds {
   position: absolute; inset: -20%; filter: blur(18px);
@@ -114,6 +184,3 @@ h1, h2, h3, .display { font-family: var(--font-display); letter-spacing: -0.02em
 /* ---- Google 3D campus scene */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
-@keyframes m3d-drop { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
-.m3d-drop { animation: m3d-drop 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.35s both; }
-@media (prefers-reduced-motion: reduce) { .m3d-drop { animation: none; } }

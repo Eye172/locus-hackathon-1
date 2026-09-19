@@ -117,13 +117,20 @@ export function earthDataSince(since: number): boolean | null {
 }
 
 /** 'mesh' (Google draws real 3D here), 'flat' (terrain + satellite photo only) or null (too few nodes yet), judged by
- *  the detailed nodes (octree depth >= 16, the last few hundred metres of zoom) fetched since `since`
- *  (a performance.now() time). A single mesh node in twenty counts as 3D: grey buildings only where there is none. */
+ *  the city-scale nodes (octree depth >= 12) fetched since `since` (a performance.now() time). Where Google has no 3D
+ *  not one of them is a mesh (Taraz, Osh, Nukus, Khorog...); a coarse mesh stops early and the deeper nodes are flat
+ *  photo (Hong Kong's Clear Water Bay: mesh to depth 16 only), so it is the share of mesh nodes, not their depth, that
+ *  tells. 'flat' only once the detailed nodes (depth >= 16) are in, the coarse levels arrive first. */
 export function earthSurfaceSince(since: number, minNodes = 40): 'mesh' | 'flat' | null {
-  let deep = 0, mesh = 0
-  for (const n of earthNodes) if (n.t >= since && n.depth >= 16) { deep++; if (n.mesh) mesh++ }
-  if (deep < minNodes) return null
-  return mesh / deep >= 0.05 ? 'mesh' : 'flat'
+  let city = 0, mesh = 0, deep = 0
+  for (const n of earthNodes) {
+    if (n.t < since || n.depth < 12) continue
+    city++
+    if (n.mesh) mesh++
+    if (n.depth >= 16) deep++
+  }
+  if (mesh >= 6 && mesh / city >= 0.02) return 'mesh'
+  return deep < minNodes ? null : 'flat'
 }
 
 export function loadGoogle3D(lang: string): Promise<GoogleLibs> {
@@ -137,6 +144,13 @@ export function loadGoogle3D(lang: string): Promise<GoogleLibs> {
       .catch((e) => { libsPromise = null; throw e })
   }
   return libsPromise
+}
+
+/** Street View (the profile's walk tab) through the same loader and key as the 3D map. */
+export function loadStreetView(lang: string): Promise<any> {
+  if (!GOOGLE_3D_KEY) return Promise.reject(new Error('no-key'))
+  bootstrap({ key: GOOGLE_3D_KEY, v: 'weekly', language: lang })
+  return window.google.maps.importLibrary('streetView')
 }
 
 const memo = new Map<string, Promise<unknown>>()

@@ -7,20 +7,20 @@
  * OSM places as a fallback.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { flushSync } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
   ArrowLeft, ArrowRight, BedDouble, Building2, Camera, Car, ChevronDown, Clapperboard, Coffee, Dumbbell, ExternalLink,
   Footprints, Images, Landmark, Layers, LoaderCircle, LocateFixed, LockKeyhole, Palette, Pill, RotateCw, ShoppingBag,
-  SkipForward, Star, Tags, TramFront, Trees, TriangleAlert, Undo2, UtensilsCrossed, X,
+  SkipForward, Star, Tags, TramFront, Trees, TriangleAlert, UtensilsCrossed, X,
 } from 'lucide-react'
 import { api, API_BASE } from '../lib/api'
 import type { Map3DBuilding, Map3DDorm, Map3DPack } from '../lib/types'
-import { useLang, useT } from '../lib/i18n'
+import { placeLang, uniName, useLang, useT } from '../lib/i18n'
 import type { Lang } from '../lib/i18n'
 import { SearchBox } from './SearchBox'
 import {
@@ -75,13 +75,20 @@ const ICONS: Record<string, SVGElement> = (() => {
   return out
 })()
 
-function dotEl(layer: LayerKey, size = 26, ring = '#FFFFFF'): HTMLElement {
-  const d = document.createElement('div')
-  const c = LAYER[layer].color
-  d.style.cssText = `width:${size}px;height:${size}px;border-radius:999px;background:${c};border:2px solid ${ring};display:grid;place-items:center;box-shadow:0 2px 10px rgba(0,0,0,.45);cursor:pointer`
-  const icon = ICONS[layer]?.cloneNode(true)
-  if (icon) d.append(icon)
-  return d
+/** The same dot as an SVG template for Marker3D elements: those are drawn inside the 3D scene, which costs about a
+ *  third of an HTML marker per frame (measured with 69 of them: 0.4 ms against 1.5 ms) - HTML stays for the few
+ *  plates, chips and photo thumbnails. */
+function dotTemplate(layer: LayerKey, size = 26, ring = '#FFFFFF'): HTMLTemplateElement {
+  const k = size + 6  // room for the soft shadow
+  const icon = ICONS[layer]
+  const stroke = layer === 'photos' ? '#0A0A0A' : '#FFFFFF'
+  const t = document.createElement('template')
+  t.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${k}" height="${k}" viewBox="0 0 ${k} ${k}">`
+    + `<circle cx="${k / 2}" cy="${k / 2 + 1.5}" r="${size / 2 + 1}" fill="rgba(0,0,0,.28)"/>`
+    + `<circle cx="${k / 2}" cy="${k / 2}" r="${size / 2 - 1}" fill="${LAYER[layer].color}" stroke="${ring}" stroke-width="2"/>`
+    + (icon ? `<svg x="${(k - 14) / 2}" y="${(k - 14) / 2}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${icon.innerHTML}</svg>` : '')
+    + '</svg>'
+  return t
 }
 
 function plateEl(title: string, sub: string, accent: string): HTMLElement {
@@ -225,15 +232,40 @@ type Intro = 'wait' | 'fly' | 'orbit' | 'done'
 const ORBIT_MS = 16000
 const INTRO_TILT = 62
 const INTRO_HEADING = 28
+// arrival opening shot: close to the campus (≈ its diagonal away, never farther than 1.8 km), not the whole district
+const INTRO_RANGE_EARLY = 1100  // before the campus data: just the university's point
+const introRange = (spanM: number) => Math.min(1800, Math.max(500, spanM * 0.95))
+// the orbit is also the approach: it starts ~2.4× farther out and higher, and over the turn comes in to the framing
+// above, lowering towards the horizon. The clouds clear onto the wide view.
+const APPROACH = 2.4
+const APPROACH_MIN_M = 2000
+const APPROACH_MAX_M = 5000
+const APPROACH_TILT = 14    // degrees higher (more from above) at the start
+const APPROACH_SHARE = 0.85  // share of the turn the approach takes; the rest is a steady circle at the final distance
+type Cam = { center: { lat: number; lng: number; altitude: number }; range: number; tilt: number; heading: number }
+const approachStart = (end: Cam): Cam => ({
+  ...end, range: Math.min(APPROACH_MAX_M, Math.max(APPROACH_MIN_M, end.range * APPROACH)), tilt: end.tilt - APPROACH_TILT,
+})
+const easeInOutSine = (x: number) => (1 - Math.cos(Math.PI * x)) / 2
+/** progress along the turn: speeds up over the first `a` of the time, slows down over the last `b`, even in between */
+function turnAt(t: number, a = 0.14, b = 0.22): number {
+  const total = 1 - a / 2 - b / 2
+  if (t <= a) return (t * t) / (2 * a) / total
+  if (t <= 1 - b) return (a / 2 + (t - a)) / total
+  const r = 1 - t
+  return (a / 2 + (1 - b - a) + b / 2 - (r * r) / (2 * b)) / total
+}
 const ALWAYS_ON = new Set(['sel', 'city', 'grey'])  // element groups that are not user layers
-const LS_SURFACE = 'campuslens.surface.'  // + qid: 'mesh' | 'flat', what Google's 3D map is at this campus
+const LS_SURFACE = 'campuslens.surface2.'  // + qid: 'mesh' | 'flat', what Google's 3D map is at this campus
 // grey buildings where Google is flat: the backend's z14 building tiles (~1.5-2.4 km) list their non-empty z16 chunks
 // (~0.4-0.6 km); each chunk is one model. Chunks, not tiles: the map culls a model by its origin alone, so a tile-sized
 // model vanished while its buildings were still in the foreground.
 const GREY_TILE_Z = 14
 const GREY_CHUNK_Z = 16
-const GREY_MAX_MODELS = 160      // chunk models on the map at once (up to ~100 KB and a few hundred buildings each)
-const GREY_PER_STEP = 8          // new models per camera update
+const GREY_MAX_MODELS = 110      // chunk models on the map at once (up to ~100 KB and a few hundred buildings each); every
+                                 // model costs frame time whether in view or not (78 of them: ~2 ms a frame)
+const GREY_PER_STEP = 2          // new models per step: Google parses each inside a frame, eight at once was a 70-350 ms stall
+const GREY_STEP_MS = 70
 const GREY_MAX_REACH_M = 3000    // how far around the looked-at point
 const GREY_MAX_RANGE_M = 15000   // higher up the buildings are specks: nothing new is loaded
 function greyTileOf(p: LatLng, z: number): [number, number] {
@@ -251,6 +283,13 @@ const greyTileSide = (lat: number, z: number) => (40075016.7 * Math.cos((lat * M
 const CITY_MAX_ALT_M = 20000
 const NEAR_CAMPUS_DEG = 0.12
 const NEAR_CAMPUS_ALT_M = 12000
+// Google builds whatever is added to the map inside its next frame: a campus of 100 prisms and 60 markers handed over
+// in one go stalled the page for 150-400 ms, in the middle of the flight or of the orbit. A few per frame instead.
+const ADD_PER_STEP = 4
+const ADD_STEP_MS = 14
+// a big campus is drawn by its largest buildings: every prism costs frame time (99 of them: ~1.8 ms a frame), and the
+// sheds and kiosks beyond this count are specks
+const MAX_PRISMS = 80
 
 export interface Campus3DProps {
   qid: string
@@ -263,9 +302,13 @@ export interface Campus3DProps {
   onPhotos?: () => void
   /** Google Maps cannot be used (no key, rejected key, load failure) */
   onUnavailable?: () => void
+  /** the university's point when the caller already knows it: the map starts loading without waiting for /api/mini */
+  start?: LatLng
+  /** arrival: the profile is still being built - its photos keep coming while the map is open */
+  collecting?: { photos: number } | null
 }
 
-export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, onBack, onPhotos, onUnavailable }: Campus3DProps) {
+export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, onBack, onPhotos, onUnavailable, start, collecting }: Campus3DProps) {
   const arrival = variant === 'arrival'
   const nav = useNavigate()
   const lang = useLang()
@@ -293,12 +336,16 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   const [quota, setQuota] = useState(placesQuota)
   const [base, setBase] = useState<{ lat: number; lng: number; alt: number } | null>(null)
   const [mini, setMini] = useState<MiniInfo | null>(null)
+  // Google's labels and place names: English on a campus outside the Russian-speaking countries
+  const plang = placeLang(lang, pack?.university.country_qid ?? mini?.country_qid)
   const [intro, setIntro] = useState<Intro>('wait')
   const [cityArea, setCityArea] = useState<Map3DPack['city_area']>(null)
   const [canFly, setCanFly] = useState(false)  // the opening shot waits for loaded tiles (at most 3 s)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
+  const pending = useRef(new Set<HTMLElement>())  // elements waiting for their turn to be added to the map
+  const pumpTimer = useRef(0)
   const els = useRef<Record<string, HTMLElement[]>>({})
   const drawnGroups = useRef<Partial<Record<PlaceGroup, GroupState>>>({})
   const introFor = useRef(-1)
@@ -310,6 +357,24 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   useEffect(() => { introRef.current = intro }, [intro])
   const onRef = useRef(on)
   useEffect(() => { onRef.current = on }, [on])
+
+  // arrival: the university block sits in the app header's middle, a little taller than it; the header glass
+  // (.m3d-glass) bulges under it, cut to the block's box - measured, since its width and place follow the header
+  const tabRef = useRef<HTMLButtonElement>(null)
+  const [tabBox, setTabBox] = useState<{ l: number; w: number; h: number } | null>(null)
+  useLayoutEffect(() => {
+    const el = tabRef.current
+    if (!arrival || !active || !el) { setTabBox(null); return }
+    const measure = () => {
+      const r = el.getBoundingClientRect()
+      setTabBox((b) => (b && b.l === r.left && b.w === r.width && b.h === r.bottom ? b : { l: r.left, w: r.width, h: r.bottom }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [arrival, active, lang])
 
   const anchor: LatLng | null = pack ? { lat: pack.anchor.lat, lng: pack.anchor.lon } : null
   const baseAlt = pack?.anchor.elevation ?? base?.alt ?? 0
@@ -357,19 +422,32 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   useEffect(() => { if (gErr) onUnavailable?.() }, [gErr])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- where the camera starts: instant index coordinates (/api/mini), else the pack's anchor
+  // The map is created at that point at once, at sea level: waiting for the ground height (a third-party request) kept
+  // Google from loading anything for up to a second of the few it has under the clouds. The height follows and moves
+  // the still hidden camera (below).
+  const startAt = useCallback((p: LatLng, alive: () => boolean) => {
+    setBase((b) => b ?? { lat: p.lat, lng: p.lng, alt: 0 })
+    groundHeight(p).then((h) => {
+      if (alive() && h) setBase((b) => (b && b.lat === p.lat && b.lng === p.lng && !b.alt ? { ...b, alt: h } : b))
+    })
+  }, [])
   useEffect(() => {
     let alive = true
     setBase(null)
     setMini(null)
-    api.mini(qid).then(async (m) => {
+    api.mini(qid).then((m) => {
       if (!alive) return
       setMini(m)
-      if (m.lat == null || m.lon == null) return
-      const h = await groundHeight({ lat: m.lat, lng: m.lon })
-      if (alive) setBase((b) => b ?? { lat: m.lat!, lng: m.lon!, alt: h ?? 0 })
+      if (m.lat != null && m.lon != null) startAt({ lat: m.lat, lng: m.lon }, () => alive)
     }).catch(() => { /* the pack will provide it */ })
     return () => { alive = false }
-  }, [qid])
+  }, [qid])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!start) return
+    let alive = true
+    startAt(start, () => alive)
+    return () => { alive = false }
+  }, [qid, start?.lat, start?.lng])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (pack) setBase((b) => b ?? { lat: pack.anchor.lat, lng: pack.anchor.lon, alt: pack.anchor.elevation ?? 0 })
   }, [pack])
@@ -382,9 +460,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     // arrival: already tilted, so the clouds clear onto the side view (the campus framing follows with the pack)
     createdAt.current = performance.now()
     const map = new libs.maps3d.Map3DElement({
-      center: { lat: base.lat, lng: base.lng, altitude: base.alt }, range: arrival ? 2600 : 26000,
-      tilt: arrival ? INTRO_TILT : 0, heading: arrival ? INTRO_HEADING : 0,
-      mode: labels ? 'HYBRID' : 'SATELLITE', language: lang,
+      center: { lat: base.lat, lng: base.lng, altitude: base.alt }, range: arrival ? approachStart(earlyCam(base)).range : 26000,
+      tilt: arrival ? INTRO_TILT - APPROACH_TILT : 0, heading: arrival ? INTRO_HEADING : 0,
+      mode: labels ? 'HYBRID' : 'SATELLITE', language: plang,
       gestureHandling: 'GREEDY',  // a full-screen map: the wheel zooms without Ctrl
     })
     map.style.cssText = 'display:block;width:100%;height:100%'
@@ -412,6 +490,9 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       map.remove()
       mapRef.current = null
       els.current = {}
+      pending.current.clear()
+      window.clearTimeout(pumpTimer.current)
+      pumpTimer.current = 0
     }
   }, [libs, hasBase, qid])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -422,18 +503,30 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     return () => window.clearTimeout(timer)
   }, [active, steady, canFly])
 
-  // ---- arrival: while the scene is still hidden under the clouds, jump the camera onto the campus framing —
-  // the clouds clear onto the finished side view and the orbit starts right away, no fly-in
+  // ---- arrival: while the scene is still hidden under the clouds, put the camera at the start of the approach over the
+  // campus - the clouds clear onto the wide view and the orbit (which is also the approach) starts right away
   const placedFor = useRef(-1)
   useEffect(() => {
     const map = mapRef.current
     if (!arrival || !map || !pack || active || placedFor.current === mapGen) return
-    const cam = introCam(pack, base?.alt, arrival)
+    const cam = approachStart(introCam(pack, base?.alt, arrival))
     map.center = cam.center; map.range = cam.range; map.tilt = cam.tilt; map.heading = cam.heading
     placedFor.current = mapGen
   }, [pack, active, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
+  // where the orbit ends: the campus framing, or the university's point while the campus data is still on its way. Read
+  // by the orbit every frame, so data arriving mid-orbit moves its end smoothly
+  const orbitTo = useRef<Cam | null>(null)
+  useEffect(() => {
+    orbitTo.current = pack ? introCam(pack, base?.alt, arrival) : base ? earlyCam(base) : null
+  }, [pack, base?.lat, base?.lng, base?.alt])  // eslint-disable-line react-hooks/exhaustive-deps
+  // the ground height that arrived after the map was created: the camera has not been framed or sent off yet
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !base?.alt || placedFor.current === mapGen || introFor.current === mapGen) return
+    map.center = { lat: base.lat, lng: base.lng, altitude: base.alt }
+  }, [base?.alt, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- the opening shot. page: fly to the campus. arrival: fly in (skipped when already placed), then one slow orbit
+  // ---- the opening shot. page: fly to the campus. arrival: one slow turn around the campus that is also the approach
   // (a gesture or «skip» ends it)
   useEffect(() => {
     const map = mapRef.current
@@ -445,28 +538,64 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     const early = arrival && !pack && !!base
     if (!map || !(pack || early) || !active || !(canFly || placed) || introFor.current === mapGen) return
     introFor.current = mapGen
-    const cam = pack ? introCam(pack, base?.alt, arrival)
-      : { center: { lat: base!.lat, lng: base!.lng, altitude: base!.alt }, range: 2600, tilt: INTRO_TILT, heading: INTRO_HEADING }
-    const flyMs = arrival ? 3800 : 2600
+    const cam = pack ? introCam(pack, base?.alt, arrival) : earlyCam(base!)
+    const flyMs = 2600
     let phase: 'fly' | 'orbit' | 'done' = 'fly'
     let guard = 0
+    let raf = 0
     const finish = () => {
       if (phase === 'done') return
       phase = 'done'
       window.clearTimeout(guard)
+      cancelAnimationFrame(raf)
       map.removeEventListener('gmp-animationend', onEnd)
       host?.removeEventListener('pointerdown', onUser)
       host?.removeEventListener('wheel', onUser)
       introFinish.current = null
       setIntro('done')
     }
+    // One turn from wherever the camera is (the far start placed under the clouds, or where the element was created)
+    // in to the campus framing: the distance shrinks evenly on a log scale (as a zoom), the camera lowers towards the
+    // horizon, the turn speeds up and slows down gently. Driven here frame by frame - Google's flyCameraAround keeps
+    // one fixed distance.
     const startOrbit = () => {
       if (phase !== 'fly') return
       phase = 'orbit'
       setIntro('orbit')
-      map.flyCameraAround({ camera: cam, durationMillis: ORBIT_MS, repeatCount: 1 })
       window.clearTimeout(guard)
-      guard = window.setTimeout(finish, ORBIT_MS + 1500)
+      const c0 = map.center as { lat: number; lng: number; altitude?: number } | null
+      const r0 = Number(map.range) || approachStart(cam).range
+      const tilt0 = Number.isFinite(Number(map.tilt)) ? Number(map.tilt) : cam.tilt - APPROACH_TILT
+      const h0 = Number(map.heading) || 0
+      // the end eases towards orbitTo (it moves when the campus data comes during an early orbit)
+      const sm = { lat: c0?.lat ?? cam.center.lat, lng: c0?.lng ?? cam.center.lng, alt: c0?.altitude ?? cam.center.altitude, range: cam.range, tilt: cam.tilt }
+      let t0 = -1
+      let last = 0
+      const step = (now: number) => {
+        if (phase !== 'orbit') return
+        if (t0 < 0) { t0 = now; last = now }   // rAF timestamps can precede performance.now(): start from the first one
+        const el = Math.max(0, now - t0)
+        const k = 1 - Math.exp(-Math.max(0, now - last) / 700)
+        last = now
+        const end = orbitTo.current ?? cam
+        sm.lat += (end.center.lat - sm.lat) * k
+        sm.lng += (end.center.lng - sm.lng) * k
+        sm.alt += (end.center.altitude - sm.alt) * k
+        sm.range += (end.range - sm.range) * k
+        sm.tilt += (end.tilt - sm.tilt) * k
+        const t = Math.min(1, el / ORBIT_MS)
+        const e = easeInOutSine(Math.min(1, t / APPROACH_SHARE))
+        const range = Math.exp(Math.log(r0) + (Math.log(Math.max(1, sm.range)) - Math.log(r0)) * e)
+        if (Number.isFinite(range) && Number.isFinite(sm.lat) && Number.isFinite(sm.lng)) {
+          map.center = { lat: sm.lat, lng: sm.lng, altitude: sm.alt }
+          map.range = range
+          map.tilt = tilt0 + (sm.tilt - tilt0) * e
+          map.heading = (h0 + 360 * turnAt(t)) % 360
+        }
+        if (t < 1) raf = requestAnimationFrame(step)
+        else finish()
+      }
+      raf = requestAnimationFrame(step)
     }
     function onEnd() { if (phase === 'fly' && arrival) startOrbit(); else finish() }
     function onUser() { if (phase === 'done') return; finish(); map.stopCameraAnimation?.() }
@@ -474,25 +603,45 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     host?.addEventListener('pointerdown', onUser)
     host?.addEventListener('wheel', onUser, { passive: true })
     introFinish.current = () => { finish(); map.stopCameraAnimation?.() }
-    if (placed || early) { startOrbit(); return }  // early: the camera already frames the point (see the element)
+    if (arrival) { startOrbit(); return }  // the approach starts from wherever the camera is: no separate fly-in
     setIntro('fly')
     map.stopCameraAnimation?.()
     map.flyCameraTo({ endCamera: cam, durationMillis: flyMs })
-    guard = window.setTimeout(() => (arrival ? startOrbit() : finish()), flyMs + 1200)
+    guard = window.setTimeout(finish, flyMs + 1200)
   }, [pack, active, canFly, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { if (mapRef.current) mapRef.current.language = lang }, [lang, mapGen])
+  useEffect(() => { if (mapRef.current) mapRef.current.language = plang }, [plang, mapGen])
   useEffect(() => { if (mapRef.current) mapRef.current.mode = labels ? 'HYBRID' : 'SATELLITE' }, [labels, mapGen])
+
+  /** Hand elements to the map a few at a time (see ADD_PER_STEP); `detach` also withdraws one still waiting. */
+  const attach = useCallback((list: HTMLElement[]) => {
+    for (const e of list) pending.current.add(e)
+    if (pumpTimer.current) return
+    const step = () => {
+      pumpTimer.current = 0
+      const map = mapRef.current
+      if (!map) { pending.current.clear(); return }
+      let n = 0
+      for (const e of pending.current) {
+        pending.current.delete(e)
+        map.append(e)
+        if (++n >= ADD_PER_STEP) break
+      }
+      if (pending.current.size) pumpTimer.current = window.setTimeout(step, ADD_STEP_MS)
+    }
+    pumpTimer.current = window.setTimeout(step, 0)
+  }, [])
+  const detach = useCallback((e: HTMLElement) => { pending.current.delete(e); e.remove() }, [])
 
   /** Replace the elements of one layer; they are attached only while the layer is switched on. */
   const setLayer = useCallback((key: string, list: HTMLElement[]) => {
     const map = mapRef.current
-    for (const e of els.current[key] ?? []) e.remove()
+    for (const e of els.current[key] ?? []) detach(e)
     els.current[key] = list
     if (!map) return
     const visible = ALWAYS_ON.has(key) || onRef.current.has(key as LayerKey)
-    if (visible) for (const e of list) map.append(e)
-  }, [])
+    if (visible) attach(list)
+  }, [attach, detach])
 
   // switch layers on / off
   useEffect(() => {
@@ -502,12 +651,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     for (const [key, list] of Object.entries(els.current)) {
       if (ALWAYS_ON.has(key)) continue
       const visible = on.has(key as LayerKey)
-      for (const e of list) {
-        if (visible && !e.isConnected) map.append(e)
-        else if (!visible && e.isConnected) e.remove()
-      }
+      if (visible) attach(list.filter((e) => !e.isConnected))
+      else for (const e of list) detach(e)
     }
-  }, [on, mapGen])
+  }, [on, mapGen])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- the camera stays inside the city (plus a directly adjacent big city); everything outside is dimmed
   useEffect(() => {
@@ -620,7 +767,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     }
     setGroups((s) => ({ ...s, ...Object.fromEntries(wanted.map((g) => [g, { items: [], source: 'google', loading: true }])) }))
     for (const g of wanted) {
-      nearbyPlaces(libs, g, anchor, lang)
+      nearbyPlaces(libs, g, anchor, plang)
         .then(({ items: list }) => {
           const items = list.map((p) => ({
             id: p.id, layer: g, name: p.name, sub: p.typeLabel, lat: p.lat, lng: p.lng, distance: haversineM(anchor, p),
@@ -643,7 +790,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     // two Text Search requests: the demo key's daily Places quota is small
     const queries = [`${ru} общежитие`, en && en !== ru ? `${en} residence dormitory` : null].filter((q): q is string => !!q)
     const tok = uniTokens(pack)
-    Promise.all(queries.map((q) => textPlaces(libs, q, anchor, 8000, lang).catch(() => [])))
+    Promise.all(queries.map((q) => textPlaces(libs, q, anchor, 8000, plang).catch(() => [])))
       .then(async (lists) => {
         const seen = new Set<string>()
         const found: Map3DDorm[] = []
@@ -790,7 +937,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       let added = 0
       for (const t of want.slice(0, GREY_MAX_MODELS)) {
         if (models.has(t.key)) continue
-        if (added === GREY_PER_STEP) { schedule(250); break }   // the rest a moment later
+        if (added === GREY_PER_STEP) { schedule(GREY_STEP_MS); break }   // the rest a moment later
         const el = new libs.maps3d.Model3DElement({
           src: `${API_BASE}/api/map3d/${encodeURIComponent(qid)}/grey16/${t.x}/${t.y}-v6.glb`,  // must end in .glb: no query
           position: { ...t.at, altitude: 0 }, altitudeMode: 'RELATIVE_TO_GROUND',
@@ -837,7 +984,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         strokeColor: c, strokeWidth: 4, drawsOccludedSegments: true,
       }))
     }
-    for (const b of pack.campus.buildings) {
+    const all = pack.campus.buildings
+    const drawn = all.length <= MAX_PRISMS ? all
+      : [...all].sort((a, b) => Number(!!b.main) - Number(!!a.main) || b.area_m2 - a.area_m2).slice(0, MAX_PRISMS)
+    for (const b of drawn) {
       const h = (b.height ?? 12) + 0.6
       const el = new m3.Polygon3DInteractiveElement({
         path: b.ring.map(([la, lo]) => ({ lat: la, lng: lo, altitude: h })), altitudeMode: 'RELATIVE_TO_GROUND', extruded: true,
@@ -852,7 +1002,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     }
     const main = pack.campus.buildings.find((b) => b.main) ?? pack.campus.buildings[0]
     const at = main ? { lat: main.lat, lng: main.lon } : { lat: pack.anchor.lat, lng: pack.anchor.lon }
-    const name = pack.university.names?.[lang] || pack.university.name
+    const name = uniName(pack.university, lang)
     const bits = [pack.university.city, pack.campus.buildings.length ? `${pack.campus.buildings.length} ${BUILDING_WORD[lang](pack.campus.buildings.length)}` : null,
       pack.campus.area_ha ? `${fmt.num(pack.campus.area_ha)} ${t('m3d.ha')}` : null].filter(Boolean)
     const plate = new m3.MarkerElement({
@@ -881,11 +1031,12 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
         list.push(el)
       }
       if (i >= 12 && d.building) return  // a big campus: the yellow prisms speak for themselves
-      const mk = new m3.MarkerInteractiveElement({
+      const mk = new m3.Marker3DInteractiveElement({
         position: { lat: d.lat, lng: d.lng, altitude: (d.building?.height ?? 12) + 8 }, altitudeMode: 'RELATIVE_TO_GROUND', title: d.name,
         collisionBehavior: d.ownership === 'unknown' ? 'OPTIONAL_AND_HIDES_LOWER_PRIORITY' : 'REQUIRED', collisionPriority: 60000 - Math.round(d.distance),
+        drawsWhenOccluded: true,  // as the HTML dots were: a dorm behind a tower is still marked
       })
-      mk.append(dotEl('dorms', d.ownership === 'unknown' ? 20 : 24, d.ownership === 'unknown' ? '#E5E7EB' : '#0A0A0A'))
+      mk.append(dotTemplate('dorms', d.ownership === 'unknown' ? 20 : 24, d.ownership === 'unknown' ? '#E5E7EB' : '#0A0A0A'))
       mk.addEventListener('gmp-click', () => select(d))
       list.push(mk)
     })
@@ -925,11 +1076,12 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
       if (!st || st.loading || drawnGroups.current[g] === st) continue
       drawnGroups.current[g] = st
       const list = st.items.map((it) => {
-        const mk = new m3.MarkerInteractiveElement({
+        const mk = new m3.Marker3DInteractiveElement({
           position: { lat: it.lat, lng: it.lng, altitude: 6 }, altitudeMode: 'RELATIVE_TO_GROUND', title: it.name,
           collisionBehavior: 'OPTIONAL_AND_HIDES_LOWER_PRIORITY', collisionPriority: 40000 - Math.round(it.distance),
+          drawsWhenOccluded: true,
         })
-        mk.append(dotEl(g, 24))
+        mk.append(dotTemplate(g, 24))
         mk.addEventListener('gmp-click', () => select(it, false))
         return mk as HTMLElement
       })
@@ -1013,7 +1165,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   }
 
   const googleNote = gErr === 'nokey' ? t('m3d.err.nokey') : gErr === 'auth' ? t('m3d.err.auth') : gErr === 'load' ? t('m3d.err.load') : null
-  const title = pack ? (pack.university.names?.[lang] || pack.university.name) : mini ? (mini.names?.[lang] || mini.name) : ''
+  const title = pack ? uniName(pack.university, lang) : mini ? uniName(mini, lang) : ''
   const place = [pack?.university.city ?? mini?.city, pack?.university.country ?? mini?.country].filter(Boolean).join(', ')
 
   // ---------------------------------------------------------------- shared UI pieces
@@ -1134,7 +1286,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   )
 
   const cameraButtons = libs && pack && !gErr && (
-    <div className={`absolute right-3 flex flex-col gap-1.5 z-10 ${arrival ? 'top-[9rem]' : 'top-3'}`}>
+    <div className={`absolute right-3 flex flex-col gap-1.5 z-10 ${arrival ? 'top-[4.5rem]' : 'top-3'}`}>
       <CamBtn onClick={campusView} icon={<Building2 size={15} />} label={t('m3d.cam.campus')} />
       <CamBtn onClick={dormView} icon={<BedDouble size={15} />} label={t('m3d.cam.dorms')} disabled={!dormItems.length} />
       <CamBtn onClick={centerView} icon={<Landmark size={15} />} label={t('m3d.cam.center')} disabled={!centerItem} />
@@ -1144,7 +1296,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
   )
 
   const selectedCard = sel && (
-    <div className={`absolute z-20 left-1/2 -translate-x-1/2 w-[min(440px,calc(100%-1.5rem))] max-sm:bottom-auto max-sm:left-3 max-sm:right-16 max-sm:w-auto max-sm:translate-x-0 ${arrival ? 'bottom-[4.75rem] max-sm:top-[9rem]' : 'bottom-4 max-sm:top-3'}`}>
+    <div className={`absolute z-20 left-1/2 -translate-x-1/2 w-[min(440px,calc(100%-1.5rem))] max-sm:bottom-auto max-sm:left-3 max-sm:right-16 max-sm:w-auto max-sm:translate-x-0 ${arrival ? 'bottom-[4.75rem] max-sm:top-[6rem]' : 'bottom-4 max-sm:top-3'}`}>
       <div className="card p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           {sel.thumb ? <img src={sel.thumb} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" />
@@ -1189,53 +1341,53 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
 
   // ---------------------------------------------------------------- arrival scene (globe → clouds → here)
   if (arrival) {
-    const thumb = mini?.logo_url || (mini?.profile?.photos?.[0] ? API_BASE + mini.profile.photos[0].thumb : null)
     const facts = [
       place,
       mini?.founded ? `${t('m3d.founded')} ${mini.founded}` : null,
       mini?.students ? `${fmt.num(mini.students)} ${t('m3d.students')}` : null,
       mini?.profile?.photos_total ? `${mini.profile.photos_total} ${t('m3d.photosShort')}` : null,
     ].filter(Boolean)
+    const backSlot = document.getElementById('hdr-back')
+    const centerSlot = document.getElementById('hdr-center')
     return (
       <div className={`absolute inset-0 z-20 overflow-hidden text-ink bg-[#0B0F1A] transition-opacity duration-300 ${active ? 'opacity-100' : 'opacity-[0.01] pointer-events-none'}`} aria-hidden={!active}>
         {/* hidden = 1 % opacity, not 0: Google does not load a fully transparent map */}
         <div ref={hostRef} className="absolute inset-0" />
         {active && (
           <>
-            {/* the university, in brief: the whole card opens the full profile */}
-            {/* the globe's transparent header lies over the top 3.5rem: everything here starts below it */}
-            <div className="absolute z-20 top-[4.25rem] left-1/2 -translate-x-1/2 w-[min(760px,calc(100%-8rem))] max-sm:left-[3.75rem] max-sm:right-3 max-sm:translate-x-0 max-sm:w-auto m3d-drop">
-              <button onClick={onOpenProfile} className="w-full text-left rounded-2xl bg-white/95 backdrop-blur-md shadow-2xl border border-white/70 p-2 pr-2.5 flex items-center gap-3 hover:bg-white transition group">
-                <span className="w-12 h-12 rounded-xl overflow-hidden bg-canvas border border-line grid place-items-center shrink-0">
-                  {thumb ? <img src={thumb} alt="" className="w-full h-full object-cover" /> : <Building2 size={20} className="text-muted" />}
+            {/* the frosted glass under the transparent app header, bulging a little under the university block */}
+            <div className={`m3d-glass absolute z-20 top-0 inset-x-0 pointer-events-none ${tabBox ? 'has-tab' : ''}`}
+              style={tabBox ? { '--l': `${tabBox.l}px`, '--w': `${tabBox.w}px`, '--h': `${tabBox.h}px` } as CSSProperties : undefined} />
+            {/* the university, in brief, in the middle of the app header - a little taller than it, hence the bulge;
+                the whole block opens the full profile */}
+            {centerSlot && createPortal(
+              <button ref={tabRef} onClick={onOpenProfile} className="self-start min-w-0 max-w-[680px] flex items-center gap-5 px-5 pt-2.5 pb-4 rounded-b-xl text-left text-white cursor-pointer group [text-shadow:0_1px_2px_rgba(0,0,0,.35)]">
+                <span className="min-w-0">
+                  <span className="block caps text-white/60 !text-[10px] leading-none">{t('m3d.kicker')}</span>
+                  <span className="block display font-medium text-[17px] leading-snug truncate mt-1.5">{title || '…'}</span>
+                  <span className="block text-[12px] leading-snug text-white/75 truncate mt-1">{facts.join(' · ')}</span>
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block caps text-muted !text-[10px]">{t('m3d.kicker')}</span>
-                  <span className="block display font-extrabold text-[17px] leading-tight truncate">{title || '…'}</span>
-                  <span className="block text-[12px] text-ink-2 truncate">{facts.join(' · ')}</span>
-                </span>
-                {(walk || nearestDorm) && (
-                  <span className="hidden lg:flex flex-col items-end gap-0.5 text-[12px] text-ink-2 shrink-0 mr-1">
-                    {walk && <span className="inline-flex items-center gap-1"><Landmark size={12} /> {fmt.mins(walk.seconds)} {t('m3d.walk')}</span>}
-                    {nearestDorm && <span className="inline-flex items-center gap-1"><BedDouble size={12} /> {fmt.dist(nearestDorm.distance)}</span>}
-                  </span>
-                )}
-                <span className="btn-primary !h-9 !py-0 shrink-0 max-sm:!px-2.5">
+                {/* brand blue as on the globe page (the header is outside .globe-page) */}
+                <span className="btn-primary !h-8 !py-0 !px-3 shrink-0 max-sm:!px-2 !bg-brand group-hover:!bg-blue-600 [text-shadow:none]">
                   <span className="max-sm:hidden">{t('m3d.profile')}</span> <ArrowRight size={15} className="transition group-hover:translate-x-0.5" />
                 </span>
-              </button>
-              {cityArea && ready && (
-                <div className="mt-1.5 flex justify-center">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur text-white/90 px-2.5 py-1 text-[11px]">
-                    <LockKeyhole size={11} /> {t('m3d.lock')}: {cityArea.names.join(' + ')}
-                  </span>
-                </div>
-              )}
-            </div>
-            {onBack && (
-              <button onClick={onBack} title={t('m3d.backPlanet')} className="absolute z-20 top-[4.25rem] left-3 w-12 h-12 rounded-2xl bg-white/90 backdrop-blur shadow-xl grid place-items-center hover:bg-white">
-                <Undo2 size={18} />
-              </button>
+              </button>,
+              centerSlot,
+            )}
+            {/* the city the camera is locked to: bottom left, above the layer bar; out of the way of the drawer (which
+                lists it) and of a selected place's card */}
+            {cityArea && ready && !drawer && !sel && (
+              <span className="absolute z-20 left-3 bottom-[4.25rem] max-w-[calc(100%-1.5rem)] inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-[#0B0F1A]/25 backdrop-blur-md border border-white/15 shadow-lg text-[11px] text-white/90 whitespace-nowrap">
+                <LockKeyhole size={11} className="shrink-0" /> <span className="truncate">{t('m3d.lock')}: {cityArea.names.join(' + ')}</span>
+              </span>
+            )}
+            {/* back to the planet: a plain arrow in the app header */}
+            {onBack && backSlot && createPortal(
+              <button onClick={onBack} title={t('m3d.backPlanet')} aria-label={t('m3d.backPlanet')}
+                className="-ml-1 p-1 text-white/80 hover:text-white transition hover:-translate-x-0.5 cursor-pointer">
+                <ArrowLeft size={22} strokeWidth={2.2} />
+              </button>,
+              backSlot,
             )}
 
             {!ready && (pack || intro !== 'wait') && (
@@ -1244,6 +1396,11 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                 {!pack && !packErr && (
                   <span className="rounded-full bg-black/50 backdrop-blur text-white/85 text-[12px] px-3 py-1.5 inline-flex items-center gap-1.5">
                     <LoaderCircle size={12} className="animate-spin" /> {t('m3d.loadingCampus')}
+                  </span>
+                )}
+                {collecting && (
+                  <span className="rounded-full bg-black/50 backdrop-blur text-white/85 text-[12px] px-3 py-1.5 inline-flex items-center gap-1.5">
+                    <LoaderCircle size={12} className="animate-spin" /> {t('reveal.collecting')}{collecting.photos ? ` · ${collecting.photos}` : ''}
                   </span>
                 )}
                 <button onClick={() => introFinish.current?.()} className="rounded-full bg-white/90 hover:bg-white text-ink text-[12px] font-medium px-3 py-1.5 inline-flex items-center gap-1.5 shadow-lg">
@@ -1261,9 +1418,12 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                     <button onClick={() => setDrawer((v) => !v)} className={`shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 ${drawer ? 'bg-white text-ink' : 'bg-white/10 text-white hover:bg-white/20'}`}>
                       <Layers size={14} /> {t('m3d.more')}
                     </button>
-                    {onPhotos && (
-                      <button onClick={onPhotos} className="shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 bg-white/10 text-white hover:bg-white/20">
-                        <Images size={14} /> {t('m3d.photosBtn')}
+                    {(onPhotos || collecting) && (
+                      // the profile is still being built: the photos keep coming while the map is open
+                      <button onClick={onPhotos} disabled={!onPhotos} title={collecting ? t('reveal.collecting') : undefined}
+                        className="shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 bg-white/10 text-white hover:bg-white/20 disabled:opacity-60 disabled:hover:bg-white/10 disabled:cursor-default">
+                        {collecting ? <LoaderCircle size={14} className="animate-spin" /> : <Images size={14} />} {t('m3d.photosBtn')}
+                        {collecting && collecting.photos > 0 && <span className="mono text-[11px] text-white/60">{collecting.photos}</span>}
                       </button>
                     )}
                     <span className="w-px bg-white/15 my-1 shrink-0" />
@@ -1284,7 +1444,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                   </div>
                 </div>
                 {drawer && (
-                  <aside className="absolute z-20 left-3 top-[9rem] bottom-[4.5rem] w-[360px] max-w-[calc(100%-1.5rem)] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden pop">
+                  <aside className="absolute z-20 left-3 top-[6rem] bottom-[4.5rem] w-[360px] max-w-[calc(100%-1.5rem)] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden pop">
                     <div className="flex items-center px-4 pt-3 pb-1">
                       <span className="caps text-muted">{t('m3d.title')}</span>
                       <button className="ml-auto btn-icon !w-8 !h-8" onClick={() => setDrawer(false)} aria-label="close"><X size={15} /></button>
@@ -1403,12 +1563,17 @@ function campusSpan(pack: Map3DPack): { center: LatLng; meters: number } {
   return { center: s.center, meters: Math.min(Math.max(s.meters, 350), 4000) }
 }
 
+/** Before the campus data: the university's point from the side. */
+function earlyCam(base: { lat: number; lng: number; alt: number }): Cam {
+  return { center: { lat: base.lat, lng: base.lng, altitude: base.alt }, range: INTRO_RANGE_EARLY, tilt: INTRO_TILT, heading: INTRO_HEADING }
+}
+
 /** The opening-shot camera: the whole campus from the side. */
-function introCam(pack: Map3DPack, baseAlt: number | undefined, arrival: boolean) {
+function introCam(pack: Map3DPack, baseAlt: number | undefined, arrival: boolean): Cam {
   const s = campusSpan(pack)
   return {
     center: { lat: s.center.lat, lng: s.center.lng, altitude: pack.anchor.elevation ?? baseAlt ?? 0 },
-    range: rangeFor(s.meters) * (arrival ? 1.15 : 1), tilt: INTRO_TILT, heading: INTRO_HEADING,
+    range: arrival ? introRange(s.meters) : rangeFor(s.meters), tilt: INTRO_TILT, heading: INTRO_HEADING,
   }
 }
 

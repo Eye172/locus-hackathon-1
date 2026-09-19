@@ -1,4 +1,4 @@
-"""Deploy CampusLens as ONE Hugging Face Space (Docker, free CPU): backend + built frontend + prewarmed cache.
+"""Deploy CampusLense as ONE Hugging Face Space (Docker, free CPU): backend + built frontend + prewarmed cache.
 
     HF_TOKEN=hf_...  (write token, put it in backend/.env)  then:
     python deploy/deploy_hf.py --space campuslens            # -> https://huggingface.co/spaces/<you>/campuslens
@@ -22,7 +22,7 @@ BACKEND, FRONTEND = ROOT / "backend", ROOT / "frontend"
 STAGE = ROOT / "deploy" / "_stage"
 
 README = """---
-title: CampusLens
+title: CampusLense
 emoji: 🎓
 colorFrom: blue
 colorTo: gray
@@ -32,13 +32,13 @@ pinned: false
 license: mit
 ---
 
-# CampusLens — проверенный визуальный профиль университета
+# CampusLense — проверенный визуальный профиль университета
 
 LOCUS Startup Hackathon 2026 · кейс 1. Планета → перелёт → 3D-кампус → профиль с фото, источниками и показателем
 достоверности. Исходники: https://github.com/pip00sya/locus
 """
 
-DOCKERFILE = """# CampusLens single container: FastAPI backend + built React app + prewarmed cache (CPU only)
+DOCKERFILE = """# CampusLense single container: FastAPI backend + built React app + prewarmed cache (CPU only)
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HF_HUB_DISABLE_SYMLINKS_WARNING=1 HF_HOME=/app/.cache/huggingface
 WORKDIR /app
@@ -121,7 +121,7 @@ def main() -> None:
     api.add_space_variable(repo_id, "GEMINI_MODEL", env.get("GEMINI_MODEL", "gemini-3.5-flash-lite"))
     api.add_space_variable(repo_id, "FRONTEND_ORIGIN", "")
     print("uploading… (LFS for images/sqlite)")
-    api.upload_folder(folder_path=str(STAGE), repo_id=repo_id, repo_type="space", commit_message="CampusLens deploy",
+    api.upload_folder(folder_path=str(STAGE), repo_id=repo_id, repo_type="space", commit_message="CampusLense deploy",
                       delete_patterns=["*"])
     print(f"done: https://huggingface.co/spaces/{repo_id}  →  app: https://{user}-{args.space}.hf.space")
     print("first build takes ~10 min (torch + CLIP weights); check /api/health there.")

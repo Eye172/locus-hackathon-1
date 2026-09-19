@@ -26,6 +26,7 @@ from .. import cache, http
 from ..config import settings
 from ..geo import bbox_around, haversine_km
 from ..models import Campus, University
+from .names import place_lang
 
 log = logging.getLogger("campuslens.map3d")
 
@@ -327,9 +328,15 @@ def _ring(poly: Polygon) -> list[list[float]]:
 
 
 def _poi_name(names: dict, lang: str = "ru") -> str | None:
-    for k in (f"name:{lang}", "name", "name_en", "name:en", "name_int"):
-        if names.get(k):
-            return names[k]
+    """The name in the interface language; else the local name if it is Russian (for the Russian interface) or
+    English (for the English one); else the English name; else whatever the map has."""
+    from .names import is_english, is_russian
+    local = names.get("name")
+    fits = {"ru": is_russian, "en": is_english}.get(lang, bool)
+    for n in (names.get(f"name:{lang}"), local if local and fits(local) else None,
+              names.get("name:en"), names.get("name_en"), names.get("name_int"), local):
+        if n:
+            return n
     return None
 
 
@@ -446,7 +453,7 @@ def _feature(b: dict, kind: str, lat0: float, lon0: float, **extra) -> dict:
 def _matches_uni(name: str | None, uni: University) -> bool:
     if not name:
         return False
-    names = [n for n in [uni.name, *uni.names.values(), *uni.aliases] if n and len(n) >= 3]
+    names = [n for n in [uni.name, uni.name_en, *uni.names.values(), *uni.aliases] if n and len(n) >= 3]
     low = name.lower()
     for n in names:
         if len(n) <= 6:  # abbreviation (КазНУ, KBTU, ENU): whole word only
@@ -593,7 +600,7 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
         blobs = [b for b in await _tile_blobs(bb)]
     took["tiles"] = time.monotonic() - t0
     campus_feats, dorms, places, stats = await _in_pool(
-        _analyse, uni, outline, blobs, lang, (lat0, lon0), (anchor_lat, anchor_lon))
+        _analyse, uni, outline, blobs, place_lang(lang, uni.country_qid), (lat0, lon0), (anchor_lat, anchor_lon))
     took["analyse"] = time.monotonic() - t0
 
     center = None
@@ -638,7 +645,7 @@ async def build(uni: University, campus: Campus | None, photos: list[dict] | Non
 
     return {
         "v": PACK_VERSION,
-        "university": {"qid": uni.qid, "name": uni.name, "names": uni.names, "aliases": uni.aliases[:12], "city": uni.city,
+        "university": {"qid": uni.qid, "name": uni.name, "name_en": uni.name_en, "country_qid": uni.country_qid, "names": uni.names, "aliases": uni.aliases[:12], "city": uni.city,
                        "country": uni.country, "website": uni.website, "lat": lat0, "lon": lon0},
         "anchor": {"lat": round(anchor_lat, 6), "lon": round(anchor_lon, 6), "elevation": elev[0]},
         "campus": {"mode": "polygon" if outline is not None else "radius",

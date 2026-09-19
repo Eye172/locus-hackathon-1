@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from .ai_inspector import gemini_models, gemini_post
 from ..models import Campus, Description, DescriptionSource, Sentence, University, CATEGORY_LABELS
+from .names import PROSE_RULE, first_sentence, lead_name, mostly_russian, swap_ru
 
 log = logging.getLogger("campuslens.describe")
 
@@ -42,7 +43,7 @@ def _sources(uni: University, campus: Campus | None) -> list[DescriptionSource]:
 def _facts(uni: University, campus: Campus | None, stats: dict, context: dict | None) -> dict:
     counts = campus.counts if campus else {}
     return {
-        "name": uni.name, "name_en": uni.names.get("en"), "city": uni.city, "country": uni.country,
+        "name": uni.name, "name_en": uni.name_en or uni.names.get("en"), "city": uni.city, "country": uni.country,
         "founded": uni.founded, "students": uni.students,
         "wikipedia_extract": (uni.summary or "")[:700],
         "osm": {
@@ -63,7 +64,7 @@ def template(uni: University, campus: Campus | None, stats: dict, context: dict 
     sents: list[Sentence] = []
     first = None
     if uni.summary:
-        first = uni.summary.split(". ")[0].strip()
+        first = swap_ru(lead_name(first_sentence(uni.summary), uni.name, uni.names.get("ru")), uni.name, uni.names.get("ru"))
         if first and not first.endswith("."):
             first += "."
         sents.append(Sentence(text=first, sources=[ids["Википедия"]]))
@@ -120,17 +121,21 @@ def _prompt(uni: University, campus: Campus | None, stats: dict, context: dict |
         "Напиши 4–6 коротких предложений. Для каждого предложения укажи идентификаторы источников: "
         "1 — Википедия (wikipedia_extract), 2 — Wikidata (name, city, founded, students), "
         "3 — OpenStreetMap (osm, context.distance_km, context.transport_stops), 4 — официальный сайт. "
-        "Предложение о фотографиях (photos) источников не требует.\n\n"
+        "Предложение о фотографиях (photos) источников не требует. " + PROSE_RULE + "\n\n"
         f"Источники:\n{src_lines}\n\nФакты:\n{json.dumps(facts, ensure_ascii=False)}"
     )
     return prompt, sources
 
 
-def _finish(parsed: _DescriptionOut, sources: list[DescriptionSource], provider: str) -> Description | None:
+def _finish(parsed: _DescriptionOut, sources: list[DescriptionSource], provider: str, uni: University | None = None) -> Description | None:
     valid_ids = {s.id for s in sources}
-    sents = [Sentence(text=s.text.strip(), sources=[i for i in s.sources if i in valid_ids])
+    name, ru = (uni.name, uni.names.get("ru")) if uni else ("", None)
+    sents = [Sentence(text=swap_ru(s.text.strip(), name, ru), sources=[i for i in s.sources if i in valid_ids])
              for s in parsed.sentences if s.text.strip()]
     if not sents:
+        return None
+    if not mostly_russian(" ".join(s.text for s in sents), name):  # English or a transliteration: the template
+        log.warning("description by %s is not in Russian: %r", provider, sents[0].text[:80])
         return None
     return Description(mode="llm", sentences=sents[:6], sources=sources, note=f"provider: {provider}")
 
@@ -150,7 +155,7 @@ async def claude(uni: University, campus: Campus | None, stats: dict, context: d
             messages=[{"role": "user", "content": prompt}],
             output_format=_DescriptionOut,
         ), timeout=timeout + 1)
-        return _finish(resp.parsed_output, sources, f"claude/{settings.claude_model}")
+        return _finish(resp.parsed_output, sources, f"claude/{settings.claude_model}", uni)
     except Exception as e:  # noqa: BLE001
         log.warning("Claude description failed: %s", e)
         return None
@@ -179,7 +184,7 @@ async def gemini(uni: University, campus: Campus | None, stats: dict, context: d
         j, model = await gemini_post(body, timeout)
         text = j["candidates"][0]["content"]["parts"][0]["text"]
         parsed = _DescriptionOut.model_validate_json(text)
-        return _finish(parsed, sources, f"gemini/{model}")
+        return _finish(parsed, sources, f"gemini/{model}", uni)
     except Exception as e:  # noqa: BLE001
         log.warning("Gemini description failed: %s", e)
         return None

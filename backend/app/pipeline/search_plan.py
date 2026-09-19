@@ -1,4 +1,4 @@
-"""What CampusLens looks for: themes ("intents") a student would post about, not keywords a librarian would type.
+"""What CampusLense looks for: themes ("intents") a student would post about, not keywords a librarian would type.
 
 "<university> atmosphere", "a day in the life of a <university> student", "<university> dorm tour", "<university>
 events" - each theme is searched the way people post it, on the networks where they post it, in English and in the
@@ -85,6 +85,13 @@ DEFAULT_INTENTS: list[Intent] = [
         "ru": ["атмосфера {name}", "{name} эстетика"]},
        concept="atmosphere", caption=["atmosphere", "aesthetic", "vibes", "атмосфер", "эстетик", "вайб", "edit"],
        fast=True, platforms=["tiktok", "instagram", "google"]),
+    # the campus from above: drone clips and aerial photos - the one view that shows the whole place at once, and the
+    # cover's best source (pipeline/cover.py). YouTube's own stills from inside a drone video are aerial frames with no
+    # title card on them
+    _i("aerial", "Кампус с высоты", 6, ["campus"],
+       {"en": ["{name} drone", "{name} aerial view"], "ru": ["{name} с высоты", "{name} аэросъемка"]},
+       concept="aerial", caption=["drone", "aerial", "from above", "дрон", "с высоты", "аэросъем", "квадрокоптер"],
+       fast=True, platforms=["youtube", "google", "tiktok"], strict=True),
     _i("day_in_life", "Один день из жизни студента", 12, ["student_life", "classroom", "library", "campus", "dormitory"],
        {"en": ["day in the life {name} student", "{name} vlog"],
         "ru": ["один день из жизни студента {name}", "{name} влог"]},
