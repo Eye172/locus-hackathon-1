@@ -14,6 +14,7 @@ import { GOOGLE_3D_KEY, loadGoogle3D } from '../lib/gmaps'
 
 // after the cloud dive: Google photorealistic 3D, an orbit of the campus, then the map locked to the city
 const Campus3D = lazy(() => import('../components/Campus3D'))
+const CampusTour = lazy(() => import('../components/CampusTour'))
 
 interface Country { qid: string; iso: string; ru: string; en: string; kk: string; count: number; center: number[]; bbox: number[] }
 const QUICK = ['KZ', 'KG', 'UZ', 'RU', 'CN', 'US', 'GB', 'DE']
@@ -36,7 +37,8 @@ export default function Globe() {
   const [progress, setProgress] = useState<{ sources: number; photos: number; done: boolean } | null>(null)
   const peekSeq = useRef(0)
   const [dive, setDive] = useState(false)
-  const [diveHold, setDiveHold] = useState(false)   // the Google scene under the clouds is still loading
+  const [diveHold, setDiveHold] = useState(false)
+  const [tour, setTour] = useState(false)   // «Обзор»: 3D photos + Street View walk over the scene   // the Google scene under the clouds is still loading
   const [diveRun, setDiveRun] = useState(0)
   const diveTarget = useRef<[number, number] | null>(null)
   const revealTimer = useRef<number | undefined>(undefined)
@@ -214,7 +216,7 @@ export default function Globe() {
     }
   }, [])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
-  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setG3d(null); g3dRef.current = null; g3dReadyFor.current = null; setDiveHold(false); globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
+  const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setTour(false); setG3d(null); g3dRef.current = null; g3dReadyFor.current = null; setDiveHold(false); globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
 
   return (
     // the transparent header is fixed over the globe, so the page is the full viewport: one pixel more and it scrolls,
@@ -230,8 +232,13 @@ export default function Globe() {
       {g3d && (
         <Suspense fallback={null}>
           <Campus3D qid={g3d.qid} variant="arrival" active={g3d.active} start={g3d.at} onOpenProfile={openProfile} onBack={back}
-            onPhotos={heroPhotos.length > 0 ? () => setReveal(true) : undefined} onUnavailable={onG3dUnavailable}
+            onPhotos={() => setTour(true)} onUnavailable={onG3dUnavailable}
             collecting={progress && !progress.done ? { photos: progress.photos } : null} onSceneReady={onG3dReady} />
+        </Suspense>
+      )}
+      {tour && target && (
+        <Suspense fallback={null}>
+          <CampusTour qid={target.qid} name={target.name} photos={heroPhotos} onClose={() => setTour(false)} />
         </Suspense>
       )}
       <CloudDive run={diveRun} hold={diveHold} onMid={onDiveMid} onWhite={onDiveWhite} onDone={onDiveDone} />

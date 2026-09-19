@@ -37,8 +37,10 @@ function pickHeroByRule(photos: Photo[], limit: number): Photo[] {
 export const heroUrl = (qid: string, id: string, src?: string) => `${API_BASE}/api/hero/${qid}/${id}.jpg${src ? `?src=${encodeURIComponent(src)}` : ''}`
 export const depthUrl = (id: string) => `${API_BASE}/api/depth/${id}.png`
 
-export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true }:
-  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean }) {
+export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible = true, bare = false }:
+  { qid: string; name: string; city?: string | null; photos: Photo[]; onOpen: () => void; onMap: () => void; visible?: boolean
+    /** inside the «Обзор» overlay: its own top bar replaces the title and the map / profile buttons */
+    bare?: boolean }) {
   const t = useT()
   const lang = useLang()
   const [idx, setIdx] = useState(0)
@@ -74,7 +76,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
   if (!cur) return null
   return (
     <div className={`absolute inset-0 z-40 bg-black select-none ${visible ? '' : 'opacity-0 pointer-events-none'}`} aria-hidden={!visible}>
-      {visible && <div className="absolute inset-0 z-[60] bg-white pointer-events-none reveal-white" />}
+      {visible && !bare && <div className="absolute inset-0 z-[60] bg-white pointer-events-none reveal-white" />}
       {prev != null && photos[prev] && (
         <div className="absolute inset-0">
           <DepthPhoto key={`p-${photos[prev].id}`} src={heroUrl(qid, photos[prev].id, photos[prev].url)} depthSrc={depthUrl(photos[prev].id)} cover auto strength={0.06} className="absolute inset-0 w-full h-full" />
@@ -87,7 +89,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
       <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
       <div className="absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/85 via-black/40 to-transparent pointer-events-none" />
 
-      <div className="absolute top-6 left-6 right-6 flex items-start justify-between gap-4 text-white">
+      {!bare && <div className="absolute top-6 left-6 right-6 flex items-start justify-between gap-4 text-white">
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-[0.18em] text-blue-200/80">{t('reveal.title')}</div>
           <div className="mt-1 display text-[28px] sm:text-[44px] font-medium leading-tight drop-shadow-[0_2px_14px_rgba(0,0,0,0.6)] truncate">{name}</div>
@@ -96,7 +98,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
         <div className="flex gap-2 shrink-0">
           <button onClick={onMap} className="btn-ghost !border-white/20 !text-white bg-black/30 backdrop-blur" title={t('reveal.map')}><MapIcon size={15} /> <span className="max-sm:hidden">{t('reveal.map')}</span></button>
         </div>
-      </div>
+      </div>}
 
       <div className="absolute left-6 right-6 bottom-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4 text-white">
         <div className="min-w-0 max-w-xl">
@@ -118,7 +120,7 @@ export function CampusReveal({ qid, name, city, photos, onOpen, onMap, visible =
               <button onClick={() => go(idx + 1)} className="btn-icon !border-white/20 !text-white bg-black/30"><ChevronRight size={15} /></button>
             </div>
           )}
-          <button onClick={onOpen} className="btn-primary">{t('globe.open')} <ArrowRight size={16} /></button>
+          {!bare && <button onClick={onOpen} className="btn-primary">{t('globe.open')} <ArrowRight size={16} /></button>}
         </div>
       </div>
       {n > 1 && (

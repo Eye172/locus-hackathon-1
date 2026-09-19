@@ -14,8 +14,8 @@ import { createPortal, flushSync } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
-  ArrowLeft, ArrowRight, BedDouble, Building2, Camera, Car, ChevronDown, Clapperboard, Coffee, Dumbbell, ExternalLink,
-  Footprints, Images, Landmark, Layers, LoaderCircle, LocateFixed, LockKeyhole, Palette, Pill, RotateCw, ShoppingBag,
+  ArrowLeft, ArrowRight, BedDouble, Box, Building2, Camera, Car, ChevronDown, Clapperboard, Coffee, Dumbbell, ExternalLink,
+  Footprints, Landmark, Layers, LoaderCircle, LocateFixed, LockKeyhole, Palette, Pill, RotateCw, ShoppingBag,
   SkipForward, Star, Tags, TramFront, Trees, TriangleAlert, UtensilsCrossed, X,
 } from 'lucide-react'
 import { api, API_BASE } from '../lib/api'
@@ -1465,6 +1465,11 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                     <LoaderCircle size={12} className="animate-spin" /> {t('reveal.collecting')}{collecting.photos ? ` · ${collecting.photos}` : ''}
                   </span>
                 )}
+                {onPhotos && (
+                  <button onClick={onPhotos} className="rounded-full bg-brand hover:bg-blue-600 text-white text-[12px] font-medium px-3 py-1.5 inline-flex items-center gap-1.5 shadow-lg">
+                    <Box size={13} /> Обзор
+                  </button>
+                )}
                 <button onClick={() => introFinish.current?.()} className="rounded-full bg-white/90 hover:bg-white text-ink text-[12px] font-medium px-3 py-1.5 inline-flex items-center gap-1.5 shadow-lg">
                   <SkipForward size={13} /> {t('m3d.skip')}
                 </button>
@@ -1482,9 +1487,10 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                     </button>
                     {(onPhotos || collecting) && (
                       // the profile is still being built: the photos keep coming while the map is open
-                      <button onClick={onPhotos} disabled={!onPhotos} title={collecting ? t('reveal.collecting') : undefined}
-                        className="shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 bg-white/10 text-white hover:bg-white/20 disabled:opacity-60 disabled:hover:bg-white/10 disabled:cursor-default">
-                        {collecting ? <LoaderCircle size={14} className="animate-spin" /> : <Images size={14} />} {t('m3d.photosBtn')}
+                      // «Обзор»: 3D photos + a Street View walk (components/CampusTour.tsx)
+                      <button onClick={onPhotos} disabled={!onPhotos} title={collecting ? t('reveal.collecting') : '3D-фото и прогулка по кампусу'}
+                        className="shrink-0 h-9 px-3 rounded-xl text-[13px] font-medium inline-flex items-center gap-1.5 bg-brand text-white hover:bg-blue-600 disabled:opacity-60 disabled:cursor-default">
+                        {collecting ? <LoaderCircle size={14} className="animate-spin" /> : <Box size={14} />} Обзор
                         {collecting && collecting.photos > 0 && <span className="mono text-[11px] text-white/60">{collecting.photos}</span>}
                       </button>
                     )}

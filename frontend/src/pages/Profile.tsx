@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { RefreshCw, Share2, GitCompare, Bookmark, BookmarkCheck, ArrowLeft, Check, Map as MapIcon, Footprints } from 'lucide-react'
+import { RefreshCw, Share2, GitCompare, Bookmark, BookmarkCheck, ArrowLeft, Check, Map as MapIcon, Footprints, Box } from 'lucide-react'
 import { streamProfile, API_BASE } from '../lib/api'
 import type { Campus, Photo, Profile as ProfileT, SourceStatus, Stage, University } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
@@ -9,10 +9,13 @@ import { PhotoGrid, PhotoAlbums, PhotoPassport, BrochureVsReality, EmptyState } 
 import { ClimateTab } from '../components/ClimateTab'
 import { CityTab } from '../components/CityTab'
 import { WalkTab } from '../components/WalkTab'
+import { pickHero } from '../components/CampusReveal'
 import { AboutCampus } from '../components/AboutCampus'
 import { BuildStatus, FactsRow, HeroGallery, OverviewTab, VerifyTab, heroPicks } from '../components/ProfileSections'
 import type { ContextPack } from '../lib/types'
 import { store, useStoreVersion } from '../lib/store'
+
+const CampusTour = lazy(() => import('../components/CampusTour'))
 
 type Tab = 'overview' | 'photos' | 'campus' | 'city' | 'climate' | 'verify'
 type View = 'album' | 'grid' | 'bvr'
@@ -56,6 +59,7 @@ export default function Profile() {
   const [copied, setCopied] = useState(false)
   const [walk, setWalk] = useState(params.get('tab') === 'walk')
   const [ctx, setCtx] = useState<ContextPack | null>(null)
+  const [tourOpen, setTourOpen] = useState(false)
   useEffect(() => { setCtx(null); setWalk(false) }, [qid])
 
   useEffect(() => {
@@ -123,6 +127,7 @@ export default function Profile() {
 
   return (
     <div className="pb-24">
+      {tourOpen && <Suspense fallback={null}><CampusTour qid={qid} name={uni ? name : undefined} photos={photos.length ? pickHero(photos, 8, profile?.cover ?? undefined) : undefined} onClose={() => setTourOpen(false)} /></Suspense>}
       <div className="mx-auto max-w-7xl px-4 sm:px-6">
         <nav className="pt-6 flex items-center gap-1.5 text-[13.5px] text-muted min-w-0">
           <Link to="/" className="inline-flex items-center gap-1.5 hover:text-ink shrink-0"><ArrowLeft size={15} /> Планета</Link>
@@ -148,7 +153,8 @@ export default function Profile() {
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
             {/* one map for the whole app: the campus scene of the main page */}
-            <Link to={`/?u=${qid}`} className="btn-primary w-full sm:w-auto justify-center"><MapIcon size={17} /> 3D-карта кампуса</Link>
+            <Link to={`/?u=${qid}`} className="btn-primary flex-1 sm:flex-none justify-center"><MapIcon size={17} /> 3D-карта кампуса</Link>
+            <button className="btn-primary flex-1 sm:flex-none justify-center" onClick={() => setTourOpen(true)}><Box size={17} /> Обзор</button>
             <button className="btn-ghost flex-1 sm:flex-none justify-center" disabled={!profile}
               onClick={() => saved ? store.unsave(qid) : store.save(qid, { name: uni?.name ?? qid, city: uni?.city, savedAt: new Date().toISOString(), photos: photos.length })}>
               {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />} {saved ? 'Сохранено' : 'Сохранить'}
