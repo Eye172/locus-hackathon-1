@@ -24,7 +24,7 @@ export default function Saved() {
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
       <div className="flex flex-wrap items-end gap-4">
-        <div><h1 className="text-[36px] leading-tight">Мои вузы</h1><div className="text-sm text-muted mt-1">Сохранённые профили, избранные фото и планы визита. Хранится в этом браузере.</div></div>
+        <div><h1 className="text-[32px] sm:text-[44px] leading-[1.08]">Мои вузы</h1><div className="text-[15px] text-muted mt-2">Сохранённые профили, избранные фото и планы визита. Хранится в этом браузере.</div></div>
         <div className="ml-auto flex gap-2">
           <button className="btn-ghost" onClick={exportJson}><Download size={15} /> Экспорт</button>
           <label className="btn-ghost cursor-pointer"><Upload size={15} /> Импорт<input type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} /></label>
@@ -32,26 +32,26 @@ export default function Saved() {
         </div>
       </div>
       {entries.length === 0 ? (
-        <div className="card topo-soft p-10 mt-8 text-center"><div className="relative"><div className="font-bold">Пока пусто</div><div className="text-sm text-muted mt-1">Откройте профиль вуза и нажмите «Сохранить» в шапке.</div><Link to="/" className="btn-primary mt-4">К планете</Link></div></div>
+        <div className="mt-10 border-t border-line pt-16 pb-10 text-center"><div className="text-[17px] font-medium">Пока пусто</div><div className="text-[15px] text-muted mt-1.5">Откройте профиль вуза и нажмите «Сохранить» в шапке.</div><Link to="/" className="btn-ghost mt-6">К планете</Link></div>
       ) : (
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="mt-10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {entries.map(([qid, p]) => {
             const favs = store.favorites(qid).length
             const plan = store.plan(qid)
             return (
-              <div key={qid} className={`card p-4 ${sel.includes(qid) ? 'border-ink' : ''}`}>
+              <div key={qid} className={`card p-5 transition-colors ${sel.includes(qid) ? 'border-ink' : 'hover:border-line-2'}`}>
                 <div className="flex items-start gap-3">
                   <input type="checkbox" checked={sel.includes(qid)} onChange={() => toggle(qid)} className="mt-1.5 accent-ink" title="Выбрать для сравнения" />
                   <div className="min-w-0 flex-1">
-                    <Link to={`/u/${qid}`} className="font-bold text-lg leading-snug hover:text-brand">{p.name}</Link>
-                    <div className="text-xs text-muted mt-0.5">{p.city ?? ''} · сохранено {p.savedAt.slice(0, 10)} · <span className="mono">{p.photos}</span> фото</div>
-                    <div className="mt-3 flex gap-4 text-xs text-ink-2">
-                      <span className="inline-flex items-center gap-1"><Heart size={12} className="text-rose-500" /> {favs} избранных</span>
-                      <span className="inline-flex items-center gap-1"><ListChecks size={12} /> {plan.filter((i) => i.done).length}/{plan.length} в плане</span>
+                    <Link to={`/u/${qid}`} className="display text-[20px] leading-snug hover:underline decoration-line-2 underline-offset-4">{p.name}</Link>
+                    <div className="text-[13px] text-muted mt-1">{p.city ?? ''} · сохранено {p.savedAt.slice(0, 10)} · <span className="mono">{p.photos}</span> фото</div>
+                    <div className="mt-4 flex gap-5 text-[13px] text-ink-2">
+                      <span className="inline-flex items-center gap-1"><Heart size={13} className="text-muted" /> {favs} избранных</span>
+                      <span className="inline-flex items-center gap-1"><ListChecks size={13} className="text-muted" /> {plan.filter((i) => i.done).length}/{plan.length} в плане</span>
                     </div>
-                    {plan.length > 0 && <ul className="mt-2 text-xs text-muted space-y-0.5">{plan.slice(0, 3).map((i) => <li key={i.id} className={i.done ? 'line-through' : ''}>· {i.label}</li>)}</ul>}
+                    {plan.length > 0 && <ul className="mt-3 text-[13px] text-muted space-y-1">{plan.slice(0, 3).map((i) => <li key={i.id} className={i.done ? 'line-through' : ''}>· {i.label}</li>)}</ul>}
                   </div>
-                  <button onClick={() => store.unsave(qid)} className="text-slate-300 hover:text-unverified cursor-pointer" title="Убрать"><Trash2 size={15} /></button>
+                  <button onClick={() => store.unsave(qid)} className="text-faint hover:text-unverified cursor-pointer transition-colors" title="Убрать" aria-label="Убрать"><Trash2 size={15} /></button>
                 </div>
               </div>
             )

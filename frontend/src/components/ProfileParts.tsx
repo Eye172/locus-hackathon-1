@@ -6,12 +6,12 @@ import { store, useStoreVersion } from '../lib/store'
 
 const ICON = {
   pending: <Circle size={12} className="text-line-2" />,
-  running: <Loader2 size={12} className="text-brand animate-spin" />,
+  running: <Loader2 size={12} className="text-ink animate-spin" />,
   done: <Check size={12} className="text-verified" />,
   skipped: <MinusCircle size={12} className="text-likely" />,
   error: <AlertTriangle size={12} className="text-unverified" />,
-  fetching: <Loader2 size={12} className="text-brand animate-spin" />,
-  disabled: <KeyRound size={12} className="text-slate-400" />,
+  fetching: <Loader2 size={12} className="text-ink animate-spin" />,
+  disabled: <KeyRound size={12} className="text-faint" />,
 }
 const AGENT: Record<string, Record<Lang, string>> = {
   facts: { ru: 'Факты', en: 'Facts', kk: 'Деректер' }, campus: { ru: 'Кампус · OSM', en: 'Campus · OSM', kk: 'Кампус · OSM' },
@@ -25,7 +25,7 @@ export function StageList({ stages }: { stages: Record<string, Stage> }) {
   const lang = useLang()
   const name = (s: Stage) => AGENT[s.key]?.[lang] ?? s.label
   return (
-    <ol className="space-y-2 text-[13.5px]">
+    <ol className="space-y-2.5 text-[14px]">
       {Object.values(stages).map((s) => (
         <li key={s.key} title={s.detail ?? ''}>
           <div className="flex items-center gap-2">
@@ -46,9 +46,9 @@ export function SourceList({ sources }: { sources: Record<string, SourceStatus> 
   const srcs = Object.entries(sources).sort((a, b) => (b[1].count ?? 0) - (a[1].count ?? 0))
   if (!srcs.length) return null
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-10 gap-y-2 text-[13.5px]">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-12 text-[14px]">
       {srcs.map(([k, s]) => (
-        <div key={k} className="flex items-center gap-2 min-w-0 py-0.5" title={s.detail ?? s.label}>
+        <div key={k} className="flex items-center gap-2 min-w-0 py-2.5 border-t border-line" title={s.detail ?? s.label}>
           {ICON[s.status as keyof typeof ICON]}
           <span className="text-ink-2 truncate">{s.label}</span>
           <span className="tnum text-muted ml-auto shrink-0">{s.status === 'done' ? s.count : s.status === 'disabled' ? t('home.keyMissing') : s.status === 'fetching' ? '…' : s.status}</span>
@@ -65,11 +65,11 @@ export function VisitPlan({ qid }: { qid: string }) {
   const add = () => { if (text.trim()) { store.addPlan(qid, text.trim()); setText('') } }
   return (
     <div>
-      <h3 className="text-[13px] font-medium text-muted mb-3">План визита</h3>
+      <h3 className="text-[15px] font-semibold tracking-[-0.01em] pb-3 mb-4 border-b border-line">План визита</h3>
       <div className="flex gap-2">
         <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()}
           placeholder="Что посмотреть на кампусе" className="flex-1 min-w-0 rounded-lg border border-line-2 px-3 h-9 text-[14px] outline-none focus:border-ink placeholder:text-faint" />
-        <button className="btn-ghost !h-9 !px-3" onClick={add} aria-label="Добавить">+</button>
+        <button className="btn-ghost !h-9 !w-9 !px-0 justify-center text-[18px] leading-none" onClick={add} aria-label="Добавить">+</button>
       </div>
       {items.length === 0 && <div className="mt-2 text-[12.5px] text-faint">Добавляйте места сюда или кнопкой «В план визита» у фото.</div>}
       <ul className="mt-3 space-y-1.5">
@@ -94,10 +94,10 @@ export function JudgePanel({ p }: { p: Profile }) {
   }
   const Th = ({ children }: { children: React.ReactNode }) => <th className="text-left caps text-muted font-medium py-1.5 pr-3">{children}</th>
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card p-5">
-          <h3 className="caps text-muted">{t('judge.stages')}</h3>
+    <div className="space-y-10">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-10">
+        <div>
+          <h3 className="text-[14px] font-semibold">{t('judge.stages')}</h3>
           <table className="mt-2 w-full text-xs">
             <thead><tr><Th>агент</Th><Th>статус</Th><Th>время</Th><Th>детали</Th></tr></thead>
             <tbody>{p.stages.map((s) => (
@@ -106,8 +106,8 @@ export function JudgePanel({ p }: { p: Profile }) {
           </table>
           <div className="mt-2 mono text-[11px] text-muted">итого {p.elapsed_ms} ms · {p.partial ? 'частичный' : 'полный'} · {p.generated_at}</div>
         </div>
-        <div className="card p-5">
-          <h3 className="caps text-muted">{t('judge.sources')}</h3>
+        <div>
+          <h3 className="text-[14px] font-semibold">{t('judge.sources')}</h3>
           <table className="mt-2 w-full text-xs">
             <thead><tr><Th>источник</Th><Th>статус</Th><Th>фото</Th><Th>время</Th></tr></thead>
             <tbody>{Object.entries(p.sources_status).map(([k, s]) => (
@@ -116,9 +116,9 @@ export function JudgePanel({ p }: { p: Profile }) {
           </table>
         </div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6">
-        <div className="card p-5">
-          <h3 className="caps text-muted">{t('judge.inspector')}</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-x-12 gap-y-10">
+        <div>
+          <h3 className="text-[14px] font-semibold">{t('judge.inspector')}</h3>
           {p.inspector ? (
             <div className="mt-2 text-xs text-ink-2 grid grid-cols-2 sm:grid-cols-3 gap-2 mono">
               <span>{p.inspector.model}</span>
@@ -129,28 +129,28 @@ export function JudgePanel({ p }: { p: Profile }) {
               <span>{p.inspector.errors} errors</span>
             </div>
           ) : <div className="mt-2 text-xs text-muted">—</div>}
-          <h3 className="caps text-muted mt-4">{t('judge.thresholds')}</h3>
+          <h3 className="text-[14px] font-semibold mt-6">{t('judge.thresholds')}</h3>
           <div className="mt-2 text-xs text-ink-2 grid grid-cols-2 sm:grid-cols-4 gap-2 mono">
             <span>verified ≥ 0.65</span><span>likely ≥ 0.40</span><span>pHash ≤ 8</span><span>cosine ≥ 0.93</span>
             <span>strip &gt; 2.4:1</span><span>budget 25 s</span><span>source timeout 6 s</span><span>outdated &gt; 8 y</span>
           </div>
         </div>
         {p.reference && (
-          <div className="card p-3 lg:w-56">
-            <h3 className="caps text-muted px-2 pt-1">{t('judge.reference')}</h3>
+          <div className="lg:w-56">
+            <h3 className="text-[14px] font-semibold">{t('judge.reference')}</h3>
             <img src={p.reference.url} alt="" className="mt-2 w-full aspect-[4/3] object-cover rounded-md" />
           </div>
         )}
       </div>
-      <div className="card p-5">
+      <div>
         <div className="flex items-center justify-between">
-          <h3 className="caps text-muted">{t('judge.log')}</h3>
+          <h3 className="text-[14px] font-semibold">{t('judge.log')}</h3>
           <div className="flex gap-2">
             <a href="/api/schema" target="_blank" rel="noreferrer" className="btn-ghost !h-8 !px-3 text-xs">/api/schema</a>
             <button onClick={download} className="btn-ghost !h-8 !px-3 text-xs"><FileJson size={13} /> {t('judge.json')}</button>
           </div>
         </div>
-        <pre className="mt-2 code text-[11px] leading-relaxed bg-ink text-slate-100 rounded-lg p-3 overflow-auto max-h-80">{p.log.join('\n')}</pre>
+        <pre className="mt-3 code text-[11px] leading-relaxed bg-soft text-ink-2 rounded-lg p-4 overflow-auto max-h-80">{p.log.join('\n')}</pre>
       </div>
     </div>
   )

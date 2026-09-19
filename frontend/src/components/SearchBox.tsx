@@ -44,13 +44,13 @@ export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', 
     else if (e.key === 'Escape') setCands(null)
   }
 
-  const box = dark ? 'bg-white/10 border-white/15 text-white backdrop-blur-xl focus-within:border-blue-300/60' : 'bg-white border-line text-ink'
+  const box = dark ? 'bg-white/10 border-white/15 text-white backdrop-blur-xl focus-within:border-white/50 focus-within:bg-white/[0.13]' : 'bg-white border-line-2 text-ink focus-within:border-ink'
   const drop = dark ? 'bg-[#0B1222]/95 border-white/10 text-white backdrop-blur-xl' : 'bg-white border-line'
   const h = size === 'lg' ? 'h-14 text-base' : 'h-11 text-sm'
   return (
     <div className="relative w-full">
       <div className={`flex items-center gap-2 pl-4 pr-2 rounded-2xl border transition ${box} ${h}`}>
-        <Search size={20} className={dark ? 'text-blue-200' : 'text-muted'} />
+        <Search size={20} className={dark ? 'text-white/60' : 'text-muted'} />
         <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}
           placeholder={t('home.placeholder')} className="flex-1 bg-transparent outline-none placeholder:text-current/50" />
         <button onClick={submit} disabled={!q.trim()} className="btn-primary !rounded-xl !py-2 !px-3 sm:!px-3.5 shrink-0"><span className="hidden sm:inline">{t('home.go')}</span> <ArrowRight size={16} /></button>
@@ -61,18 +61,18 @@ export function SearchBox({ onPick, onCandidates, dark, autoFocus, size = 'lg', 
           {cands && cands.length === 0 && !loading && <div className="p-3 text-sm opacity-70">{t('home.nothing')}</div>}
           {cands && cands.length > 0 && (
             <>
-              <div className="px-3 pt-1 pb-2 text-[11px] uppercase tracking-wider opacity-60 font-semibold">{t('home.didyoumean')}</div>
+              <div className="px-3 pt-1 pb-2 text-[12px] opacity-60">{t('home.didyoumean')}</div>
               {cands.map((c, i) => (
                 <button key={c.qid} onMouseEnter={() => setActive(i)} onClick={() => pick(c)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left cursor-pointer ${i === active ? (dark ? 'bg-white/10' : 'bg-slate-50') : ''}`}>
-                  <div className={`w-9 h-9 rounded-lg grid place-items-center overflow-hidden shrink-0 ${dark ? 'bg-white/10' : 'bg-slate-100'}`}>
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left cursor-pointer ${i === active ? (dark ? 'bg-white/10' : 'bg-soft') : ''}`}>
+                  <div className={`w-9 h-9 rounded-lg grid place-items-center overflow-hidden shrink-0 ${dark ? 'bg-white/10' : 'bg-soft'}`}>
                     {c.logo_url ? <img src={c.logo_url} alt="" className="w-9 h-9 object-contain" loading="lazy" /> : <MapPin size={16} className="opacity-60" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate">{c.label}{c.origin === 'web' && <span className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-brand/15 text-brand">{t('search.web')}</span>}</div>
+                    <div className="font-medium truncate">{c.label}{c.origin === 'web' && <span className="ml-2 align-middle text-[11px] font-normal opacity-60">· {t('search.web')}</span>}</div>
                     <div className="text-xs opacity-60 truncate">{[c.city, c.country].filter(Boolean).join(', ')}{c.description ? ` · ${c.description}` : ''}</div>
                   </div>
-                  <span className="text-[11px] opacity-50 font-mono">{c.qid}</span>
+                  <span className="text-[11px] opacity-40 code">{c.qid}</span>
                 </button>
               ))}
             </>

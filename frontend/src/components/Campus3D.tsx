@@ -1430,7 +1430,7 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
                   <span className="block text-[12px] leading-snug text-white/75 truncate mt-1">{facts.join(' · ')}</span>
                 </span>
                 {/* brand blue as on the globe page (the header is outside .globe-page) */}
-                <span className="btn-primary !h-8 !py-0 !px-3 shrink-0 max-sm:!px-2 !bg-brand group-hover:!bg-blue-600 [text-shadow:none]">
+                <span className="btn-primary !h-8 !py-0 !px-3 shrink-0 max-sm:!px-2 !bg-brand !text-white group-hover:!bg-blue-600 [text-shadow:none]">
                   <span className="max-sm:hidden">{t('m3d.profile')}</span> <ArrowRight size={15} className="transition group-hover:translate-x-0.5" />
                 </span>
               </button>,

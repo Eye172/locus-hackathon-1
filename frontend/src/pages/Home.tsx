@@ -51,12 +51,12 @@ export default function Home() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:py-16">
       <div className="text-center max-w-3xl mx-auto">
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight">{t('home.title')}</h1>
-        <p className="mt-4 text-muted text-base sm:text-lg">{t('home.subtitle')}</p>
+        <h1 className="text-[32px] sm:text-[44px] leading-[1.1]">{t('home.title')}</h1>
+        <p className="mt-5 text-muted text-[17px] leading-[1.6]">{t('home.subtitle')}</p>
       </div>
 
-      <div className="relative mt-8 max-w-2xl mx-auto">
-        <div className="card flex items-center gap-2 p-2 pl-4 focus-within:ring-2 focus-within:ring-brand/30">
+      <div className="relative mt-10 max-w-2xl mx-auto">
+        <div className="flex items-center gap-2 p-2 pl-4 rounded-xl border border-line-2 bg-surface transition-colors focus-within:border-ink">
           <Search className="text-muted shrink-0" size={20} />
           <input
             value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()}
@@ -65,22 +65,22 @@ export default function Home() {
           <button onClick={submit} className="btn-primary" disabled={!q.trim()}>{t('home.go')} <ArrowRight size={16} /></button>
         </div>
         {(cands || loading) && (
-          <div className="card absolute left-0 right-0 mt-2 p-2 z-30 max-h-96 overflow-auto pop">
+          <div className="card absolute left-0 right-0 mt-2 p-2 z-30 max-h-96 overflow-auto pop shadow-[0_12px_40px_rgba(11,13,18,0.10)]">
             {loading && !cands && <div className="p-3 text-sm text-muted">…</div>}
             {cands && cands.length === 0 && !loading && <div className="p-3 text-sm text-muted">{t('home.nothing')}</div>}
             {cands && cands.length > 0 && (
               <>
-                <div className="px-3 pt-1 pb-2 text-[11px] uppercase tracking-wide text-muted font-semibold">{t('home.didyoumean')}</div>
+                <div className="px-3 pt-1 pb-2 text-[12px] text-muted">{t('home.didyoumean')}</div>
                 {cands.map((c) => (
-                  <button key={c.qid} onClick={() => go(c)} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-50 text-left cursor-pointer">
-                    <div className="w-9 h-9 rounded-lg bg-slate-100 grid place-items-center overflow-hidden shrink-0">
+                  <button key={c.qid} onClick={() => go(c)} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-soft text-left cursor-pointer">
+                    <div className="w-9 h-9 rounded-lg bg-soft grid place-items-center overflow-hidden shrink-0">
                       {c.logo_url ? <img src={c.logo_url} alt="" className="w-9 h-9 object-contain" loading="lazy" /> : <MapPin size={16} className="text-muted" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium truncate">{c.label}</div>
                       <div className="text-xs text-muted truncate">{[c.city, c.country].filter(Boolean).join(', ')}{c.description ? ` · ${c.description}` : ''}</div>
                     </div>
-                    <span className="text-[11px] text-muted font-mono">{c.qid}</span>
+                    <span className="text-[11px] text-faint code">{c.qid}</span>
                   </button>
                 ))}
               </>
@@ -89,33 +89,34 @@ export default function Home() {
         )}
       </div>
 
-      <section className="mt-14">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">{t('home.how')}</h2>
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-5 gap-3">
+      <section className="mt-20">
+        <h2 className="h-sec">{t('home.how')}</h2>
+        <ol className="mt-6 grid grid-cols-1 sm:grid-cols-5 gap-x-8 gap-y-6 border-t border-line pt-6">
           {steps.map((s, i) => (
-            <div key={i} className="card p-4">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-brand text-white text-xs font-bold grid place-items-center">{i + 1}</span>
-                <span className="font-semibold">{s.title}</span>
-              </div>
-              <p className="mt-2 text-xs text-muted leading-relaxed">{s.desc}</p>
-            </div>
+            <li key={i}>
+              <div className="text-[13px] text-faint">0{i + 1}</div>
+              <div className="mt-2 text-[15px] font-medium">{s.title}</div>
+              <p className="mt-1.5 text-[13px] text-muted leading-relaxed">{s.desc}</p>
+            </li>
           ))}
-        </div>
+        </ol>
       </section>
 
       {recent.length > 0 && (
-        <section className="mt-12">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">{t('home.recent')}</h2>
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <section className="mt-16">
+          <h2 className="h-sec">{t('home.recent')}</h2>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-12">
             {recent.map((r) => (
-              <button key={r.qid} onClick={() => nav(`/u/${r.qid}`)} className="card p-4 text-left hover:border-brand/40 cursor-pointer">
-                <div className="font-medium truncate">{r.name}</div>
-                <div className="mt-1 text-xs text-muted flex items-center gap-3">
-                  {r.city && <span className="inline-flex items-center gap-1"><MapPin size={12} />{r.city}</span>}
-                  <span className="inline-flex items-center gap-1"><Images size={12} />{r.photos}</span>
-                  <span className="inline-flex items-center gap-1"><Clock size={12} />{(r.elapsed_ms / 1000).toFixed(1)} s</span>
-                </div>
+              <button key={r.qid} onClick={() => nav(`/u/${r.qid}`)} className="row-link group min-w-0">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-medium truncate">{r.name}</span>
+                  <span className="mt-0.5 text-[13px] text-muted flex items-center gap-3">
+                    {r.city && <span className="inline-flex items-center gap-1"><MapPin size={12} />{r.city}</span>}
+                    <span className="inline-flex items-center gap-1"><Images size={12} />{r.photos}</span>
+                    <span className="inline-flex items-center gap-1"><Clock size={12} />{(r.elapsed_ms / 1000).toFixed(1)} s</span>
+                  </span>
+                </span>
+                <ArrowRight size={16} className="text-faint group-hover:text-ink transition-colors shrink-0 mr-1" />
               </button>
             ))}
           </div>
@@ -123,12 +124,12 @@ export default function Home() {
       )}
 
       {Object.keys(sources).length > 0 && (
-        <section className="mt-12">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">{t('home.sources')}</h2>
-          <div className="mt-3 flex flex-wrap gap-2">
+        <section className="mt-16">
+          <h2 className="h-sec">{t('home.sources')}</h2>
+          <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[13px]">
             {Object.entries(sources).map(([k, s]) => (
-              <span key={k} className={`chip ${s.enabled ? 'bg-verified-soft text-verified' : 'bg-slate-100 text-muted'}`} title={s.env}>
-                {!s.enabled && <KeyRound size={12} />}{k}{!s.enabled && ` · ${t('home.keyMissing')}`}
+              <span key={k} className={`inline-flex items-center gap-1.5 ${s.enabled ? 'text-ink-2' : 'text-faint'}`} title={s.env}>
+                {s.enabled ? <i className="w-1.5 h-1.5 rounded-full bg-verified" /> : <KeyRound size={12} />}{k}{!s.enabled && ` · ${t('home.keyMissing')}`}
               </span>
             ))}
           </div>

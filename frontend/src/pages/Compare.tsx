@@ -56,7 +56,7 @@ function Picker({ label, value, onPick, t }: { label: string; value: Candidate |
   const saved = Object.entries(store.saved())
   return (
     <div className="min-w-0">
-      <div className="text-[13px] font-medium text-muted mb-1.5">{label}</div>
+      <div className="lbl mb-2">{label}</div>
       {value ? (
         <div className="flex items-center justify-between gap-2 h-11 px-3.5 rounded-lg border border-line-2 bg-surface">
           <span className="font-medium truncate">{value.label}</span>
@@ -94,7 +94,7 @@ function UniColumn({ side, p, s, t, lang }: { side: 'A' | 'B'; p: Profile; s?: A
   return (
     <article className="min-w-0">
       <div className="flex items-center gap-2 text-[12.5px] font-medium text-muted"><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-ink text-white text-[11px]">{side}</span>{[u.city, u.country].filter(Boolean).join(', ')}</div>
-      <Link to={`/u/${u.qid}`} className="mt-2 block font-display text-[26px] leading-[1.15] tracking-[-0.015em] text-ink hover:text-brand">{uniName(u, lang)}</Link>
+      <Link to={`/u/${u.qid}`} className="mt-2 block font-display text-[24px] leading-[1.15] text-ink hover:underline decoration-line-2 underline-offset-4">{uniName(u, lang)}</Link>
       {photos.length > 0 && (
         <div className="mt-4 space-y-2">
           <PhotoTile p={photos[0]} className="aspect-[4/3]" />
@@ -169,8 +169,8 @@ function Advisor({ a, b, names, t, lang }: { a: string; b: string; names: [strin
   const waiting = busy && msgs.length > 0 && !msgs[msgs.length - 1].content
 
   return (
-    <section className="flex flex-col min-h-[600px] lg:h-[calc(100vh-7rem)] overflow-hidden rounded-[22px] bg-panel ring-1 ring-black/[0.06] shadow-[0_28px_70px_-28px_rgba(11,13,18,0.35),0_4px_14px_-6px_rgba(11,13,18,0.10)]">
-      <header className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-surface/80 border-b border-black/[0.06]">
+    <section className="flex flex-col min-h-[600px] lg:h-[calc(100vh-7rem)] overflow-hidden rounded-xl bg-soft border border-line">
+      <header className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-surface border-b border-line">
         <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-ink text-white shrink-0"><Sparkles size={17} strokeWidth={1.75} /></span>
         <div className="min-w-0">
           <h2 className="text-[15.5px] font-semibold leading-tight">{t('adv.advisor')}</h2>
@@ -185,25 +185,25 @@ function Advisor({ a, b, names, t, lang }: { a: string; b: string; names: [strin
         onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}>
         {msgs.map((m, i) => m.role === 'user' ? (
           <div key={i} className="flex justify-end pl-10">
-            <div className="max-w-[85%] rounded-[18px] rounded-br-md bg-ink text-white px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap shadow-sm">{m.content}</div>
+            <div className="max-w-[85%] rounded-2xl rounded-br-md bg-ink text-white px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">{m.content}</div>
           </div>
         ) : m.content ? (
           <div key={i} className="pr-2 sm:pr-8">
-            <div className="rounded-[18px] rounded-tl-md bg-surface px-5 sm:px-6 py-4 sm:py-5 ring-1 ring-black/[0.05] shadow-[0_1px_2px_rgba(11,13,18,0.05)]">
+            <div className="rounded-2xl rounded-tl-md bg-surface px-5 sm:px-6 py-4 sm:py-5 border border-line">
               <Markdown text={m.content} names={names} />
             </div>
           </div>
         ) : null)}
         {waiting && (
           <div className="pr-2 sm:pr-8" aria-busy="true">
-            <div className="rounded-[18px] rounded-tl-md bg-surface px-5 sm:px-6 py-5 ring-1 ring-black/[0.05] space-y-3">
+            <div className="rounded-2xl rounded-tl-md bg-surface px-5 sm:px-6 py-5 border border-line space-y-3">
               {!asked && <div className="text-[13.5px] text-muted flex items-center gap-2"><Loader2 size={14} className="animate-spin" />{t('adv.preparing')}</div>}
               <div className="h-4 rounded shimmer w-2/5" /><div className="h-4 rounded shimmer w-full" /><div className="h-4 rounded shimmer w-11/12" /><div className="h-4 rounded shimmer w-3/4" />
             </div>
           </div>
         )}
         {err && (
-          <div className="rounded-[18px] bg-surface px-5 py-4 ring-1 ring-black/[0.05] text-[14px] text-ink-2">
+          <div className="rounded-2xl bg-surface px-5 py-4 border border-line text-[14px] text-ink-2">
             {t('adv.error')}. <button className="btn-text underline" onClick={() => send(msgs.filter((m) => m.content))}>{t('climate.retry')}</button>
             <div className="text-[12px] text-faint mt-1">{err}</div>
           </div>
@@ -214,11 +214,11 @@ function Advisor({ a, b, names, t, lang }: { a: string; b: string; names: [strin
         {!asked && !busy && msgs.length > 0 && (
           <div className="-mx-3 sm:-mx-5 px-3 sm:px-5 mb-2.5 flex gap-1.5 overflow-x-auto no-scrollbar">
             {['adv.s1', 'adv.s2', 'adv.s3', 'adv.s4', 'adv.s5'].map((k) => (
-              <button key={k} onClick={() => ask(t(k))} className="shrink-0 h-8 px-3 rounded-full bg-surface ring-1 ring-black/[0.07] text-[13px] text-ink-2 hover:text-ink hover:ring-black/20 cursor-pointer transition-colors">{t(k)}</button>
+              <button key={k} onClick={() => ask(t(k))} className="shrink-0 h-8 px-3 rounded-full bg-surface border border-line-2 text-[13px] text-ink-2 hover:text-ink hover:border-ink cursor-pointer transition-colors">{t(k)}</button>
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2 rounded-2xl bg-surface px-3.5 py-2.5 ring-1 ring-black/[0.08] shadow-[0_2px_8px_-2px_rgba(11,13,18,0.08)] focus-within:ring-ink/40 transition-shadow">
+        <div className="flex items-end gap-2 rounded-xl bg-surface px-3.5 py-2.5 border border-line-2 focus-within:border-ink transition-colors">
           <textarea ref={input} value={q} rows={1} onChange={(e) => setQ(e.target.value)} placeholder={t('adv.placeholder')}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(q) } }}
             className="flex-1 min-w-0 resize-none bg-transparent outline-none text-[15px] leading-[1.5] py-1.5" />
@@ -228,7 +228,7 @@ function Advisor({ a, b, names, t, lang }: { a: string; b: string; names: [strin
             <button className="btn-primary !h-9 !w-9 !p-0 justify-center shrink-0 !rounded-full" onClick={() => ask(q)} disabled={busy || !q.trim()} aria-label="send"><ArrowUp size={17} /></button>
           )}
         </div>
-        <div className="mt-2 px-1 flex flex-wrap justify-between gap-x-4 gap-y-1 text-[11.5px] text-muted">
+        <div className="mt-2 px-1 flex flex-wrap justify-between gap-x-4 gap-y-1 text-[11.5px] text-faint">
           <span>{t('adv.note')}</span>
           <span className="hidden sm:inline">{t('adv.keys')}</span>
         </div>
@@ -245,8 +245,7 @@ function SideBySide({ pa, pb, t, lang }: { pa: Profile; pb: Profile; t: T; lang:
   return (
     <section className="mt-16 border-t border-line pt-10">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-[20px] font-semibold tracking-[-0.015em]">{t('adv.photosTitle')}</h2>
-        <span className="text-[13.5px] text-muted">{t('adv.photosSub')}</span>
+        <h2 className="h-sec">{t('adv.photosTitle')}<small>{t('adv.photosSub')}</small></h2>
       </div>
       <div className="mt-6 grid grid-cols-2 gap-x-6 sm:gap-x-10 relative">
         <div className="absolute inset-y-0 left-1/2 w-px bg-line hidden sm:block" />
@@ -258,7 +257,7 @@ function SideBySide({ pa, pb, t, lang }: { pa: Profile; pb: Profile; t: T; lang:
         ))}
         {rows.map((r) => (
           <Fragment key={r.c}>
-            <div className="col-span-2 pt-5 pb-2 text-[13px] font-medium text-muted">{catLabel(r.c, lang)}</div>
+            <div className="col-span-2 pt-8 pb-3 text-[15px] font-semibold tracking-[-0.01em]">{catLabel(r.c, lang)}</div>
             {[r.a, r.b].map((list, i) => (
               <div key={i} className="grid grid-cols-3 gap-2 relative z-[1]">
                 {list.map((p) => <PhotoTile key={p.id} p={p} className="aspect-[4/3]" />)}
@@ -298,10 +297,10 @@ export default function Compare() {
   useEffect(() => { if (params.get('a') && params.get('b')) void go(params.get('a')!, params.get('b')!) /* eslint-disable-line react-hooks/exhaustive-deps */ }, [])
 
   return (
-    <div className="mx-auto max-w-[1440px] px-4 sm:px-6 py-10">
-      <h1 className="font-display text-[32px] sm:text-[44px] leading-[1.1] tracking-[-0.015em]">{t('adv.title')}</h1>
-      <p className="mt-2 max-w-[70ch] text-[15px] text-muted">{t('adv.subtitle')}</p>
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-4 items-end">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
+      <h1 className="text-[32px] sm:text-[44px] leading-[1.08]">{t('adv.title')}</h1>
+      <p className="mt-3 max-w-[70ch] text-[15px] leading-[1.6] text-muted">{t('adv.subtitle')}</p>
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-4 items-end">
         <Picker label={t('compare.a')} value={a?.qid ? a : null} onPick={setA} t={t} />
         <button className="btn-primary" onClick={() => go()} disabled={!a?.qid || !b?.qid || loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />} {t('compare.go')}</button>
         <Picker label={t('compare.b')} value={b?.qid ? b : null} onPick={setB} t={t} />
@@ -311,7 +310,7 @@ export default function Compare() {
 
       {data && pair && (
         <>
-          <div className="mt-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[minmax(0,330px)_minmax(0,1fr)_minmax(0,330px)] gap-x-8 gap-y-10 items-start">
+          <div className="mt-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)_minmax(0,300px)] gap-x-8 gap-y-10 items-start">
             <div className="lg:sticky lg:top-20"><UniColumn side="A" p={data.a} s={sheets?.a} t={t} lang={lang} /></div>
             <div className="order-last md:col-span-2 lg:order-none lg:col-span-1 lg:sticky lg:top-20"><Advisor a={pair.a} b={pair.b} names={[data.a.university.name, data.b.university.name]} t={t} lang={lang} /></div>
             <div className="lg:sticky lg:top-20"><UniColumn side="B" p={data.b} s={sheets?.b} t={t} lang={lang} /></div>

@@ -54,6 +54,7 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
   const chooseSrc = (v: 'google' | 'mapillary') => { srcChosen.current = true; setSrcState(v) }
   const [panoId, setPanoId] = useState<string | null>(null)
   const [mly, setMly] = useState<string>('idle')
+  const [inside, setInside] = useState(false)   // «Внутри»: indoor tours on Google instead of the street
   const box = useRef<HTMLDivElement>(null)
   const panoRef = useRef<any>(null)
 
@@ -105,51 +106,101 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
     return () => { alive = false }
   }, [pack, lang])
 
-  // the panorama. Walkable first, as in Google Maps: of the panoramas around the stop (Google's own cars and trekkers,
-  // then people's photospheres - often indoors), the nearest one that links on to others; a dead-end photosphere (a
-  // drone shot, one room) only when nothing walkable is within ~500 m more. Facing the place.
+  // One panorama at a time, each in a fresh element: a reused panorama keeps an old WebGL context, and with the 3D map
+  // and the globe still alive under «Обзор» the browser drops the oldest context - Street View then draws only its
+  // arrows over black. Dropping the old one frees its context at once.
+  const dropPano = () => {
+    panoRef.current?.setVisible?.(false)
+    panoRef.current = null
+    panoEl.current = null
+    const el = box.current
+    if (!el) return
+    for (const c of el.querySelectorAll('canvas')) {
+      const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null
+      gl?.getExtension('WEBGL_lose_context')?.loseContext()
+    }
+    el.replaceChildren()
+  }
+  const svRef = useRef<any>(null)
+  const panoEl = useRef<HTMLDivElement | null>(null)   // the current panorama's element
+  const revives = useRef(0)
+  const showPano = (id: string, pov: { heading: number; pitch: number }) => {
+    const sv = svRef.current
+    if (!sv || !box.current) return
+    dropPano()
+    const el = document.createElement('div')
+    el.style.cssText = 'position:absolute;inset:0'
+    box.current.appendChild(el)
+    panoEl.current = el
+    const p = new sv.StreetViewPanorama(el, {
+      pano: id, pov, zoom: 0, addressControl: false, motionTracking: false, motionTrackingControl: false,
+      fullscreenControl: false, showRoadLabels: false, clickToGo: true, linksControl: true,
+    })
+    p.addListener('pano_changed', () => setPanoId(p.getPano?.() ?? null))
+    panoRef.current = p
+    setPanoId(id)
+  }
+  // if the browser still takes the context away, the same place comes back in a new panorama (a few times at most)
+  useEffect(() => {
+    const el = box.current
+    if (!el || mode !== 'walk' || src !== 'google') return
+    const lost = (e: Event) => {
+      if (!panoEl.current?.contains(e.target as Node)) return   // a context we released ourselves
+      e.preventDefault()
+      const p = panoRef.current
+      if (!p || revives.current >= 3) return
+      revives.current++
+      const id = p.getPano?.(), pov = p.getPov?.()
+      window.setTimeout(() => { if (id) showPano(id, pov ?? { heading: 0, pitch: 0 }) }, 120)
+    }
+    el.addEventListener('webglcontextlost', lost, true)   // the event does not bubble: listen while it goes down
+    return () => el.removeEventListener('webglcontextlost', lost, true)
+  }, [mode, src])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the panorama. «Улица»: walkable first, as in Google Maps - of the panoramas around the stop (Google's own cars and
+  // trekkers, then people's photospheres), the nearest one that links on to others; a dead-end photosphere (a drone
+  // shot, one room) only when nothing walkable is within ~500 m more. «Внутри»: the tours businesses and photographers
+  // publish on Google (not Google's own cars) - mostly halls, gyms, libraries, linked so one can walk through them.
+  // Facing the place.
   useEffect(() => {
     if (mode !== 'walk' || src !== 'google' || !stop || !GOOGLE_3D_KEY) return
     let alive = true
     setPano('idle')
     setAuto(false)
+    revives.current = 0
     loadStreetView(lang).then(async (sv) => {
+      svRef.current = sv
       const svc = new sv.StreetViewService()
       const S = sv.StreetViewSource
-      const asks: [number, any][] = [[60, S.GOOGLE], [60, S.DEFAULT], [250, S.GOOGLE], [150, S.OUTDOOR], [700, S.GOOGLE], [400, S.DEFAULT]]
+      const asks: [number, any][] = inside
+        ? [[30, S.DEFAULT], [70, S.DEFAULT], [140, S.DEFAULT], [260, S.DEFAULT], [450, S.DEFAULT]]
+        : [[60, S.GOOGLE], [60, S.DEFAULT], [250, S.GOOGLE], [150, S.OUTDOOR], [700, S.GOOGLE], [400, S.DEFAULT]]
       const found = await Promise.all(asks.map(([radius, source]) => svc.getPanorama({ location: stop.at, radius, preference: sv.StreetViewPreference.NEAREST, sources: [source] })
         .then((r: any) => r.data).catch(() => null)))
       const seen = new Set<string>()
-      const cands = found.filter((d: any) => d && !seen.has(d.location.pano) && seen.add(d.location.pano)).map((d: any) => {
-        const at = d.location.latLng.toJSON()
-        const dist = haversineM(at, stop.at)
-        return { d, at, score: dist + ((d.links?.length ?? 0) ? 0 : 500) }
-      }).sort((a: any, b: any) => a.score - b.score)
+      const ownCar = (d: any) => /google/i.test(d.copyright ?? '')
+      const cands = found.filter((d: any) => d && !seen.has(d.location.pano) && seen.add(d.location.pano))
+        .filter((d: any) => !inside || !ownCar(d))
+        .map((d: any) => {
+          const at = d.location.latLng.toJSON()
+          const dist = haversineM(at, stop.at)
+          return { d, at, score: dist + ((d.links?.length ?? 0) ? 0 : inside ? 150 : 500) }
+        }).sort((a: any, b: any) => a.score - b.score)
       if (!alive || !box.current) return
       if (!cands.length) {
+        dropPano()
         setPano('none')
-        if (!srcChosen.current && MAPILLARY) setSrcState('mapillary')   // no Google here: the people's street photos
+        if (!inside && !srcChosen.current && MAPILLARY) setSrcState('mapillary')   // no Google here: the people's street photos
         return
       }
       const { d, at } = cands[0]
-      const pov = { heading: haversineM(at, stop.at) > 8 ? bearing(at, stop.at) : 0, pitch: 4 }
-      if (panoRef.current) {
-        panoRef.current.setPano(d.location.pano)
-        panoRef.current.setPov(pov)
-      } else {
-        panoRef.current = new sv.StreetViewPanorama(box.current, {
-          pano: d.location.pano, pov, zoom: 0, addressControl: false, motionTracking: false, motionTrackingControl: false,
-          fullscreenControl: false, showRoadLabels: false, clickToGo: true, linksControl: true,
-        })
-        panoRef.current.addListener('pano_changed', () => setPanoId(panoRef.current?.getPano?.() ?? null))
-      }
-      setPanoId(d.location.pano)
+      showPano(d.location.pano, { heading: haversineM(at, stop.at) > 8 ? bearing(at, stop.at) : 0, pitch: 4 })
       setPano('ok')
     }).catch(() => { if (alive) setPano('none') })
     return () => { alive = false }
-  }, [stop, mode, lang, src])
-  useEffect(() => () => { panoRef.current?.setVisible?.(false); panoRef.current = null }, [])
-  useEffect(() => { if (mode !== 'walk' || src !== 'google') { panoRef.current?.setVisible?.(false); panoRef.current = null } }, [mode, src])
+  }, [stop, mode, lang, src, inside])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => dropPano(), [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mode !== 'walk' || src !== 'google') dropPano() }, [mode, src])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mapillary: street-level photos people drive and walk (flat images in sequences - its viewer steps along them)
   useEffect(() => {
@@ -215,7 +266,9 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
         <>
           <div ref={box} className="absolute inset-0" />
           {pano === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm pointer-events-none"><span className="inline-flex items-center gap-2"><LoaderCircle size={15} className="animate-spin" /> Ищем панораму рядом…</span></div>}
-          {pano === 'none' && <div className="absolute inset-0 grid place-items-center text-white/75 text-sm px-6 text-center pointer-events-none">Google Street View не снимал это место. Выберите другую точку или Mapillary внизу.</div>}
+          {pano === 'none' && (inside
+            ? <div className="absolute inset-0 grid place-items-center px-6 text-center"><div className="text-white/75 text-sm">Тура внутри этого места в Google нет.<button onClick={() => setInside(false)} className="block mx-auto mt-3 h-9 px-4 rounded-xl bg-white text-ink text-[13px] font-medium cursor-pointer">Смотреть с улицы</button></div></div>
+            : <div className="absolute inset-0 grid place-items-center text-white/75 text-sm px-6 text-center pointer-events-none">Google Street View не снимал это место. Выберите другую точку или Mapillary внизу.</div>)}
         </>
       )}
       {mode === 'walk' && src === 'mapillary' && (
@@ -256,6 +309,12 @@ export function CampusTour({ qid, name, photos: given, onClose }: { qid: string;
               {GOOGLE_3D_KEY && <button onClick={() => chooseSrc('google')} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${src === 'google' ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Google</button>}
               {MAPILLARY && <button onClick={() => chooseSrc('mapillary')} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${src === 'mapillary' ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Mapillary</button>}
             </div>
+            {src === 'google' && (
+              <div className="shrink-0 flex rounded-xl bg-white/10 p-0.5" title="Внутри: туры по залам, библиотекам и спортзалам, которые публикуют на Google сами вузы и фотографы">
+                <button onClick={() => setInside(false)} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${!inside ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Улица</button>
+                <button onClick={() => setInside(true)} className={`h-8 px-2.5 rounded-[10px] text-[12px] ${inside ? 'bg-white text-ink' : 'text-white/80 hover:bg-white/15'}`}>Внутри</button>
+              </div>
+            )}
             {src === 'google' && panoId && pano === 'ok' && (
               <a href={`https://www.google.com/maps/@?api=1&map_action=pano&pano=${encodeURIComponent(panoId)}`} target="_blank" rel="noreferrer" title="Открыть эту панораму в Google Картах"
                 className="shrink-0 h-9 px-3 rounded-xl text-[13px] inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20"><ExternalLink size={13} /> Google Карты</a>

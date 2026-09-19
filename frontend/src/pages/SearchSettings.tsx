@@ -14,34 +14,34 @@ const words = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[12px] font-semibold text-ink-2">{label}</span>
-      {hint && <span className="ml-1.5 text-[11px] text-muted">{hint}</span>}
-      <div className="mt-1">{children}</div>
+      <span className="text-[13px] font-medium text-ink">{label}</span>
+      {hint && <span className="ml-2 text-[12px] text-faint">{hint}</span>}
+      <div className="mt-1.5">{children}</div>
     </label>
   )
 }
-const input = 'w-full rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-[13px] outline-none focus:border-brand'
+const input = 'w-full rounded-lg border border-line-2 bg-surface px-3 py-2 text-[14px] outline-none transition-colors hover:border-faint focus:border-ink'
 
 function IntentRow({ it, onChange, onRemove }: { it: Intent; onChange: (x: Intent) => void; onRemove: () => void }) {
   const [open, setOpen] = useState(false)
   const set = (patch: Partial<Intent>) => onChange({ ...it, ...patch })
   return (
     <div className="border-t border-line first:border-t-0">
-      <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex items-center gap-3 px-5 py-3 hover:bg-soft/50 transition-colors">
         <input type="checkbox" checked={it.enabled} onChange={(e) => set({ enabled: e.target.checked })} className="accent-ink" title="Искать эту тему" />
         <button onClick={() => setOpen(!open)} className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer">
-          <span className={`font-semibold ${it.enabled ? '' : 'text-muted line-through'}`}>{it.label}</span>
-          <span className="mono text-[11px] text-muted">{it.key}</span>
-          {it.fast && <span className="text-[11px] text-brand">в первом профиле</span>}
-          <span className="ml-auto text-[12px] text-muted truncate">{it.platforms.map((p) => NETS.find((n) => n.key === p)?.label ?? p).join(' · ')}</span>
-          <ChevronDown size={15} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <span className={`text-[15px] font-medium ${it.enabled ? '' : 'text-muted line-through'}`}>{it.label}</span>
+          <span className="code text-[11px] text-faint">{it.key}</span>
+          {it.fast && <span className="inline-flex items-center gap-1.5 text-[12px] text-muted"><i className="w-1.5 h-1.5 rounded-full bg-ink" />в первом профиле</span>}
+          <span className="ml-auto text-[13px] text-muted truncate">{it.platforms.map((p) => NETS.find((n) => n.key === p)?.label ?? p).join(' · ')}</span>
+          <ChevronDown size={15} className={`shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
-        <label className="flex items-center gap-1 text-[12px] text-muted" title="Сколько фото этой темы в коллаже">
-          в коллаже <input type="number" min={0} max={60} value={it.target} onChange={(e) => set({ target: Number(e.target.value) })} className="w-14 rounded border border-line-2 px-1.5 py-0.5 text-[13px] text-ink" />
+        <label className="flex items-center gap-2 text-[13px] text-muted" title="Сколько фото этой темы в коллаже">
+          в коллаже <input type="number" min={0} max={60} value={it.target} onChange={(e) => set({ target: Number(e.target.value) })} className="w-14 h-8 rounded-lg border border-line-2 px-2 text-[13px] text-ink outline-none focus:border-ink" />
         </label>
       </div>
       {open && (
-        <div className="px-4 pb-4 grid gap-3 md:grid-cols-2">
+        <div className="px-5 pt-2 pb-6 grid gap-x-6 gap-y-4 md:grid-cols-2">
           <Field label="Название"><input className={input} value={it.label} onChange={(e) => set({ label: e.target.value })} /></Field>
           <Field label="Где искать">
             <div className="flex flex-wrap gap-3 pt-1">
@@ -97,7 +97,7 @@ function CustomList({ items, intents, onChange }: { items: CustomQuery[]; intent
         </div>
       ))}
       <button onClick={() => onChange([...items, { intent: intents[0]?.key ?? 'atmosphere', query: '', platforms: ['tiktok', 'instagram', 'google'] }])}
-        className="inline-flex items-center gap-1.5 text-[13px] text-brand hover:underline cursor-pointer"><Plus size={14} /> Добавить запрос</button>
+        className="btn-text !text-[13px]"><Plus size={14} /> Добавить запрос</button>
     </div>
   )
 }
@@ -129,28 +129,28 @@ export default function SearchSettings() {
   const setP = (patch: Partial<SearchPlan>) => plan && setPlan({ ...plan, ...patch })
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-8">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-10 space-y-10">
       <div>
-        {qid ? <Link to={`/u/${qid}`} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> К профилю</Link>
-          : <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink"><ArrowLeft size={13} /> Планета</Link>}
-        <h1 className="mt-2 text-[36px] leading-tight">Настройки поиска</h1>
-        <p className="mt-1 text-sm text-muted max-w-3xl">
+        {qid ? <Link to={`/u/${qid}`} className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink"><ArrowLeft size={14} /> К профилю</Link>
+          : <Link to="/" className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink"><ArrowLeft size={14} /> Планета</Link>}
+        <h1 className="mt-4 text-[32px] sm:text-[44px] leading-[1.08]">Настройки поиска</h1>
+        <p className="mt-4 text-[15px] leading-[1.6] text-ink-2 max-w-[70ch]">
           Фото ищутся по темам — так, как о вузе пишут студенты: «атмосфера», «один день из жизни», «кампус», «общежития», «ивенты»…
           Для каждой темы — запросы на английском и на языке страны вуза, сети, где искать, и сколько фото этой темы попадёт в коллаж «Какой это вуз».
           Найденные посты сначала ранжируются по тому, насколько явно они про этот вуз, потом каждое фото проверяет ИИ.
         </p>
       </div>
-      {err && <div className="rounded-lg bg-unverified-soft text-unverified px-4 py-2 text-sm">{err}</div>}
-      {saved && <div className="rounded-lg bg-verified-soft text-verified px-4 py-2 text-sm">{saved}</div>}
+      {err && <div className="flex items-center gap-2 text-sm text-unverified"><i className="w-1.5 h-1.5 rounded-full bg-unverified shrink-0" />{err}</div>}
+      {saved && <div className="flex items-center gap-2 text-sm text-ink-2"><i className="w-1.5 h-1.5 rounded-full bg-verified shrink-0" />{saved}</div>}
 
       {qid && uni && up && (
-        <section className="rounded-xl border border-brand/30 bg-surface">
-          <div className="px-4 py-3 border-b border-line flex items-center gap-2">
-            <h2 className="font-bold">Только для «{uni.name}»</h2>
+        <section className="rounded-xl border border-ink bg-surface overflow-hidden">
+          <div className="px-5 py-4 border-b border-line flex items-center gap-2">
+            <h2 className="text-[17px] font-semibold tracking-[-0.01em]">Только для «{uni.name}»</h2>
             <button onClick={saveUni} className="ml-auto btn-primary !h-8 !py-0 text-[13px]"><Save size={14} /> Сохранить</button>
-            <Link to={`/u/${qid}?refresh=1`} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line-2 text-[13px] hover:border-brand hover:text-brand"><RefreshCw size={14} /> Пересобрать профиль</Link>
+            <Link to={`/u/${qid}?refresh=1`} className="btn-ghost !h-8 !px-3 !text-[13px]"><RefreshCw size={14} /> Пересобрать профиль</Link>
           </div>
-          <div className="p-4 grid gap-4 md:grid-cols-2">
+          <div className="p-5 grid gap-x-6 gap-y-5 md:grid-cols-2">
             <Field label="Другие названия вуза" hint="через запятую: бренд, сокращение, как его называют студенты">
               <input className={input} value={up.names.join(', ')} onChange={(e) => setUp({ ...up, names: words(e.target.value) })} />
             </Field>
@@ -165,8 +165,8 @@ export default function SearchSettings() {
             <div className="md:col-span-2"><Field label="Свои запросы для этого вуза"><CustomList items={up.custom} intents={plan?.intents ?? []} onChange={(custom) => setUp({ ...up, custom })} /></Field></div>
           </div>
           <details className="border-t border-line">
-            <summary className="px-4 py-2.5 text-sm font-semibold cursor-pointer">Что будет отправлено в поиск</summary>
-            <div className="px-4 pb-4 space-y-2 text-[13px]">
+            <summary className="px-5 py-3 text-[14px] font-medium cursor-pointer hover:bg-soft/50">Что будет отправлено в поиск</summary>
+            <div className="px-5 pb-5 space-y-2 text-[13px] leading-relaxed">
               <div className="text-muted">Название узнаётся в подписи как: {[...uni.names.full, ...uni.names.abbr].join(', ')}</div>
               {Object.entries(uni.preview).map(([k, nets]) => (
                 <div key={k}><span className="font-semibold">{plan?.intents.find((i) => i.key === k)?.label ?? k}:</span>{' '}
@@ -187,12 +187,11 @@ export default function SearchSettings() {
 
       {plan && (
         <>
-          <section className="rounded-xl border border-line bg-surface">
-            <div className="px-4 py-3 border-b border-line flex items-center gap-2">
-              <h2 className="font-bold">Темы</h2>
-              <span className="text-xs text-muted">для всех вузов</span>
+          <section className="rounded-xl border border-line bg-surface overflow-hidden">
+            <div className="px-5 py-4 border-b border-line flex items-baseline gap-2">
+              <h2 className="h-sec">Темы<small>для всех вузов</small></h2>
               <button onClick={() => setP({ intents: [...plan.intents, { key: `custom_${plan.intents.length + 1}`, label: 'Новая тема', enabled: true, target: 6, categories: [], platforms: ['tiktok', 'instagram', 'google'], phrases: { en: ['{name} '], ru: [] }, caption_words: [], account_words: [], maps: [], fast: false }] })}
-                className="ml-auto inline-flex items-center gap-1.5 text-[13px] text-brand hover:underline cursor-pointer"><Plus size={14} /> Тема</button>
+                className="ml-auto btn-text !text-[13px]"><Plus size={14} /> Тема</button>
             </div>
             {plan.intents.map((it, i) => (
               <IntentRow key={i} it={it} onChange={(x) => setP({ intents: plan.intents.map((y, k) => k === i ? x : y) })}
@@ -200,7 +199,8 @@ export default function SearchSettings() {
             ))}
           </section>
 
-          <section className="rounded-xl border border-line bg-surface p-4 grid gap-4 md:grid-cols-3">
+          <section className="grid gap-x-6 gap-y-5 md:grid-cols-3">
+            <h2 className="h-sec md:col-span-3">Параметры поиска</h2>
             <Field label="Языки запросов">
               <select className={input} value={plan.languages} onChange={(e) => setP({ languages: e.target.value as SearchPlan['languages'] })}>
                 <option value="both">английский + язык страны</option><option value="en">только английский</option><option value="local">только язык страны</option>
@@ -210,17 +210,17 @@ export default function SearchSettings() {
             <Field label="Постов на тему и сеть" hint="лучшие после ранжирования"><input type="number" min={1} max={30} className={input} value={plan.posts_per_intent} onChange={(e) => setP({ posts_per_intent: Number(e.target.value) })} /></Field>
             <Field label="Из них видео — кадры изнутри"><input type="number" min={0} max={10} className={input} value={plan.videos_per_intent} onChange={(e) => setP({ videos_per_intent: Number(e.target.value) })} /></Field>
             <Field label="Порог релевантности поста" hint="1.5 — стандарт; выше — строже"><input type="number" step={0.5} min={0} max={8} className={input} value={plan.min_relevance} onChange={(e) => setP({ min_relevance: Number(e.target.value) })} /></Field>
-            <div className="space-y-2 pt-5">
+            <div className="space-y-2.5 pt-6">
               <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" className="accent-ink" checked={plan.use_accounts} onChange={(e) => setP({ use_accounts: e.target.checked })} />аккаунты клубов, библиотеки, общежитий</label>
               <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" className="accent-ink" checked={plan.use_suggestions} onChange={(e) => setP({ use_suggestions: e.target.checked })} />подсказки поиска TikTok</label>
             </div>
             <div className="md:col-span-3"><Field label="Свои запросы для всех вузов" hint="{name} — название вуза"><CustomList items={plan.custom} intents={plan.intents} onChange={(custom) => setP({ custom })} /></Field></div>
           </section>
 
-          <div className="flex items-center gap-2 sticky bottom-4 rounded-xl border border-line bg-surface/95 backdrop-blur p-2 shadow-sm">
+          <div className="flex items-center gap-2 sticky bottom-4 z-10 rounded-xl border border-line bg-surface/95 backdrop-blur p-2 shadow-[0_8px_30px_rgba(11,13,18,0.08)]">
             <button onClick={save} disabled={!dirty} className="btn-primary disabled:opacity-50"><Save size={15} /> Сохранить темы</button>
-            <button onClick={reset} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-line-2 bg-surface text-[13px] hover:border-brand hover:text-brand cursor-pointer"><RotateCcw size={14} /> Стандартные темы</button>
-            {dirty && <span className="text-xs text-likely">есть несохранённые изменения</span>}
+            <button onClick={reset} className="btn-ghost"><RotateCcw size={15} /> Стандартные темы</button>
+            {dirty && <span className="ml-2 inline-flex items-center gap-1.5 text-[13px] text-ink-2"><i className="w-1.5 h-1.5 rounded-full bg-likely" />есть несохранённые изменения</span>}
           </div>
         </>
       )}

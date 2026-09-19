@@ -138,7 +138,7 @@ export default function Profile() {
         <div className="mt-5 flex flex-col lg:flex-row lg:items-end gap-6">
           <div className="min-w-0 flex-1 flex items-start gap-5">
             {uni?.logo_url && (
-              <div className="hidden sm:grid w-16 h-16 rounded-xl border border-line bg-white place-items-center overflow-hidden shrink-0 mt-1">
+              <div className="hidden sm:grid w-16 h-16 rounded-xl border border-line bg-white place-items-center overflow-hidden shrink-0 mt-1.5">
                 <img src={uni.logo_url} alt="" className="w-full h-full object-contain p-2" />
               </div>
             )}
@@ -154,7 +154,7 @@ export default function Profile() {
           <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
             {/* one map for the whole app: the campus scene of the main page */}
             <Link to={`/?u=${qid}`} className="btn-primary flex-1 sm:flex-none justify-center"><MapIcon size={17} /> 3D-карта кампуса</Link>
-            <button className="btn-primary flex-1 sm:flex-none justify-center" onClick={() => setTourOpen(true)}><Box size={17} /> Обзор</button>
+            <button className="btn-ghost flex-1 sm:flex-none justify-center" onClick={() => setTourOpen(true)}><Box size={17} /> Обзор</button>
             <button className="btn-ghost flex-1 sm:flex-none justify-center" disabled={!profile}
               onClick={() => saved ? store.unsave(qid) : store.save(qid, { name: uni?.name ?? qid, city: uni?.city, savedAt: new Date().toISOString(), photos: photos.length })}>
               {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />} {saved ? 'Сохранено' : 'Сохранить'}
@@ -171,15 +171,15 @@ export default function Profile() {
 
         {profile?.partial && <div className="mt-4 text-[13.5px] text-likely">{t('profile.partial')}</div>}
         {error && (
-          <div className="mt-6 rounded-xl border border-unverified/30 p-5">
-            <div className="font-semibold text-unverified">{t('profile.error')}</div>
+          <div className="mt-6 border-t border-line pt-6">
+            <div className="flex items-center gap-2 font-semibold text-ink"><i className="w-1.5 h-1.5 rounded-full bg-unverified" />{t('profile.error')}</div>
             <div className="text-sm text-muted mt-1">{error}</div>
             <button className="btn-ghost mt-3" onClick={() => nav('/')}><ArrowLeft size={16} /> К поиску</button>
           </div>
         )}
       </div>
 
-      <div className="sticky top-14 z-30 mt-10 bg-white/95 backdrop-blur-md border-b border-line">
+      <div className="sticky top-14 z-30 mt-12 bg-white/92 backdrop-blur-md border-b border-line">
         <div role="tablist" className="mx-auto max-w-7xl px-4 sm:px-6 flex gap-7 overflow-x-auto no-scrollbar">
           {tabs.map((x) => (
             <button key={x.key} role="tab" aria-selected={tab === x.key} onClick={() => setTab(x.key)} className={`tab ${tab === x.key ? 'tab-active' : ''}`}>
@@ -189,19 +189,19 @@ export default function Profile() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-10">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-12">
         {tab === 'overview' && <OverviewTab profile={profile} uni={uni} qid={qid} onOpen={openPhoto} onTab={setTab} onCategory={showCategory} />}
 
         {tab === 'photos' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center gap-1">
+          <div className="space-y-8">
+            <div className="flex flex-wrap items-center gap-1 -ml-3">
               {FILTERS.map((f) => counts[f] > 0 || f === 'all' ? (
                 <button key={f} onClick={() => setFilter(f)} className={`filter ${filter === f ? 'filter-active' : ''}`}>
                   {f === 'all' ? t('profile.all') : catLabel(f, lang)} <span className={`mono text-[12px] ${filter === f ? 'text-white/60' : 'text-muted'}`}>{counts[f]}</span>
                 </button>
               ) : null)}
             </div>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-[13.5px] text-ink-2">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-[13.5px] text-ink-2 border-b border-line pb-6">
               <div className="seg">
                 <button className={view === 'album' ? 'on' : ''} onClick={() => setView('album')}>Альбомы</button>
                 <button className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>Сетка</button>
@@ -233,8 +233,7 @@ export default function Profile() {
             {uni && (
               <section className="border-t border-line pt-10">
                 <div className="flex flex-wrap items-baseline gap-3 mb-5">
-                  <h2 className="text-[20px] font-semibold tracking-[-0.015em]">Прогулка по кампусу</h2>
-                  <span className="text-[13.5px] text-muted">уличные панорамы и снимки с геометкой рядом с корпусами</span>
+                  <h2 className="h-sec">Прогулка по кампусу<small>уличные панорамы и снимки с геометкой рядом с корпусами</small></h2>
                 </div>
                 {walk ? <WalkTab uni={uni} campus={campus} photos={photos} walk={profile?.walk ?? []} onOpen={openPhoto} />
                   : <button className="btn-ghost" onClick={() => setWalk(true)}><Footprints size={17} /> Открыть прогулку</button>}

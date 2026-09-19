@@ -7,8 +7,8 @@ export function OutdatedChip() {
 }
 
 export function CoverageDot({ level }: { level: string }) {
-  const cls = level === 'strong' ? 'bg-verified' : level === 'medium' ? 'bg-likely' : level === 'weak' ? 'bg-orange-400' : 'bg-slate-300'
-  return <span className={`inline-block w-2 h-2 rounded-full ${cls}`} />
+  const cls = level === 'strong' ? 'bg-verified' : level === 'medium' ? 'bg-likely' : level === 'weak' ? 'bg-unverified' : 'bg-line-2'
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${cls}`} />
 }
 
 export const COVERAGE_LABEL: Record<string, string> = { strong: 'сильное', medium: 'среднее', weak: 'слабое', none: 'нет данных' }

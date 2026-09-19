@@ -41,7 +41,7 @@ export function AboutCampus({ qid }: { qid: string }) {
     <div className="space-y-12">
       <div className="flex items-start gap-6">
         <div className="min-w-0">
-          <h2 className="text-[20px] font-semibold tracking-[-0.015em]">Что есть на кампусе</h2>
+          <h2 className="h-sec">Что есть на кампусе</h2>
           {facts.summary && <p className="mt-3 text-[17px] leading-[1.65] text-ink-2 max-w-[68ch]">{facts.summary}</p>}
           {facts.note && <p className="mt-2 text-[14px] text-likely">{facts.note}</p>}
         </div>
@@ -51,21 +51,21 @@ export function AboutCampus({ qid }: { qid: string }) {
       </div>
 
       {facts.quick.length > 0 && (
-        <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-10 gap-y-5 max-w-5xl">
+        <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-10 gap-y-6 max-w-5xl border-y border-line py-6">
           {facts.quick.map((q, i) => (
             <div key={i} className="min-w-0">
               <dt className="text-[13px] text-muted">{q.label}</dt>
-              <dd className="mt-0.5 text-[16px] font-medium text-ink">{q.value}<Refs ids={q.sources} /></dd>
+              <dd className="mt-1 text-[17px] font-medium tracking-[-0.01em] text-ink">{q.value}<Refs ids={q.sources} /></dd>
             </div>
           ))}
         </dl>
       )}
 
-      <div className="grid gap-x-16 gap-y-10 md:grid-cols-2 max-w-6xl">
+      <div className="grid gap-x-16 gap-y-12 md:grid-cols-2 max-w-6xl">
         {facts.sections.map((s) => (
           <section key={s.key} className="border-t border-line pt-5">
             <div className="flex items-baseline gap-3">
-              <h3 className="text-[16px] font-semibold">{s.title}</h3>
+              <h3 className="text-[17px] font-semibold tracking-[-0.01em]">{s.title}</h3>
               {RATING[s.rating] && (
                 <span className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] text-muted" title={s.rating_note}>
                   <i className={`w-1.5 h-1.5 rounded-full ${RATING[s.rating].dot}`} />{RATING[s.rating].label}

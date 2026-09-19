@@ -40,19 +40,19 @@ export function HeaderMenu({ dark = false }: { dark?: boolean }) {
         {open ? <X size={22} /> : <Menu size={22} />}
       </button>
       {open && (
-        <div className={`absolute right-0 mt-3 w-48 rounded-xl border p-1 text-sm backdrop-blur-xl ${dark
-          ? 'bg-[#0B1222]/95 border-white/10 text-white/70 shadow-2xl'
-          : 'bg-white/95 border-line text-ink-2 shadow-md'}`}>
+        <div className={`absolute right-0 mt-3 w-56 rounded-xl border p-1.5 text-[14px] backdrop-blur-xl ${dark
+          ? 'bg-[#0B0D12]/95 border-white/10 text-white/70 shadow-2xl'
+          : 'bg-white/95 border-line text-ink-2 shadow-[0_12px_40px_rgba(11,13,18,0.10)]'}`}>
           {links.map(({ to, label, Icon }) => (
             <Link key={to} to={to} onClick={() => setOpen(false)}
-              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg ${item} ${pathname === to ? active : ''}`}>
+              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg ${item} ${pathname === to ? active : ''}`}>
               <Icon size={15} className="opacity-60" /> {label}
             </Link>
           ))}
           <div className={`my-1 mx-2 border-t ${dark ? 'border-white/10' : 'border-line'}`} />
           {LANGS.map(({ code, name }) => (
             <button key={code} onClick={() => { setLang(code); setOpen(false) }}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer text-left ${item} ${lang === code ? active : ''}`}>
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer text-left ${item} ${lang === code ? active : ''}`}>
               <span className="w-[15px] text-[10px] uppercase opacity-50">{code}</span>
               <span className="flex-1">{name}</span>
               {lang === code && <Check size={14} className="opacity-70" />}

@@ -133,7 +133,7 @@ export function FactsRow({ uni }: { uni: University }) {
   if (uni.founded) facts.push({ k: 'Основан', v: <span className="mono">{uni.founded}</span> })
   if (uni.students) facts.push({ k: 'Студентов', v: <span className="mono">{uni.students.toLocaleString('ru-RU')}</span> })
   if (uni.website) facts.push({ k: 'Сайт', v: (
-    <a href={uni.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 hover:text-brand">
+    <a href={uni.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 hover:underline decoration-line-2 underline-offset-4">
       {uni.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}<ArrowUpRight size={14} className="text-faint" />
     </a>) })
   if (!facts.length) return null
@@ -154,8 +154,8 @@ export function FactsRow({ uni }: { uni: University }) {
 function Section({ title, aside, children, className = '' }: { title: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={className}>
-      <div className="flex items-baseline gap-3 mb-4">
-        <h2 className="text-[20px] font-semibold tracking-[-0.015em]">{title}</h2>
+      <div className="flex items-baseline gap-3 mb-5">
+        <h2 className="h-sec">{title}</h2>
         {aside && <div className="ml-auto text-[13.5px] text-muted">{aside}</div>}
       </div>
       {children}
@@ -170,12 +170,12 @@ export function DescriptionText({ d }: { d: Description }) {
         {d.sentences.map((s, i) => (
           <span key={i}>{s.text}{s.sources.map((id) => {
             const src = d.sources.find((x) => x.id === id)
-            return src ? <a key={id} href={src.url} target="_blank" rel="noreferrer" title={src.label} className="ml-px align-super text-[11px] text-muted hover:text-brand">{id}</a> : null
+            return src ? <a key={id} href={src.url} target="_blank" rel="noreferrer" title={src.label} className="ml-px align-super text-[11px] text-faint hover:text-ink">{id}</a> : null
           })} </span>
         ))}
       </p>
       {d.sources.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted">
+        <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-muted">
           {d.sources.map((s) => <a key={s.id} href={s.url} target="_blank" rel="noreferrer" className="hover:text-ink"><span className="mono">{s.id}</span> {s.label}</a>)}
           <span className="text-faint">{d.mode === 'llm' ? 'текст составлен ИИ по этим источникам' : 'текст по шаблону из этих источников'}</span>
         </div>
@@ -196,14 +196,14 @@ export function CollageThemes({ profile, onOpen }: { profile: Profile; onOpen: (
   const empty = sections.filter((s) => s.items.length === 0)
   if (!filled.length) return <div className="text-[15px] text-muted">Подборка по темам появится, когда фото найдут и проверят.</div>
   return (
-    <div className="space-y-12">
+    <div className="space-y-14">
       {filled.map((s) => {
         const shown = open[s.key] ? s.items : s.items.slice(0, 8)
         return (
           <div key={s.key}>
             <div className="flex items-baseline gap-2.5 mb-3">
-              <h3 className="text-[16px] font-semibold">{s.label}</h3>
-              <span className="text-[13px] text-muted mono">{s.items.length}</span>
+              <h3 className="text-[16px] font-medium tracking-[-0.01em]">{s.label}</h3>
+              <span className="text-[13px] text-faint mono">{s.items.length}</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               {shown.map((p) => (
@@ -231,8 +231,8 @@ export function CollageThemes({ profile, onOpen }: { profile: Profile; onOpen: (
 function AsideBlock({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-[13px] font-medium text-muted">{title}</h3>
+      <div className="flex items-baseline justify-between pb-3 mb-1 border-b border-line">
+        <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">{title}</h3>
         {action}
       </div>
       {children}
@@ -247,7 +247,7 @@ export function Surroundings({ c, onCity, onClimate }: { c: Context; onCity: () 
   const row = (k: string, v: ReactNode, go?: () => void) => (
     <button onClick={go} className="w-full flex items-baseline justify-between gap-4 py-2.5 border-t border-line first:border-t-0 text-left cursor-pointer group">
       <span className="text-[14px] text-ink-2">{k}</span>
-      <span className="text-[15px] font-medium text-ink mono text-right group-hover:text-brand">{v}</span>
+      <span className="text-[15px] font-medium text-ink mono text-right group-hover:underline decoration-line-2 underline-offset-4">{v}</span>
     </button>
   )
   const sign = (x: number) => `${x > 0 ? '+' : ''}${x.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}°`
@@ -267,10 +267,10 @@ export function SocialLinks({ social }: { social: Record<string, string> }) {
   if (!list.length) return null
   return (
     <AsideBlock title="Соцсети вуза" action={<span className="inline-flex items-center gap-1 text-[12px] text-faint"><Camera size={12} /> берём фото</span>}>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="pt-3 flex flex-wrap gap-1.5">
         {list.map(([net, url]) => (
           <a key={net} href={url} target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-line text-[13px] text-ink-2 hover:border-line-2 hover:text-ink transition-colors">
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-line-2 text-[13px] text-ink-2 hover:border-ink hover:text-ink transition-colors">
             {SOCIAL_NAME[net] ?? net}{PHOTO_NETS.has(net) && <Camera size={12} className="text-faint" />}
           </a>
         ))}
@@ -285,7 +285,7 @@ export function CoverageBars({ categories, overall, onPhotos }: { categories: Re
   const max = Math.max(6, ...CATEGORIES.map((c) => (categories[c]?.verified ?? 0) + (categories[c]?.likely ?? 0)))
   return (
     <AsideBlock title="Фото по разделам" action={overall && <span className="text-[12px] text-faint">покрытие {coverageLabel(overall, lang)}</span>}>
-      <div className="space-y-2">
+      <div className="pt-3 space-y-2.5">
         {CATEGORIES.map((c) => {
           const s = categories[c]
           if (!s) return null
@@ -316,14 +316,14 @@ export function OverviewTab({ profile, uni, qid, onOpen, onTab, onCategory }: {
 }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-x-16 gap-y-12">
-      <div className="min-w-0 space-y-14">
+      <div className="min-w-0 space-y-16">
         {profile?.description && <Section title="О вузе"><DescriptionText d={profile.description} /></Section>}
         <Section title="Какой это вуз" aside={profile && <Link to={`/settings/search?u=${qid}`} className="inline-flex items-center gap-1.5 hover:text-ink"><SlidersHorizontal size={14} /> Настроить поиск</Link>}>
           {profile ? <CollageThemes profile={profile} onOpen={onOpen} />
             : <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-lg shimmer" />)}</div>}
         </Section>
       </div>
-      <aside className="space-y-10 lg:sticky lg:top-32 lg:self-start">
+      <aside className="space-y-12 lg:sticky lg:top-32 lg:self-start">
         {profile?.context && <Surroundings c={profile.context} onCity={() => onTab('city')} onClimate={() => onTab('climate')} />}
         {profile && <CoverageBars categories={profile.categories} overall={profile.coverage.overall} onPhotos={onCategory} />}
         {uni?.social && <SocialLinks social={uni.social} />}
@@ -339,7 +339,7 @@ function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: 
   return (
     <div>
       <div className="text-[13px] text-muted">{label}</div>
-      <div className={`mt-1 text-[26px] leading-none font-medium tracking-[-0.02em] mono ${tone ?? 'text-ink'}`}>{value}</div>
+      <div className={`mt-2 text-[32px] leading-none font-semibold tracking-[-0.03em] mono ${tone ?? 'text-ink'}`}>{value}</div>
     </div>
   )
 }
@@ -356,7 +356,7 @@ export function VerifyTab({ profile, stages, sources, onOpen }: {
   return (
     <div className="space-y-14 max-w-5xl">
       <div>
-        <div className="flex flex-wrap gap-x-14 gap-y-6">
+        <div className="flex flex-wrap gap-x-14 gap-y-6 border-y border-line py-6">
           <Stat label="Подтверждено" value={verified} tone="text-verified" />
           <Stat label="Вероятно" value={likely} tone="text-likely" />
           <Stat label="Отклонено" value={rejected.length} tone="text-unverified" />
@@ -370,29 +370,28 @@ export function VerifyTab({ profile, stages, sources, onOpen }: {
         </p>
       </div>
 
-      <div className="grid gap-12 sm:grid-cols-2 lg:grid-cols-[300px_260px]">
+      <div className="grid gap-x-16 gap-y-12 sm:grid-cols-2 lg:grid-cols-[320px_300px]">
         <CoverageBars categories={profile.categories} overall={profile.coverage.overall} />
         <div>
-          <h3 className="text-[13px] font-medium text-muted mb-3">Как собран профиль</h3>
+          <h3 className="text-[15px] font-semibold tracking-[-0.01em] pb-3 mb-3 border-b border-line">Как собран профиль</h3>
           <StageList stages={stages} />
         </div>
       </div>
 
       <div>
-        <h3 className="text-[13px] font-medium text-muted mb-3">Источники и сколько кандидатов дал каждый</h3>
+        <h2 className="h-sec mb-5">Источники<small>сколько кандидатов дал каждый</small></h2>
         <SourceList sources={sources} />
       </div>
 
       <section>
         <div className="flex items-baseline gap-3 mb-4">
-          <h2 className="text-[20px] font-semibold tracking-[-0.015em]">Отклонённые</h2>
-          <span className="text-[13.5px] text-muted mono">{rejected.length}</span>
+          <h2 className="h-sec">Отклонённые<small className="mono">{rejected.length}</small></h2>
         </div>
         {rejected.length === 0 ? <div className="text-[15px] text-muted">Ничего не отклонено.</div> : (
           <div className="divide-y divide-line border-y border-line">
             {(allRejected ? rejected : rejected.slice(0, 12)).map((p) => (
               <div key={p.id} className="flex items-center gap-4 py-3">
-                <button onClick={() => onOpen(p)} className="w-20 h-14 rounded-md bg-soft overflow-hidden shrink-0 cursor-pointer">
+                <button onClick={() => onOpen(p)} className="w-20 h-14 rounded-lg bg-soft overflow-hidden shrink-0 cursor-pointer">
                   <img src={thumbUrl(p)} alt="" loading="lazy" className="w-full h-full object-cover grayscale opacity-80" />
                 </button>
                 <div className="min-w-0 flex-1">
@@ -439,9 +438,9 @@ const NET: Record<string, string> = { tiktok: 'TikTok', instagram: 'Instagram', 
 function Disclosure({ open, onToggle, title, hint, children }: { open: boolean; onToggle: () => void; title: string; hint?: string; children: ReactNode }) {
   return (
     <section className="border-t border-line">
-      <button onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-3 py-4 text-left cursor-pointer group">
-        <span className="text-[16px] font-semibold">{title}</span>
-        {hint && <span className="text-[13.5px] text-muted">{hint}</span>}
+      <button onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-3 py-5 text-left cursor-pointer group">
+        <span className="text-[17px] font-semibold tracking-[-0.01em]">{title}</span>
+        {hint && <span className="text-[13px] text-muted">{hint}</span>}
         <ChevronDown size={18} className={`ml-auto text-muted group-hover:text-ink transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="pb-6">{children}</div>}

@@ -68,8 +68,8 @@ const WIND_SHORT: Record<Lang, Record<string, string>> = {
 function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <h2 className="text-[20px] font-semibold tracking-[-0.015em]">{title}</h2>
-      {sub && <span className="text-[13.5px] text-muted">{sub}</span>}
+      <h2 className="h-sec">{title}</h2>
+      {sub && <span className="text-[13px] text-muted">{sub}</span>}
     </div>
   )
 }
@@ -173,7 +173,7 @@ function Story({ c, story, t }: { c: ClimatePack; story: ClimateStory | null | '
         <aside className="space-y-8 lg:pt-12">
           {s.packing.length > 0 && (
             <div>
-              <h3 className="text-[13px] font-medium text-muted">{t('climate.packTitle')}</h3>
+              <h3 className="text-[15px] font-semibold tracking-[-0.01em] pb-3 border-b border-line">{t('climate.packTitle')}</h3>
               <ul className="mt-3 space-y-2.5">
                 {s.packing.map((x) => <li key={x} className="flex gap-3 text-[15px] leading-snug text-ink"><span className="mt-[10px] w-2 h-px bg-ink shrink-0" />{x}</li>)}
               </ul>
@@ -181,8 +181,8 @@ function Story({ c, story, t }: { c: ClimatePack; story: ClimateStory | null | '
           )}
           {s.best && (
             <div>
-              <h3 className="text-[13px] font-medium text-muted">{t('climate.bestTitle')}</h3>
-              <p className="mt-2 text-[15px] leading-relaxed text-ink-2">{s.best}</p>
+              <h3 className="text-[15px] font-semibold tracking-[-0.01em] pb-3 border-b border-line">{t('climate.bestTitle')}</h3>
+              <p className="mt-3 text-[15px] leading-relaxed text-ink-2">{s.best}</p>
             </div>
           )}
         </aside>
@@ -263,7 +263,7 @@ function Seasons({ c, story, t, lang }: { c: ClimatePack; story: ClimateStory | 
           const ms = s.months
           const line = story?.seasons[k]
           return (
-            <div key={k} className="border-t-2 border-ink pt-4">
+            <div key={k} className="border-t border-ink pt-4">
               <div className="flex items-baseline justify-between gap-3">
                 <h3 className="text-[16px] font-semibold">{t(`climate.${k}`)}</h3>
                 {ms && <span className="text-[12.5px] text-muted">{monthName(ms[0], lang)} – {monthName(ms[ms.length - 1], lang)}</span>}
@@ -338,7 +338,7 @@ function WindRose({ c, t, lang }: { c: ClimatePack; t: T; lang: Lang }) {
   const windiest = SEASON_KEYS.reduce((a, b) => ((c.seasons[b].wind_ms ?? 0) > (c.seasons[a].wind_ms ?? 0) ? b : a), SEASON_KEYS[0])
   return (
     <div>
-      <h3 className="text-[16px] font-semibold">{t('climate.windRoseTitle')}</h3>
+      <h3 className="text-[15px] font-semibold tracking-[-0.01em] pb-3 border-b border-line">{t('climate.windRoseTitle')}</h3>
       <svg viewBox="0 0 180 180" className="mt-3 w-44 h-44" role="img" aria-label={t('climate.windRoseTitle')}>
         {[0.34, 0.67, 1].map((k) => <circle key={k} cx={cx} cy={cy} r={8 + (R - 8) * k} fill="none" stroke="#E9EBEF" />)}
         {rose.map((r, i) => { const a = (i / 8) * Math.PI * 2 - Math.PI / 2; return <text key={r.dir} x={cx + (R + 14) * Math.cos(a)} y={cy + (R + 14) * Math.sin(a)} textAnchor="middle" dominantBaseline="middle" fill="#6B7180" style={{ fontSize: 10, fontFamily: 'Onest' }}>{WIND_SHORT[lang][r.dir] ?? r.dir}</text> })}
@@ -437,8 +437,8 @@ export function ClimateTab({ qid, lat, lon, city }: { qid: string; lat?: number 
       <div className="border-t border-line pt-10"><Seasons c={c} story={storyReady} t={t} lang={lang} /></div>
       <div className="border-t border-line pt-10"><Comfort c={c} t={t} lang={lang} /></div>
       {lat != null && lon != null && <div className="border-t border-line pt-10"><LiveMap lat={lat} lon={lon} t={t} /></div>}
-      <div className="text-[12px] text-muted">
-        {t('climate.sourceLabel')}: <a href={c.source.url} target="_blank" rel="noreferrer" className="hover:text-brand inline-flex items-center gap-0.5">{c.source.label} <ExternalLink size={11} /></a> · {c.year}{c.timezone ? ` · ${t('climate.timezoneLabel')} ${c.timezone}` : ''}
+      <div className="text-[12px] text-faint">
+        {t('climate.sourceLabel')}: <a href={c.source.url} target="_blank" rel="noreferrer" className="hover:text-ink inline-flex items-center gap-0.5">{c.source.label} <ExternalLink size={11} /></a> · {c.year}{c.timezone ? ` · ${t('climate.timezoneLabel')} ${c.timezone}` : ''}
       </div>
     </div>
   )

@@ -44,18 +44,16 @@ function Panorama({ lat, lon, t }: { lat: number; lon: number; t: (key: string) 
 
   if (!GOOGLE_3D_KEY) {
     return (
-      <div className="card topo-soft p-8 text-center">
-        <div className="relative">
-          <KeyRound className="mx-auto text-muted" />
-          <div className="mt-2 font-bold">{t('walk.panoramasDisabled')}</div>
-          <div className="mt-1 text-sm text-muted max-w-xl mx-auto">{t('walk.addKey')}</div>
-        </div>
+      <div className="border-t border-line py-10 text-center">
+        <KeyRound size={18} className="mx-auto text-faint" />
+        <div className="mt-3 text-[16px] font-medium">{t('walk.panoramasDisabled')}</div>
+        <div className="mt-1 text-[14px] text-muted max-w-xl mx-auto">{t('walk.addKey')}</div>
       </div>
     )
   }
   return (
     <div className="relative">
-      <div ref={box} className="w-full h-[420px] rounded-lg border border-line bg-black overflow-hidden" />
+      <div ref={box} className="w-full h-[460px] rounded-xl bg-ink overflow-hidden" />
       {state === 'idle' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.searching')}</div>}
       {state === 'none' && <div className="absolute inset-0 grid place-items-center text-white/70 text-sm">{t('walk.noPanorama')}</div>}
     </div>
@@ -70,38 +68,38 @@ export function WalkTab({ uni, campus, photos, walk, onOpen }: { uni: University
   const [stop, setStop] = useState(stops[0])
   const three = photos.filter((p) => p.level === 'verified').slice(0, 8)
   return (
-    <div className="space-y-8">
+    <div className="space-y-14">
       <div>
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <h3 className="caps text-muted flex items-center gap-1.5"><Footprints size={13} /> {t('walk.title')}</h3>
-          <div className="flex flex-wrap gap-1 ml-2">{stops.map((s) => <button key={s.id} onClick={() => setStop(s)} className={`filter !h-7 ${stop.id === s.id ? 'filter-active' : ''}`}><Building2 size={12} />{s.label}</button>)}</div>
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
+          <h3 className="text-[16px] font-semibold tracking-[-0.01em] flex items-center gap-2"><Footprints size={16} className="text-muted" /> {t('walk.title')}</h3>
+          <div className="flex flex-wrap gap-1">{stops.map((s) => <button key={s.id} onClick={() => setStop(s)} className={`filter !h-7 ${stop.id === s.id ? 'filter-active' : ''}`}><Building2 size={12} />{s.label}</button>)}</div>
         </div>
         {uni.lat != null && uni.lon != null && <Panorama key={stop.id} lat={stop.lat} lon={stop.lon} t={t} />}
-        <div className="mt-2 text-[11px] text-muted">{t('walk.panoramaCaption')}</div>
+        <div className="mt-2.5 text-[12.5px] text-faint">{t('walk.panoramaCaption')}</div>
       </div>
 
       <div>
-        <h3 className="caps text-muted flex items-center gap-1.5 mb-3"><Move3d size={13} /> {t('walk.threeDTitle')} <span className="normal-case tracking-normal font-normal">· {t('walk.threeDSubtitle')}</span></h3>
-        {three.length === 0 ? <div className="text-sm text-muted">{t('walk.no3dPhotos')}</div> : (
+        <h3 className="text-[16px] font-semibold tracking-[-0.01em] flex items-center gap-2 mb-4"><Move3d size={16} className="text-muted" /> {t('walk.threeDTitle')} <span className="text-[13px] font-normal text-muted tracking-normal">{t('walk.threeDSubtitle')}</span></h3>
+        {three.length === 0 ? <div className="text-[14px] text-muted">{t('walk.no3dPhotos')}</div> : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {three.map((p) => (
               <figure key={p.id} className="m-0">
-                <button onClick={() => onOpen(p)} className="block w-full rounded-lg overflow-hidden bg-slate-100 cursor-pointer"><DepthPhoto src={thumbUrl(p)} depthSrc={`${API_BASE}/api/depth/${p.id}.png`} alt={p.title ?? ''} /></button>
+                <button onClick={() => onOpen(p)} className="block w-full rounded-lg overflow-hidden bg-soft cursor-pointer"><DepthPhoto src={thumbUrl(p)} depthSrc={`${API_BASE}/api/depth/${p.id}.png`} alt={p.title ?? ''} /></button>
                 <SourceLink p={p} />
-                <figcaption className="mt-1.5 flex justify-between text-xs"><span className="caps text-ink-2">{catLabel(p.category, lang)}</span><span className="mono text-verified">{Math.round(p.confidence * 100)}%</span></figcaption>
+                <figcaption className="mt-1 flex justify-between text-[12.5px]"><span className="text-ink-2">{catLabel(p.category, lang)}</span><span className="inline-flex items-center gap-1.5 text-muted"><i className="w-1.5 h-1.5 rounded-full bg-verified" />{Math.round(p.confidence * 100)}%</span></figcaption>
               </figure>
             ))}
           </div>
         )}
-        <div className="mt-2 text-[11px] text-muted">{t('walk.parallaxCaption')}</div>
+        <div className="mt-2.5 text-[12.5px] text-faint">{t('walk.parallaxCaption')}</div>
       </div>
 
       {walk.length > 0 && (
         <div>
-          <h3 className="caps text-muted mb-3">{t('walk.mapillaryInsideTitle')}</h3>
+          <h3 className="text-[16px] font-semibold tracking-[-0.01em] mb-4">{t('walk.mapillaryInsideTitle')}</h3>
           <div className="flex gap-3 overflow-auto pb-2">{walk.map((p) => (
             <div key={p.id} className="shrink-0 w-64">
-              <button onClick={() => onOpen(p)} className="block w-full aspect-[4/3] rounded-lg overflow-hidden bg-slate-100 cursor-pointer"><img src={thumbUrl(p)} alt="" className="w-full h-full object-cover" /></button>
+              <button onClick={() => onOpen(p)} className="block w-full aspect-[4/3] rounded-lg overflow-hidden bg-soft cursor-pointer"><img src={thumbUrl(p)} alt="" className="w-full h-full object-cover" /></button>
               <SourceLink p={p} />
             </div>
           ))}</div>
