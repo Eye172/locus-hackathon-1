@@ -26,6 +26,7 @@ function Panorama({ lat, lon, t }: { lat: number; lon: number; t: (key: string) 
     if (!GOOGLE_3D_KEY) return
     let alive = true
     let pano: { setVisible?: (v: boolean) => void } | null = null
+    const el = box.current
     setState('idle')
     loadStreetView(lang).then(async (sv) => {
       const { data } = await new sv.StreetViewService().getPanorama({
@@ -39,7 +40,16 @@ function Panorama({ lat, lon, t }: { lat: number; lon: number; t: (key: string) 
       })
       setState('ok')
     }).catch(() => { if (alive) setState('none') })   // ZERO_RESULTS: no panorama within reach
-    return () => { alive = false; pano?.setVisible?.(false) }
+    return () => {
+      alive = false
+      pano?.setVisible?.(false)
+      // every stop is a new panorama: its WebGL context is released now, not left for Chrome to evict (past ~16 live
+      // contexts it drops the oldest - a black panorama or a dead 3D map elsewhere on the page)
+      for (const c of el?.querySelectorAll('canvas') ?? []) {
+        const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null
+        gl?.getExtension('WEBGL_lose_context')?.loseContext()
+      }
+    }
   }, [lat, lon, lang])
 
   if (!GOOGLE_3D_KEY) {

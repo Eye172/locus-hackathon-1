@@ -17,34 +17,32 @@ const SKY_SPACE: SkySpecification = {
 export const BLUE_MARBLE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg'
 
 const warmed = new Set<string>()
-const keep: HTMLImageElement[] = []  // hold references so the browser does not drop in-flight loads
+const keep = new Set<HTMLImageElement>()  // references to in-flight loads only (the browser may drop unreferenced ones)
 const inflight = new globalThis.Map<string, Promise<void>>()
-/** Start loading a tile into the HTTP cache; the promise settles when it has arrived (or failed). */
-function warm(url: string): Promise<void> | null {
+/** Start loading a tile into the HTTP cache; the promise settles when it has arrived (or failed). `low`: a guess
+ *  (the planet turning towards a search result) that must not hold up the tiles the map is showing. */
+function warm(url: string, low = false): Promise<void> | null {
   if (warmed.has(url)) return inflight.get(url) ?? null
   warmed.add(url)
   const im = new Image()
   im.crossOrigin = 'anonymous'  // same request mode as the map's own tile requests, so the cache entry is reused
   im.decoding = 'async'
+  if (low) im.fetchPriority = 'low'
   const done = new Promise<void>((res) => { im.onload = () => res(); im.onerror = () => res() })
   inflight.set(url, done)
-  done.then(() => inflight.delete(url))
+  // once in the HTTP cache the decoded image is not needed: kept, 1 200 of them held ~25 MB for the whole visit
+  done.then(() => { inflight.delete(url); keep.delete(im) })
   im.src = url
-  keep.push(im)
-  if (keep.length > 1200) keep.splice(0, keep.length - 1200)
+  keep.add(im)
   return done
 }
 const tileUrl = (tpl: string, z: number, x: number, y: number) => tpl.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x))
 
-/** Warm the HTTP cache with the planet at low zoom (levels 0–3 everywhere, level 4 between ±67°), so the spiral dive
+/** Warm the HTTP cache with NASA's level 4 between ±67° (levels 0–3 ship with the site), so the spiral dive
  *  never shows an unloaded (black) side of the globe while it turns and grows. Runs when the browser is idle. */
 export function prefetchPlanet(): void {
   const go = () => {
-    for (let z = 0; z <= 4; z++) {
-      const n = 1 << z
-      const y0 = z === 4 ? 3 : 0, y1 = z === 4 ? 12 : n
-      for (let y = y0; y < y1; y++) for (let x = 0; x < n; x++) warm(tileUrl(BLUE_MARBLE, z, x, y))
-    }
+    for (let y = 3; y < 12; y++) for (let x = 0; x < 16; x++) warm(tileUrl(BLUE_MARBLE, 4, x, y))
   }
   const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
   if (ric) ric(go, { timeout: 2500 }); else window.setTimeout(go, 1200)
@@ -61,10 +59,19 @@ function tileXY(lat: number, lon: number, z: number): [number, number] {
 /** Warm exactly the imagery a scripted camera path will show: for each sample, the tiles around the view centre at the
  *  raster level MapLibre picks for 256-px tiles (round(zoom + 1)). Blue Marble up to map zoom 7.5, Esri from zoom 4.
  *  Settles when every tile it started (or was already loading) has arrived. */
-export function prefetchPath(samples: { lat: number; lon: number; zoom: number }[], view: { w: number; h: number }, cap = 600): Promise<void> {
+export function prefetchPath(samples: { lat: number; lon: number; zoom: number }[], view: { w: number; h: number }, cap = 300, low = false): Promise<void> {
   let n = 0
   const loads: Promise<void>[] = []
-  const add = (p: Promise<void> | null) => { if (p) loads.push(p); return ++n >= cap }
+  const seen = new Set<string>()
+  // the cap counts distinct tiles: consecutive samples mostly revisit the same ones, and counting every visit used the
+  // budget up a third of the way down (zoom ~4.5), leaving the country and city approach cold
+  const add = (url: string) => {
+    if (seen.has(url)) return false
+    seen.add(url)
+    const p = warm(url, low)
+    if (p) loads.push(p)
+    return ++n >= cap
+  }
   for (const s of samples) {
     const z = Math.round(s.zoom + 1)
     if (z < 5) continue                                   // levels 0–4 come from prefetchPlanet
@@ -79,7 +86,7 @@ export function prefetchPath(samples: { lat: number; lon: number; zoom: number }
         const y = cy + dy
         if (y < 0 || y >= N) continue
         for (let dx = -hw; dx <= hw; dx++) {
-          if (add(warm(tileUrl(tpl, z, (((cx + dx) % N) + N) % N, y)))) return Promise.all(loads).then(() => {})
+          if (add(tileUrl(tpl, z, (((cx + dx) % N) + N) % N, y))) return Promise.all(loads).then(() => {})
         }
       }
     }
@@ -185,9 +192,10 @@ export async function loadSatelliteStyle(globe = true): Promise<StyleSpecificati
   for (const src of Object.keys(style.sources)) if (style.sources[src].type === 'raster') delete style.sources[src]
   // the same Blue Marble at levels 0–3, served from this site: NASA's server needs ~2.5 s for the first view, and
   // until then the planet was a black disc. These are same-origin and small, so the globe is textured from the first
-  // frame; the sharper NASA tiles draw over them as they arrive.
+  // frame. They are NASA's own tiles byte for byte, so NASA is asked only from level 4 on, where the local ones end:
+  // below it the planet was drawn twice every frame (and ~85 tiles were downloaded a second time)
   style.sources.planet = { type: 'raster', tiles: ['/planet/{z}/{x}/{y}.jpg'], tileSize: 256, maxzoom: 3, attribution: 'NASA GIBS Blue Marble' }
-  style.sources.bluemarble = { type: 'raster', tiles: [BLUE_MARBLE], tileSize: 256, maxzoom: 8, attribution: 'NASA GIBS Blue Marble' }
+  style.sources.bluemarble = { type: 'raster', tiles: [BLUE_MARBLE], tileSize: 256, minzoom: 4, maxzoom: 8, attribution: 'NASA GIBS Blue Marble' }
   registerEsriProtocol()
   style.sources.esri = { type: 'raster', tiles: [`${ESRI_PROTOCOL}://tile/{z}/{y}/{x}`], tileSize: 256, maxzoom: 19, attribution: 'Esri, Maxar, Earthstar Geographics' }
   const rasters: LayerSpecification[] = [

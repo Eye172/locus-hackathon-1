@@ -420,7 +420,8 @@ export function Campus3D({ qid, variant = 'page', active = true, onOpenProfile, 
     let tries = 0
     let timer = 0
     const tick = () => {
-      api.map3d(qid, lang).then((p) => {
+      // the boundary alone: the whole pack (buildings, dorms, photos) was downloaded and parsed on every ask
+      api.map3dCity(qid, lang).then((p) => {
         if (!alive) return
         if (p.city_area) setCityArea(p.city_area)
         else if (p.city_status === 'pending' && ++tries < 8) timer = window.setTimeout(tick, 5000)

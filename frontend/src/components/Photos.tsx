@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { X, ExternalLink, Flag, Heart, ListPlus, Check, ChevronLeft, ChevronRight, ChevronDown, Move3d } from 'lucide-react'
 import type { Photo } from '../lib/types'
 import { CATEGORIES } from '../lib/types'
@@ -12,8 +12,16 @@ import { Map3DInset } from './Map3DInset'
 
 const levelDot = (l: Photo['level']) => (l === 'verified' ? 'bg-verified' : l === 'likely' ? 'bg-likely' : 'bg-unverified')
 
+type TileProps = { p: Photo; qid: string; onOpen: (p: Photo) => void; large?: boolean; showCategory?: boolean }
+// what a tile shows: the profile arrives again every ~20 s as new objects, and a tile whose photo reads the same is kept
+const sameTile = (a: TileProps, b: TileProps) => a.qid === b.qid && a.onOpen === b.onOpen && a.large === b.large &&
+  a.showCategory === b.showCategory && (a.p === b.p || (a.p.id === b.p.id && a.p.thumb === b.p.thumb && a.p.title === b.p.title &&
+  a.p.level === b.p.level && a.p.confidence === b.p.confidence && a.p.category === b.p.category && a.p.outdated === b.p.outdated &&
+  a.p.preliminary === b.p.preliminary && a.p.similar.length === b.p.similar.length && a.p.page_url === b.p.page_url &&
+  a.p.author === b.p.author && a.p.license === b.p.license && a.p.date === b.p.date))
+
 /** A photo with a quiet caption: where it came from, how sure we are. The category shows only in mixed grids. */
-export function PhotoTile({ p, qid, onOpen, large, showCategory }: { p: Photo; qid: string; onOpen: (p: Photo) => void; large?: boolean; showCategory?: boolean }) {
+export const PhotoTile = memo(function PhotoTile({ p, qid, onOpen, large, showCategory }: TileProps) {
   useStoreVersion()
   const lang = useLang()
   const t = useT()
@@ -21,7 +29,7 @@ export function PhotoTile({ p, qid, onOpen, large, showCategory }: { p: Photo; q
   return (
     <figure className={`group relative m-0 min-w-0 ${large ? 'col-span-2 row-span-2' : ''}`}>
       <button onClick={() => onOpen(p)} className={`block w-full relative rounded-lg overflow-hidden bg-soft cursor-pointer aspect-[4/3]`}>
-        <img src={thumbUrl(p)} alt={p.title ?? ''} loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-[filter] duration-200 group-hover:brightness-[0.9]" />
+        <img src={thumbUrl(p)} alt={p.title ?? ''} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover transition-[filter] duration-200 group-hover:brightness-[0.9]" />
         <div className="absolute top-2 left-2 flex gap-1">{p.outdated && <OutdatedChip />}{p.preliminary && <span className="chip bg-white/90 text-ink-2">предварительно</span>}</div>
         {p.similar.length > 0 && <span className="absolute top-2 right-2 chip bg-black/55 text-white backdrop-blur-sm" title="Похожие кадры скрыты">+{p.similar.length}</span>}
       </button>
@@ -40,7 +48,7 @@ export function PhotoTile({ p, qid, onOpen, large, showCategory }: { p: Photo; q
       </figcaption>
     </figure>
   )
-}
+}, sameTile)
 
 export function PhotoGrid({ photos, qid, onOpen, empty }: { photos: Photo[]; qid: string; onOpen: (p: Photo) => void; empty?: React.ReactNode }) {
   if (!photos.length) return <>{empty}</>
@@ -187,6 +195,11 @@ export function PhotoPassport({ p, qid, all, onClose, onOpen, onPrev, onNext }: 
   const [planned, setPlanned] = useState(false)
   const [three, setThree] = useState(false)
   useEffect(() => { setThree(false); setFlagged(false); setPlanned(false) }, [p.id])
+  // the last geotagged photo's place: stays on the 3D map while photos without coordinates are shown
+  const [geo, setGeo] = useState<{ lat: number; lng: number; thumb: string; level: Photo['level'] } | null>(null)
+  useEffect(() => {
+    if (p.lat != null && p.lon != null) setGeo({ lat: p.lat, lng: p.lon, thumb: thumbUrl(p), level: p.level })
+  }, [p.id, p.lat, p.lon, p.level])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); if (e.key === 'ArrowLeft') onPrev?.(); if (e.key === 'ArrowRight') onNext?.() }
     window.addEventListener('keydown', onKey)
@@ -248,12 +261,12 @@ export function PhotoPassport({ p, qid, all, onClose, onOpen, onPrev, onNext }: 
 
           <AiBlock p={p} />
 
-          {p.lat != null && p.lon != null && (
-            <div>
+          {geo && (
+            // hidden, not unmounted, on a photo without coordinates: the next geotagged one reuses the same 3D map
+            <div className={p.lat != null && p.lon != null ? '' : 'hidden'}>
               <PassportLabel>{t('passport.geo')}{p.geo_distance_m != null ? ` · ${p.geo_distance_m} м от кампуса` : ''}</PassportLabel>
               {/* the app's one 3D map: the same scene as the arrival on the main page, the photo at its place */}
-              <Map3DInset qid={qid} at={{ lat: p.lat, lng: p.lon }} range={650} className="h-56"
-                marker={{ lat: p.lat, lng: p.lon, thumb: thumbUrl(p), level: p.level }} />
+              <Map3DInset qid={qid} at={{ lat: geo.lat, lng: geo.lng }} range={650} className="h-56" marker={geo} />
             </div>
           )}
 

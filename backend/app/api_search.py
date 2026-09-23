@@ -1,6 +1,8 @@
 """Search settings and the campus facts: /api/search-plan, /api/search-plan/{qid}, /api/facts/{qid}."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from . import cache
@@ -76,7 +78,17 @@ async def put_uni_plan(qid: str, up: sp.UniPlan):
     return {"uni": up.model_dump()}
 
 
+_facts_builds: dict[str, asyncio.Task] = {}
+
+
 @router.get("/api/facts/{qid}")
 async def facts(qid: str, refresh: bool = False):
     uni = await _university(qid)
-    return await campus_facts.build(uni, refresh=refresh)
+    # one build per university at a time (a web search + an LLM call, up to a minute): the tab opened again while it
+    # runs joins it instead of paying for a second one
+    key = f"{qid}:{int(refresh)}"
+    task = _facts_builds.get(key)
+    if task is None:
+        task = _facts_builds[key] = asyncio.ensure_future(campus_facts.build(uni, refresh=refresh))
+        task.add_done_callback(lambda _t: _facts_builds.pop(key, None))
+    return await asyncio.shield(task)

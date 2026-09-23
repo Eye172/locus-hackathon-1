@@ -19,11 +19,33 @@ interface Props {
   marker?: { lat: number; lng: number; thumb?: string | null; level?: string | null }
 }
 
+function markerElement(libs: any, marker: NonNullable<Props['marker']>) {
+  const mk = new libs.maps3d.MarkerElement({
+    position: { lat: marker.lat, lng: marker.lng, altitude: 12 }, altitudeMode: 'RELATIVE_TO_GROUND',
+    collisionBehavior: 'REQUIRED',
+  })
+  const ring = marker.level === 'verified' ? '#15803D' : marker.level === 'likely' ? '#B45309' : '#FFFFFF'
+  const d = document.createElement('div')
+  d.style.cssText = `width:44px;height:44px;border-radius:10px;overflow:hidden;border:3px solid ${ring};background:#111`
+  if (marker.thumb) {
+    const img = document.createElement('img')
+    img.src = marker.thumb
+    img.alt = ''
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block'
+    d.append(img)
+  }
+  mk.append(d)
+  return mk
+}
+
 export function Map3DInset({ qid, at, range = 650, className = '', marker }: Props) {
   const lang = useLang()
   const host = useRef<HTMLDivElement>(null)
   const [seen, setSeen] = useState(false)
   const [failed, setFailed] = useState(!GOOGLE_3D_KEY)
+  const [map, setMap] = useState<{ el: any; libs: any } | null>(null)
+  const view = useRef({ at, range, marker })
+  view.current = { at, range, marker }
 
   useEffect(() => {
     const el = host.current
@@ -33,40 +55,39 @@ export function Map3DInset({ qid, at, range = 650, className = '', marker }: Pro
     return () => io.disconnect()
   }, [seen])
 
+  // one map per passport: going to the next photo moves its camera and marker. A new Map3DElement per photo was a new
+  // WebGL context and a fresh download of the 3D tiles each time (Chrome drops the oldest contexts past ~16)
   useEffect(() => {
     const el = host.current
     if (!seen || failed || !el) return
     let alive = true
-    let map: any = null
-    Promise.all([loadGoogle3D(lang), groundHeight(at)]).then(([libs, h]) => {
+    let m: any = null
+    const { at: a, range: r } = view.current
+    Promise.all([loadGoogle3D(lang), groundHeight(a)]).then(([libs, h]) => {
       if (!alive) return
-      map = new libs.maps3d.Map3DElement({
-        center: { lat: at.lat, lng: at.lng, altitude: h ?? 0 }, range, tilt: 58, heading: 20, mode: 'HYBRID', language: lang,
-      })
-      map.style.cssText = 'display:block;width:100%;height:100%'
-      map.addEventListener('gmp-error', () => setFailed(true))
-      if (marker) {
-        const mk = new libs.maps3d.MarkerElement({
-          position: { lat: marker.lat, lng: marker.lng, altitude: 12 }, altitudeMode: 'RELATIVE_TO_GROUND',
-          collisionBehavior: 'REQUIRED',
-        })
-        const ring = marker.level === 'verified' ? '#15803D' : marker.level === 'likely' ? '#B45309' : '#FFFFFF'
-        const d = document.createElement('div')
-        d.style.cssText = `width:44px;height:44px;border-radius:10px;overflow:hidden;border:3px solid ${ring};background:#111`
-        if (marker.thumb) {
-          const img = document.createElement('img')
-          img.src = marker.thumb
-          img.alt = ''
-          img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block'
-          d.append(img)
-        }
-        mk.append(d)
-        map.append(mk)
-      }
-      el.append(map)
+      m = new libs.maps3d.Map3DElement({ center: { lat: a.lat, lng: a.lng, altitude: h ?? 0 }, range: r, tilt: 58, heading: 20, mode: 'HYBRID', language: lang })
+      m.style.cssText = 'display:block;width:100%;height:100%'
+      m.addEventListener('gmp-error', () => setFailed(true))
+      el.append(m)
+      setMap({ el: m, libs })
     }).catch(() => { if (alive) setFailed(true) })
-    return () => { alive = false; map?.remove() }
-  }, [seen, failed, at.lat, at.lng, range, lang, marker?.lat, marker?.lng, marker?.thumb, marker?.level])  // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { alive = false; m?.remove(); setMap(null) }
+  }, [seen, failed, lang])
+
+  useEffect(() => {
+    if (!map) return
+    let alive = true
+    groundHeight(at).then((h) => {
+      if (!alive) return
+      map.el.center = { lat: at.lat, lng: at.lng, altitude: h ?? 0 }
+      map.el.range = range
+      map.el.tilt = 58
+      map.el.heading = 20
+    }).catch(() => {})
+    let mk: any = null
+    if (marker) { mk = markerElement(map.libs, marker); map.el.append(mk) }
+    return () => { alive = false; mk?.remove() }
+  }, [map, at.lat, at.lng, range, marker?.lat, marker?.lng, marker?.thumb, marker?.level])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (failed) return null
   return (

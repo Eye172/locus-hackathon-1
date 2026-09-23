@@ -1,12 +1,20 @@
+import { Suspense, lazy, useEffect } from 'react'
 import { Routes, Route, Link, NavLink, Navigate, useLocation, useParams } from 'react-router-dom'
 import { Logo } from './components/Logo'
-import Home from './pages/Home'
-import Globe from './pages/Globe'
-import Profile from './pages/Profile'
-import Compare from './pages/Compare'
-import Saved from './pages/Saved'
-import SearchSettings from './pages/SearchSettings'
 import { HeaderMenu } from './components/HeaderMenu'
+
+// one chunk per page: the globe's MapLibre (~0.9 MB) never loads for a profile opened from a shared link, and a page
+// parses only its own code
+const loadGlobe = () => import('./pages/Globe')
+const loadProfile = () => import('./pages/Profile')
+const loadCompare = () => import('./pages/Compare')
+const loadSaved = () => import('./pages/Saved')
+const Globe = lazy(loadGlobe)
+const Profile = lazy(loadProfile)
+const Compare = lazy(loadCompare)
+const Saved = lazy(loadSaved)
+const Home = lazy(() => import('./pages/Home'))
+const SearchSettings = lazy(() => import('./pages/SearchSettings'))
 
 // one map for the whole app: old /map3d/:qid links open the campus scene of the main page
 function ToMainMap() {
@@ -29,13 +37,21 @@ export default function App() {
   const t = useT()
   const loc = useLocation()
   const home = loc.pathname === '/'
+  // the pages one click away come in while the browser is idle, after the opening shot, so a click shows them at once
+  useEffect(() => {
+    const idle = (cb: () => void) => (typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 1))
+    const timer = window.setTimeout(() => idle(() => {
+      for (const load of [loadProfile, loadCompare, loadSaved, loadGlobe]) load().catch(() => {})
+    }), 6000)
+    return () => window.clearTimeout(timer)
+  }, [])
   const link = ({ isActive }: { isActive: boolean }) => `transition-colors ${home
     ? (isActive ? 'text-white' : 'text-white/65 hover:text-white')
     : (isActive ? 'text-ink' : 'text-muted hover:text-ink')}`
   return (
     <div className={`min-h-full flex flex-col ${home ? 'bg-[#05070F]' : ''}`}>
       {/* home: transparent, laid over the globe; elsewhere: white with a hairline */}
-      <header className={`top-0 z-40 ${home ? 'fixed inset-x-0 text-white' : 'sticky bg-white/92 backdrop-blur-md border-b border-line'}`}>
+      <header className={`top-0 z-40 ${home ? 'fixed inset-x-0 text-white' : 'sticky bg-white border-b border-line'}`}>
         {/* home: the full width, from the screen's left edge; elsewhere: aligned with the page's centred content */}
         {/* two equal flex-1 sides keep the middle (the 3D scene's university, #hdr-center) centred on the screen while
             they have room; when they do not, the middle moves over and truncates rather than overlapping them */}
@@ -62,6 +78,8 @@ export default function App() {
         <div id="hdr-side" />
       </header>
       <main className="flex-1">
+        {/* a page still loading holds the whole screen: the footer must not show up and then jump away (layout shift) */}
+        <Suspense fallback={<div className="min-h-screen" />}>
         <Routes>
           <Route path="/" element={<Globe />} />
           <Route path="/classic" element={<Home />} />
@@ -72,6 +90,7 @@ export default function App() {
           <Route path="/map3d/:qid" element={<ToMainMap />} />
           <Route path="*" element={<div className="mx-auto max-w-7xl px-4 sm:px-6 py-16"><h1 className="text-3xl">{t('error.notFound')}</h1><p className="mt-3 text-muted">{t('error.notFoundHint')}</p><Link to="/" className="btn-primary mt-6">{t('lvl.planet')}</Link></div>} />
         </Routes>
+        </Suspense>
       </main>
       <footer className={`border-t border-line py-8 text-[13px] text-muted ${home ? 'hidden' : ''}`}>
         <div className="mx-auto max-w-7xl px-4 sm:px-6 flex flex-col sm:flex-row gap-x-10 gap-y-3">

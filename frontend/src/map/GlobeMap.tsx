@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, memo, useEffect, useImperativeHandle, useRef } from 'react'
 import { Map as MLMap, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 type Map = MLMap
 type MapMouseEvent = MapLayerMouseEvent
@@ -97,8 +97,12 @@ function planSpiral(c0: { lng: number; lat: number }, z0: number, lat: number, l
   return { dLng, spinMs, total, at, samples }
 }
 const BUILDINGS = 'building-3d'
+const SPIN_FRAME_MS = 33   // the idle spin's step: ~30 fps at most
+const SPIN_MAX_MS = 150    // ...and at least ~7 steps a second on the slowest machines
+const STAR_PHASES = 6      // twinkle groups
 
-export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady, inset,
+// memo: the page re-renders on its own state (search, hover card, flight phase); the map needs none of it
+export const GlobeMap = memo(forwardRef<GlobeHandle, Props>(function GlobeMap({ onHover, onSelect, onZoom, onReady, inset,
   onTitleOverlap }, ref) {
   const container = useRef<HTMLDivElement>(null)
   const stars = useRef<HTMLCanvasElement>(null)
@@ -195,27 +199,38 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inset?.top, inset?.bottom])
 
+  const starsLit = useRef(false)   // something is drawn on the star canvas (it needs one clear once they fade out)
   const drawStars = () => {
     const c = stars.current, map = mapRef.current
     if (!c || !map) return
+    const z = map.getZoom()
+    const fade = z > 4 ? Math.max(0, 1 - (z - 4) / 3) : 1
+    if (fade <= 0 && !starsLit.current) return
     const dpr = window.devicePixelRatio || 1
     const w = c.clientWidth, h = c.clientHeight
-    if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr }
+    // whole pixels: at 125 % / 150 % scaling w × dpr is fractional, never equal to the canvas size, and the canvas was
+    // reallocated on every draw
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr)
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch }
     const ctx = c.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
-    if (!starField.current.length) {
-      for (let i = 0; i < 420; i++) starField.current.push({ x: Math.random(), y: Math.random(), r: Math.random() * 1.3 + 0.3, a: Math.random() })
-    }
-    const z = map.getZoom()
-    const fade = z > 4 ? Math.max(0, 1 - (z - 4) / 3) : 1
+    starsLit.current = fade > 0
     if (fade <= 0) return
+    if (!starField.current.length) {
+      for (let i = 0; i < 420; i++) starField.current.push({ x: Math.random(), y: Math.random(), r: Math.random() * 1.3 + 0.3, a: Math.floor(Math.random() * STAR_PHASES) })
+    }
+    // the stars twinkle in a few phase groups: one path and one fill per group instead of 420 separate fills
     const t = performance.now() / 1000
-    for (const s of starField.current) {
-      const tw = 0.55 + 0.45 * Math.sin(t * 1.3 + s.a * 20)
-      ctx.globalAlpha = tw * fade * 0.9
-      ctx.fillStyle = '#DCE4FF'
-      ctx.beginPath(); ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = '#DCE4FF'
+    for (let g = 0; g < STAR_PHASES; g++) {
+      ctx.globalAlpha = (0.55 + 0.45 * Math.sin(t * 1.3 + g * 2.3)) * fade * 0.9
+      ctx.beginPath()
+      for (const s of starField.current) {
+        if (s.a !== g) continue
+        ctx.moveTo(s.x * w + s.r, s.y * h); ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2)
+      }
+      ctx.fill()
     }
     // clear the globe disc so stars never overlap the planet
     const R = globeRadiusPx(z, map.getCenter().lat, h, map.getVerticalFieldOfView()) + 8
@@ -349,7 +364,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       // at home the disc keeps its size (MapLibre would scale it by 1/cos of the new latitude)
       map.easeTo({ center: [lon, lat], zoom: atHome.current ? homeView(map, lat).zoom : undefined, duration: 1400, easing: (x) => 1 - Math.pow(1 - x, 3), essential: true })
       const canvas = map.getCanvas()
-      prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight })
+      prefetchPath(planSpiral({ lng: lon, lat }, map.getZoom(), lat, lon, 11.2).samples(), { w: canvas.clientWidth, h: canvas.clientHeight }, 120, true)
       window.clearTimeout(peekTimer.current)
       peekTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 9000)
     },
@@ -431,7 +446,8 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     let cancelled = false
     let map: Map | null = null
     let raf = 0
-    const onResize = () => drawStars()
+    let starsDirty = true
+    const onResize = () => { starsDirty = true }
 
     loadSatelliteStyle().catch(() => 'https://tiles.openfreemap.org/styles/liberty' as const).then((style) => {
       if (cancelled || !container.current) return
@@ -441,7 +457,10 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
         center: HOME,
         zoom: 1.5,
         attributionControl: false,
-        canvasContextAttributes: { antialias: true },
+        // at 2x and above the edges are already fine: multisampling there only multiplies the cost of every frame;
+        // past 2x (4K laptops at 250 %) the extra pixels are not seen either
+        canvasContextAttributes: { antialias: (window.devicePixelRatio || 1) < 2 },
+        pixelRatio: Math.min(2, window.devicePixelRatio || 1),
         maxPitch: 70,
       })
       mapRef.current = map
@@ -504,27 +523,44 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     const resume = () => { window.clearTimeout(idleTimer.current); idleTimer.current = window.setTimeout(() => { if (map.getZoom() < 3.2) spinning.current = true }, 5000) }
     map.on('mousedown', stop); map.on('touchstart', stop); map.on('wheel', stop)
     map.on('mouseup', resume); map.on('touchend', resume); map.on('moveend', resume)
-    map.on('move', () => { onZoom?.(map.getZoom()); drawStars(); checkTitle(map) })
+    // the stars follow the camera (the planet's cut-out) in the frame loop below, once per frame
+    map.on('move', () => { onZoom?.(map.getZoom()); starsDirty = true; checkTitle(map) })
     map.on('zoomstart', (e) => { if (e.originalEvent) atHome.current = false })
     map.on('resize', fitHome)
 
-    map.on('mousemove', 'unis-point', (e: MapMouseEvent) => {
-      const f = e.features?.[0]
-      if (!f || !markersOn.current) return
-      map.getCanvas().style.cursor = 'pointer'
-      const p = f.properties as HoverInfo
-      const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
-      onHover?.({ ...p, x: e.point.x, y: e.point.y, lon, lat })
+    // hover: one query per frame over both marker layers (layer-scoped handlers queried the map 4 times per move),
+    // none while the markers are hidden or the camera is flying
+    let pick = 0, pickAt: { x: number; y: number } | null = null, hovering = false
+    const leave = () => {
+      if (hovering) { hovering = false; onHover?.(null) }
+      if (map.getCanvas().style.cursor) map.getCanvas().style.cursor = ''
+    }
+    map.on('mousemove', (e: MapMouseEvent) => {
+      pickAt = e.point
+      if (pick) return
+      pick = requestAnimationFrame(() => {
+        pick = 0
+        if (!pickAt || !markersOn.current || motion.current || !map.getLayer('unis-point')) { leave(); return }
+        const fs = map.queryRenderedFeatures([pickAt.x, pickAt.y], { layers: ['unis-point', 'unis-cluster'] })
+        const f = fs.find((x) => x.layer.id === 'unis-point')
+        if (f) {
+          map.getCanvas().style.cursor = 'pointer'
+          const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
+          hovering = true
+          onHover?.({ ...(f.properties as HoverInfo), x: pickAt.x, y: pickAt.y, lon, lat })
+          return
+        }
+        if (hovering) { hovering = false; onHover?.(null) }
+        map.getCanvas().style.cursor = fs.length ? 'pointer' : ''
+      })
     })
-    map.on('mouseleave', 'unis-point', () => { map.getCanvas().style.cursor = ''; onHover?.(null) })
+    map.getCanvas().addEventListener('mouseleave', () => { pickAt = null; leave() })
     map.on('click', 'unis-point', (e: MapMouseEvent) => {
       const f = e.features?.[0]
       if (!f || !markersOn.current) return
       const [lon, lat] = (f.geometry as GeoJSON.Point).coordinates
       onSelect?.({ ...(f.properties as HoverInfo), x: e.point.x, y: e.point.y, lon, lat })
     })
-    map.on('mouseenter', 'unis-cluster', () => { if (markersOn.current) map.getCanvas().style.cursor = 'pointer' })
-    map.on('mouseleave', 'unis-cluster', () => { map.getCanvas().style.cursor = '' })
     map.on('click', 'unis-cluster', async (e: MapMouseEvent) => {
       const f = e.features?.[0]
       if (!f || !markersOn.current) return
@@ -535,15 +571,35 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom: Math.min(zoom + 0.3, 9), duration: 900 })
     })
 
-    let last = performance.now()
+    // The idle spin moves the planet ~0.3 px a frame: at 30 steps a second it looks the same as at the display's rate
+    // (60-240 Hz), while every step is a full redraw of the globe - it kept the landing page busy all the time.
+    // Scripted flights and gestures are not throttled. The stars twinkle at ~20 fps and follow every camera frame.
+    // Label fade-in (300 ms after every camera change) makes MapLibre draw every frame in between: with a step every
+    // 33 ms that is every frame, forever. While the planet idles the labels switch without the fade (private field,
+    // read on every frame; harmless if a later MapLibre renames it), and get it back as soon as anyone moves the map.
+    const fade = map as unknown as { _fadeDuration?: number }
+    const FADE_MS = fade._fadeDuration ?? 300
+    // `now` is this frame's start, and what ran before this callback is mostly MapLibre drawing last frame's step: the
+    // spin keeps to about a quarter of the main thread. ~30 steps a second on a desktop; on a slow laptop (CPU 4x
+    // slower: ~70 ms a globe frame) it steps less often instead of filling the thread and making typing lag.
+    let lastSpin = performance.now(), lastStars = 0, stepped = false, frameCost = 5
     const spin = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000)
-      last = now
-      if (spinning.current && !motion.current && map.getZoom() < 3.2) {
+      if (stepped) { frameCost = frameCost * 0.8 + Math.max(0, performance.now() - now) * 0.2; stepped = false }
+      const idleSpin = spinning.current && !motion.current
+      fade._fadeDuration = idleSpin ? 0 : FADE_MS
+      if (!idleSpin) lastSpin = now
+      else if (now - lastSpin >= Math.min(SPIN_MAX_MS, Math.max(SPIN_FRAME_MS, frameCost * 4)) && map.getZoom() < 3.2) {
+        const dt = Math.min(0.2, (now - lastSpin) / 1000)
+        lastSpin = now
+        stepped = true
         const c = map.getCenter()
         map.setCenter([c.lng + 3.0 * dt, c.lat])
       }
-      if (map.getZoom() < 7) drawStars()
+      if (starsDirty || (now - lastStars >= 50 && map.getZoom() < 7)) {
+        starsDirty = false
+        lastStars = now
+        drawStars()
+      }
       raf = requestAnimationFrame(spin)
     }
     raf = requestAnimationFrame(spin)
@@ -552,6 +608,7 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
+      delete (window as unknown as { __map?: Map }).__map
       window.removeEventListener('resize', onResize)
       map?.remove()
       mapRef.current = null
@@ -565,4 +622,4 @@ export const GlobeMap = forwardRef<GlobeHandle, Props>(function GlobeMap({ onHov
       <canvas ref={stars} className="absolute inset-0 w-full h-full pointer-events-none" />
     </div>
   )
-})
+}))

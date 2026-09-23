@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
+import re
 import time
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -11,9 +13,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES as GZIP_SKIP
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import cache, http
 from .config import settings
@@ -98,6 +101,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CampusLense API", version="0.1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
+# JSON answers shrink 5-7x (a profile: 980 KB -> 140 KB). SSE is compressed too: Starlette flushes every event
+# (Z_SYNC_FLUSH), so the stream stays live. Photos and files already gzipped on disk are left as they are.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5,
+                   exclude_content_types=tuple(t for t in GZIP_SKIP if t != "text/event-stream"))
 from .api_search import router as _search_router  # noqa: E402  (search settings and campus facts)
 app.include_router(_search_router)
 
@@ -429,6 +436,25 @@ async def map3d_pack(qid: str, refresh: bool = False, lang: str = Query("ru", pa
 _pack_builds: dict[str, asyncio.Task] = {}
 
 
+@app.get("/api/map3d/{qid}/city")
+async def map3d_city(qid: str, lang: str = Query("ru", pattern="^(ru|en|kk)$")):
+    """Only the city boundary, for a scene whose pack went out without it (city_status "pending"). The page polls this
+    during the orbit instead of downloading and parsing the whole pack again every few seconds."""
+    from .pipeline import map3d
+    task = map3d._tasks.get(("city", qid))
+    if task is None or (task.done() and (task.cancelled() or task.exception() is not None)):
+        pack = await map3d_pack(qid, refresh=False, lang=lang)   # starts (or restarts) the lookup
+        return {"city_area": pack.get("city_area"), "city_status": pack.get("city_status")}
+    try:
+        city = await asyncio.wait_for(asyncio.shield(task), timeout=3)
+    except Exception:  # noqa: BLE001  (still looking, or failed: the next poll restarts it)
+        return {"city_area": None, "city_status": "pending"}
+    # the pack with its city is worth keeping for the next visit: built once more in the background (its parts are cached)
+    if not await cache.kv_get("map3d", f"{qid}:{lang}", max_age_s=7 * 86400):
+        asyncio.ensure_future(map3d_pack(qid, refresh=False, lang=lang))
+    return {"city_area": city, "city_status": "ok" if city else "none"}
+
+
 async def _build_pack(qid: str, key: str, lang: str) -> dict:
     from .pipeline import map3d
     p = await cache.get_profile(qid)
@@ -505,10 +531,13 @@ async def _grey_tile(qid: str, x: int, y: int) -> list[list[int]]:
 
 
 @app.get("/api/map3d/{qid}/grey/{x}/{y}.json")
-async def map3d_grey_index(qid: str, x: int, y: int):
+async def map3d_grey_index(qid: str, x: int, y: int, response: Response):
     """Grey 3D buildings where Google's 3D map is flat satellite imagery (pipeline/city_glb.py): the non-empty ~400 m
     chunks of z14 tile x/y. The page asks for the tiles where the camera looks, then loads their chunks' models."""
-    return {"z": 16, "chunks": await _grey_tile(qid, x, y)}
+    chunks = await _grey_tile(qid, x, y)
+    # a revisit of the scene takes the ~50 tile lists from the browser; 10 min = the flat-tile rebuild window above
+    response.headers["Cache-Control"] = "public, max-age=600"
+    return {"z": 16, "chunks": chunks}
 
 
 # the path ends in ".glb", no query: the map's model loader silently ignores any other src
@@ -720,9 +749,36 @@ async def share_page(qid: str, tab: str = "photos", photo: str | None = None):
 
 # Serve the built frontend when present (single-container deployment)
 _dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-if _dist.exists():
-    app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="assets")
+_HASHED = re.compile(r"-[A-Za-z0-9_-]{8}\.(?:js|css)$")   # Vite's content-hashed names: never change, cache for a year
+_TYPES = {".geojson": "application/geo+json", ".mjs": "text/javascript", ".pbf": "application/x-protobuf"}
 
+
+def _static(target: Path, request: Request) -> Response:
+    """A built file. The build writes .br/.gz copies next to text files (vite.config.ts, precompress): the smallest
+    one the browser takes is sent as is, with no work per request. Unchanged files answer 304 on revalidation."""
+    if target.name == "index.html":
+        cache_control = "no-cache"   # always revalidated: it names the current hashed bundles
+    elif _HASHED.search(target.name):
+        cache_control = "public, max-age=31536000, immutable"
+    else:
+        cache_control = "public, max-age=3600"   # public/ files keep their names (geojson, planet tiles, geo packs)
+    headers = {"Cache-Control": cache_control, "Vary": "Accept-Encoding"}
+    media_type = _TYPES.get(target.suffix) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    accept = request.headers.get("accept-encoding", "")
+    served = target
+    for enc, ext in (("br", ".br"), ("gzip", ".gz")):
+        alt = target.with_name(target.name + ext)
+        if enc in accept and alt.is_file():
+            served, headers["Content-Encoding"] = alt, enc
+            break
+    st = served.stat()
+    etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+    if etag in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": cache_control, "Vary": "Accept-Encoding"})
+    return FileResponse(served, media_type=media_type, headers={**headers, "ETag": etag})
+
+
+if _dist.exists():
     @app.get("/{path:path}")
     async def spa(path: str, request: Request):
         # an unknown API path is an API error, never the app's HTML (the client would fail on "<!doctype")
@@ -737,5 +793,7 @@ if _dist.exists():
         if not target.is_relative_to(_dist.resolve()):
             raise HTTPException(404, "file not found")
         if path and target.is_file():
-            return FileResponse(target)
-        return FileResponse(_dist / "index.html")
+            return _static(target, request)
+        if path.startswith("assets/"):   # a missing script must fail as a script, not arrive as the app's HTML
+            raise HTTPException(404, "file not found")
+        return _static(_dist / "index.html", request)

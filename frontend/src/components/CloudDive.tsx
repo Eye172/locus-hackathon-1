@@ -110,7 +110,12 @@ export function CloudDive({ run, duration = 6200, hold = false, maxHoldMs = 6000
     const ro = 'ResizeObserver' in window ? new ResizeObserver(size) : null
     ro?.observe(c)
     glRef.current = st
-    return () => ro?.disconnect()
+    return () => {
+      ro?.disconnect()
+      // leaving the globe page releases the context (each visit made a new one); only once the canvas is really gone:
+      // StrictMode re-runs this effect on the same canvas
+      window.setTimeout(() => { if (!c.isConnected) gl.getExtension('WEBGL_lose_context')?.loseContext() }, 0)
+    }
   }, [])
 
   // a dive

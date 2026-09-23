@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Sun, Cloud, CloudRain, CloudSnow, CloudFog, CloudLightning, CloudDrizzle, Wind, Droplets, ExternalLink, Map as MapIcon } from 'lucide-react'
 import { api } from '../lib/api'
 import type { ClimatePack, ClimateStory } from '../lib/types'
@@ -50,9 +50,15 @@ function deg(v: number | null | undefined): string {
 const num = (v: number | null | undefined, lang: Lang) => (v == null ? '—' : v.toLocaleString(lang, { maximumFractionDigits: 1 }))
 const fill = (s: string, vars: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''))
 const RU_MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
-const monthName = (m: number, lang: Lang, style: 'short' | 'long' = 'short') =>
-  style === 'short' && lang === 'ru' ? RU_MONTHS[m - 1]
-    : new Intl.DateTimeFormat(lang, { month: style }).format(new Date(2025, m - 1, 15)).replace(/\.$/, '')
+// one formatter per language and style: building one per call cost 12-24 of them on every hover of the year chart
+const monthFmts = new Map<string, Intl.DateTimeFormat>()
+const monthName = (m: number, lang: Lang, style: 'short' | 'long' = 'short') => {
+  if (style === 'short' && lang === 'ru') return RU_MONTHS[m - 1]
+  const key = `${lang}:${style}`
+  let f = monthFmts.get(key)
+  if (!f) { f = new Intl.DateTimeFormat(lang, { month: style }); monthFmts.set(key, f) }
+  return f.format(new Date(2025, m - 1, 15)).replace(/\.$/, '')
+}
 
 const WIND_FROM: Record<Lang, Record<string, string>> = {
   ru: { N: 'с севера', NE: 'с северо-востока', E: 'с востока', SE: 'с юго-востока', S: 'с юга', SW: 'с юго-запада', W: 'с запада', NW: 'с северо-запада' },
@@ -287,10 +293,34 @@ function Seasons({ c, story, t, lang }: { c: ClimatePack; story: ClimateStory | 
   )
 }
 
+type CalDay = { date: Date; cls: keyof typeof FEEL | null; feels: number | null; precip: number }
+
+// the 365 cells, drawn once per pack: hovering changes only the caption line (the outline is CSS), the cells stay
+const CalendarGrid = memo(function CalendarGrid({ byMonth, lang, onHover }: { byMonth: CalDay[][]; lang: Lang; onHover: (key: string) => void }) {
+  return (
+    <div className="space-y-[3px]" onMouseOver={(e) => { const k = (e.target as HTMLElement).closest<HTMLElement>('[data-d]')?.dataset.d; if (k) onHover(k) }}>
+      {byMonth.map((days, m) => (
+        <div key={m} className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-2">
+          <span className="text-[11.5px] text-muted">{monthName(m + 1, lang)}</span>
+          <div className="grid gap-[3px]" style={{ gridTemplateColumns: 'repeat(31, minmax(0, 1fr))' }}>
+            {days.map((d, j) => (
+              <span key={d.date.getDate()} data-d={d.cls ? `${m}:${j}` : undefined}
+                className={`relative aspect-square rounded-[3px] ${d.cls ? 'hover:outline-2 hover:outline-offset-1 hover:outline-ink' : ''}`}
+                style={{ background: d.cls ? FEEL[d.cls] : '#F4F5F7' }}>
+                {d.cls === 'rainy' && <i className="absolute inset-0 m-auto w-[3px] h-[3px] rounded-full bg-ink-2" />}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+})
+
 function Calendar({ c, t, lang }: { c: ClimatePack; t: T; lang: Lang }) {
-  const [hover, setHover] = useState<{ date: Date; cls: keyof typeof FEEL; feels: number | null; precip: number } | null>(null)
+  const [hoverKey, setHoverKey] = useState<string | null>(null)
   const byMonth = useMemo(() => {
-    const out: { date: Date; cls: keyof typeof FEEL | null; feels: number | null; precip: number }[][] = Array.from({ length: 12 }, () => [])
+    const out: CalDay[][] = Array.from({ length: 12 }, () => [])
     const d = c.days
     if (!d) return out
     const start = new Date(`${d.start}T12:00`)
@@ -300,26 +330,14 @@ function Calendar({ c, t, lang }: { c: ClimatePack; t: T; lang: Lang }) {
     }
     return out
   }, [c.days])
-  const dayFmt = new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'long' })
+  const dayFmt = useMemo(() => new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'long' }), [lang])
   if (!c.days) return null
+  const [hm, hj] = hoverKey ? hoverKey.split(':').map(Number) : [-1, -1]
+  const hd = hm >= 0 ? byMonth[hm]?.[hj] : undefined
+  const hover = hd?.cls ? { ...hd, cls: hd.cls } : null
   return (
-    <div className="mt-6 max-w-[620px]" onMouseLeave={() => setHover(null)}>
-      <div className="space-y-[3px]">
-        {byMonth.map((days, m) => (
-          <div key={m} className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-2">
-            <span className="text-[11.5px] text-muted">{monthName(m + 1, lang)}</span>
-            <div className="grid gap-[3px]" style={{ gridTemplateColumns: 'repeat(31, minmax(0, 1fr))' }}>
-              {days.map((d) => (
-                <span key={d.date.getDate()} className="relative aspect-square rounded-[3px]"
-                  style={{ background: d.cls ? FEEL[d.cls] : '#F4F5F7', outline: hover?.date.getTime() === d.date.getTime() ? '2px solid #0B0D12' : undefined, outlineOffset: 1 }}
-                  onMouseEnter={() => d.cls && setHover({ ...d, cls: d.cls })}>
-                  {d.cls === 'rainy' && <i className="absolute inset-0 m-auto w-[3px] h-[3px] rounded-full bg-ink-2" />}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="mt-6 max-w-[620px]" onMouseLeave={() => setHoverKey(null)}>
+      <CalendarGrid byMonth={byMonth} lang={lang} onHover={setHoverKey} />
       <div className="mt-3 pl-[42px] min-h-[20px] text-[13px] text-ink-2" aria-live="polite">
         {hover ? (
           <span><span className="first-letter:uppercase">{dayFmt.format(hover.date)}</span> · {t(`climate.${hover.cls}`)} · {t('climate.feelsWord')} <span className="mono">{deg(hover.feels)}</span> · <span className="mono">{num(hover.precip, lang)}</span> {t('climate.mmUnit')}</span>

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { ArrowRight, ArrowUp, Box, Loader2, RotateCcw, Sparkles, Square } from 'lucide-react'
 import { api, compareSheets, streamAdvisor, thumbUrl, type AdvisorSheet } from '../lib/api'
@@ -25,7 +25,8 @@ function inline(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
     part.startsWith('**') && part.endsWith('**') && part.length > 4 ? <strong key={i} className="font-semibold text-ink">{part.slice(2, -2)}</strong> : <Fragment key={i}>{part}</Fragment>)
 }
-function Markdown({ text, names }: { text: string; names?: [string, string] }) {
+// memoised: while an answer streams only its own bubble is parsed again, not every earlier message
+const Markdown = memo(function Markdown({ text, names }: { text: string; names?: [string, string] }) {
   const blocks: React.ReactNode[] = []
   // a heading naming one of the two universities gets its A / B mark, as on the cards
   const mark = (h: string) => {
@@ -49,7 +50,7 @@ function Markdown({ text, names }: { text: string; names?: [string, string] }) {
   }
   flush()
   return <div className="text-[15px] leading-[1.65] text-ink-2">{blocks}</div>
-}
+}, (a, b) => a.text === b.text && a.names?.[0] === b.names?.[0] && a.names?.[1] === b.names?.[1])
 
 function Picker({ label, value, onPick, t }: { label: string; value: Candidate | null; onPick: (c: Candidate | null) => void; t: T }) {
   useStoreVersion()
@@ -136,11 +137,21 @@ function Advisor({ a, b, names, t, lang }: { a: string; b: string; names: [strin
     const c = new AbortController(); ctrl.current = c
     setErr(null); setBusy(true); stick.current = true
     setMsgs([...history, { role: 'assistant', content: '' }])
+    // tokens come every ~12 ms: they are gathered and drawn once per frame, not one render (and one scroll) per token
+    let pending = '', frame = 0
+    const flush = () => {
+      frame = 0
+      if (c.signal.aborted || !pending) return
+      const add = pending; pending = ''
+      setMsgs((m) => { const n = [...m]; n[n.length - 1] = { role: 'assistant', content: n[n.length - 1].content + add }; return n })
+    }
     void streamAdvisor({ a, b, lang, messages: history }, (tok) => {
       if (c.signal.aborted) return
-      setMsgs((m) => { const n = [...m]; n[n.length - 1] = { role: 'assistant', content: n[n.length - 1].content + tok }; return n })
-    }, () => { if (!c.signal.aborted) setBusy(false) }, (e) => {
+      pending += tok
+      if (!frame) frame = requestAnimationFrame(flush)
+    }, () => { if (!c.signal.aborted) { cancelAnimationFrame(frame); flush(); setBusy(false) } }, (e) => {
       if (c.signal.aborted) return
+      cancelAnimationFrame(frame); flush()
       setErr(e); setBusy(false)
       setMsgs((m) => (m.length && m[m.length - 1].role === 'assistant' && !m[m.length - 1].content ? m.slice(0, -1) : m))
     }, c.signal)

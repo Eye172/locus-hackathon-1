@@ -3,7 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapPin, ArrowRight, Undo2, Loader2 } from 'lucide-react'
 import { GlobeMap, type GlobeHandle, type HoverInfo } from '../map/GlobeMap'
-import { Clouds } from '../components/Clouds'
+import { Clouds, type CloudsHandle } from '../components/Clouds'
 import { CloudDive } from '../components/CloudDive'
 import { SearchBox } from '../components/SearchBox'
 import { api, streamProfile, thumbUrl } from '../lib/api'
@@ -25,8 +25,11 @@ export default function Globe() {
   const nav = useNavigate()
   const [params, setParams] = useSearchParams()
   const globe = useRef<GlobeHandle>(null)
-  const [zoom, setZoom] = useState(1.5)
+  const clouds = useRef<CloudsHandle>(null)
+  const zoomRef = useRef(1.5)
   const [hover, setHover] = useState<HoverInfo | null>(null)
+  const hoverCard = useRef<HTMLDivElement>(null)
+  const hoverAt = useRef({ x: 0, y: 0 })
   const [countries, setCountries] = useState<Country[]>([])
   const [phase, setPhase] = useState<'idle' | 'flying' | 'arrived'>('idle')
   const [cutscene, setCutscene] = useState<string | null>(null)
@@ -76,10 +79,24 @@ export default function Globe() {
 
   useEffect(() => {
     fetch('/countries.json').then((r) => r.json()).then(setCountries).catch(() => {})
-    fetch('/universities.geojson').then((r) => r.json()).then((g: GeoJSON.FeatureCollection) => {
-      for (const f of g.features) coords.current.set((f.properties as { qid: string }).qid, (f.geometry as GeoJSON.Point).coordinates as [number, number])
-    }).catch(() => {})
-    return () => window.clearTimeout(autoTimer.current)
+    // qid -> coordinates for flights: the map's worker has the same file, but not for us. Parsing 2.4 MB is a long
+    // task, so it waits for an idle moment after the opening shot (the file itself comes from the HTTP cache by then);
+    // a pick before that asks /api/mini for the point instead
+    const idle = (cb: () => void) => (typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(cb, { timeout: 3000 }) : setTimeout(cb, 1))
+    const timer = window.setTimeout(() => idle(() => {
+      fetch('/universities.geojson').then((r) => r.json()).then((g: GeoJSON.FeatureCollection) => {
+        for (const f of g.features) coords.current.set((f.properties as { qid: string }).qid, (f.geometry as GeoJSON.Point).coordinates as [number, number])
+      }).catch(() => {})
+    }), 4500)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearTimeout(autoTimer.current)
+      window.clearTimeout(revealTimer.current)
+      // the arrival's live profile stream must not outlive the page. A few seconds later, not at once: the profile page
+      // opens its own stream and joins the same build first (a build nobody listens to before its first answer stops)
+      const stop = stopStream.current
+      window.setTimeout(() => stop?.(), 5000)
+    }
   }, [])
 
   // the Google 3D scene's code and libraries are fetched ahead of the first pick (after the opening shot, or at once
@@ -216,6 +233,26 @@ export default function Globe() {
     }
   }, [])
   const onPick = (c: Candidate) => goTo(c.qid, c.label, c.city)
+  // the map is memoised and keeps its first callbacks: they go through refs to the latest render (the language too)
+  const goToRef = useRef(goTo)
+  goToRef.current = goTo
+  const langRef = useRef(lang)
+  langRef.current = lang
+  const onSelect = useCallback((h: HoverInfo) => goToRef.current(h.qid, langRef.current === 'en' ? h.name_en : h.name, h.city), [])
+  const diveRef = useRef(dive)
+  diveRef.current = dive
+  const onZoom = useCallback((z: number) => { zoomRef.current = z; clouds.current?.setZoom(diveRef.current ? 0 : z) }, [])
+  useEffect(() => { clouds.current?.setZoom(dive ? 0 : zoomRef.current) }, [dive])
+  // the hover card: a new university re-renders it, the pointer moving over the same one only moves it
+  const cardPos = (x: number, y: number) => ({ left: Math.min(x + 14, window.innerWidth - 300), top: y + 14 })
+  const onHover = useCallback((h: HoverInfo | null) => {
+    if (h) {
+      hoverAt.current = { x: h.x, y: h.y }
+      const el = hoverCard.current
+      if (el) { const p = cardPos(h.x, h.y); el.style.left = `${p.left}px`; el.style.top = `${p.top}px` }
+    }
+    setHover((o) => (o?.qid === h?.qid ? o : h))
+  }, [])
   const back = () => { window.clearTimeout(autoTimer.current); window.clearTimeout(revealTimer.current); stopStream.current?.(); setDive(false); setDiveRun(0); setReveal(false); setRevealArmed(false); setHeroPhotos([]); setPhase('idle'); setTarget(null); setTour(false); setG3d(null); g3dRef.current = null; g3dReadyFor.current = null; setDiveHold(false); globe.current?.resetToGlobe(); if (params.has('u')) setParams({}, { replace: true }) }
 
   return (
@@ -225,9 +262,9 @@ export default function Globe() {
       {cutscene && target && <Cutscene src={cutscene} skipLabel={t('globe.skip')} aiLabel={t('globe.aiTransition')} onDone={() => { setCutscene(null); nav(`/u/${target.qid}`) }} />}
       {/* under the Google scene the planet, its stars and clouds are not painted at all */}
       <div className="absolute inset-0" style={{ visibility: g3d?.active ? 'hidden' : 'visible' }}>
-      <GlobeMap ref={globe} onHover={setHover} onSelect={(h) => goTo(h.qid, lang === 'en' ? h.name_en : h.name, h.city)} onZoom={setZoom} inset={inset}
+      <GlobeMap ref={globe} onHover={onHover} onSelect={onSelect} onZoom={onZoom} inset={inset}
         onTitleOverlap={setTitleHidden} />
-      <Clouds zoom={dive ? 0 : zoom} />
+      <Clouds ref={clouds} />
       </div>
       {g3d && (
         <Suspense fallback={null}>
@@ -270,7 +307,7 @@ export default function Globe() {
       )}
 
       {hover && phase === 'idle' && (
-        <div className="absolute z-30 pointer-events-none pop" style={{ left: Math.min(hover.x + 14, window.innerWidth - 300), top: hover.y + 14 }}>
+        <div ref={hoverCard} className="absolute z-30 pointer-events-none pop" style={cardPos(hoverAt.current.x, hoverAt.current.y)}>
           <div className="w-72 rounded-2xl bg-[#0B1222]/95 border border-white/10 backdrop-blur-xl p-3 shadow-2xl">
             <div className="font-semibold leading-snug">{lang === 'en' ? hover.name_en : hover.name}</div>
             <div className="text-xs text-blue-200/70 mt-0.5 flex items-center gap-1"><MapPin size={12} />{[hover.city, hover.c].filter(Boolean).join(' · ')}</div>

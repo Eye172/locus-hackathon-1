@@ -16,18 +16,32 @@ async function sendJSON<T>(method: string, path: string, body?: unknown): Promis
   return r.json() as Promise<T>
 }
 
+// answers that do not change while the page is open: a tab opened again (or a component and its neighbour asking for
+// the same thing) takes the first request's promise instead of downloading and parsing it again. Failures are dropped
+// so the next ask retries; `ttl` bounds answers that do change (a profile's mini card once its build is done).
+const memo = new Map<string, { at: number; p: Promise<unknown> }>()
+function once<T>(key: string, load: () => Promise<T>, ttl = Infinity): Promise<T> {
+  const hit = memo.get(key)
+  if (hit && Date.now() - hit.at < ttl) return hit.p as Promise<T>
+  const p = load()
+  memo.set(key, { at: Date.now(), p })
+  p.catch(() => { if (memo.get(key)?.p === p) memo.delete(key) })
+  return p
+}
+
 export const api = {
   search: (q: string) => getJSON<{ query: string; candidates: Candidate[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   recent: () => getJSON<{ recent: RecentItem[] }>('/api/recent'),
   sources: () => getJSON<{ sources: Record<string, { enabled: boolean; needs_key: boolean; env?: string }> }>('/api/sources'),
   health: () => getJSON<{ ok: boolean; clip_ready: boolean; index: number; budget_s: number }>('/api/health'),
   profile: (qid: string) => getJSON<Profile>(`/api/profile/${qid}`),
-  context: (qid: string) => getJSON<ContextPack>(`/api/context/${qid}`),
-  climate: (qid: string) => getJSON<ClimatePack>(`/api/climate/${qid}`),
-  climateStory: (qid: string, lang: string) => getJSON<ClimateStory>(`/api/climate/${qid}/story?lang=${lang}`),
-  cost: (cityQid: string) => getJSON<CostPack>(`/api/cost/${cityQid}`),
-  mini: (qid: string) => getJSON<{ qid: string; name: string; name_en?: string | null; country_qid?: string | null; names: Record<string, string>; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; logo_url?: string | null; lat?: number | null; lon?: number | null; profile: { coverage: string; generated_at: string; photos_total: number; photos: { id: string; thumb: string; category: string }[] } | null }>(`/api/mini/${qid}`),
+  context: (qid: string) => once(`context:${qid}`, () => getJSON<ContextPack>(`/api/context/${qid}`)),
+  climate: (qid: string) => once(`climate:${qid}`, () => getJSON<ClimatePack>(`/api/climate/${qid}`)),
+  climateStory: (qid: string, lang: string) => once(`story:${qid}:${lang}`, () => getJSON<ClimateStory>(`/api/climate/${qid}/story?lang=${lang}`)),
+  cost: (cityQid: string) => once(`cost:${cityQid}`, () => getJSON<CostPack>(`/api/cost/${cityQid}`)),
+  mini: (qid: string) => once(`mini:${qid}`, () => getJSON<{ qid: string; name: string; name_en?: string | null; country_qid?: string | null; names: Record<string, string>; city?: string | null; country?: string | null; founded?: number | null; students?: number | null; logo_url?: string | null; lat?: number | null; lon?: number | null; profile: { coverage: string; generated_at: string; photos_total: number; photos: { id: string; thumb: string; category: string }[] } | null }>(`/api/mini/${qid}`), 30_000),
   map3d: (qid: string, lang: string) => getJSON<Map3DPack>(`/api/map3d/${qid}?lang=${lang}`),
+  map3dCity: (qid: string, lang: string) => getJSON<Pick<Map3DPack, 'city_area' | 'city_status'>>(`/api/map3d/${qid}/city?lang=${lang}`),
   footprints: async (points: { id: string; lat: number; lon: number }[]) => {
     const r = await fetch(`${API_BASE}/api/map3d/footprints`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points }) })
     if (!r.ok) throw new Error(`${r.status}`)
@@ -40,7 +54,10 @@ export const api = {
     return r.json() as Promise<CompareAi>
   },
   refresh: (qid: string) => fetch(`${API_BASE}/api/profile/${qid}/refresh`, { method: 'POST' }),
-  facts: (qid: string, refresh = false) => getJSON<CampusFacts>(`/api/facts/${qid}${refresh ? '?refresh=true' : ''}`),
+  facts: (qid: string, refresh = false) => {
+    if (refresh) memo.delete(`facts:${qid}`)   // the rebuilt answer replaces the kept one
+    return once(`facts:${qid}`, () => getJSON<CampusFacts>(`/api/facts/${qid}${refresh ? '?refresh=true' : ''}`))
+  },
   searchPlan: () => getJSON<{ plan: SearchPlan; defaults: SearchPlan; platforms: string[] }>('/api/search-plan'),
   saveSearchPlan: (plan: SearchPlan) => sendJSON<{ plan: SearchPlan }>('PUT', '/api/search-plan', plan),
   resetSearchPlan: () => sendJSON<{ plan: SearchPlan }>('POST', '/api/search-plan/reset'),

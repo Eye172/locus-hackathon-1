@@ -11,8 +11,11 @@ export function setLang(l: Lang) {
   try { localStorage.setItem(KEY, l) } catch { /* private mode */ }
   listeners.forEach((f) => f())
 }
+const subscribe = (cb: () => void) => { listeners.add(cb); return () => { listeners.delete(cb) } }
+const getLang = () => current
 export function useLang(): Lang {
-  return useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb) }, () => current, () => current)
+  // a stable subscribe: a new one per render made every component unsubscribe and subscribe again on each render
+  return useSyncExternalStore(subscribe, getLang, getLang)
 }
 
 // a university's name: `name` is Russian, or English when the university has no Russian name; `name_en` is English

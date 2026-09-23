@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { RefreshCw, Share2, GitCompare, Bookmark, BookmarkCheck, ArrowLeft, Check, Map as MapIcon, Footprints, Box } from 'lucide-react'
 import { streamProfile, API_BASE } from '../lib/api'
@@ -11,7 +11,7 @@ import { CityTab } from '../components/CityTab'
 import { WalkTab } from '../components/WalkTab'
 import { pickHero } from '../components/CampusReveal'
 import { AboutCampus } from '../components/AboutCampus'
-import { BuildStatus, FactsRow, HeroGallery, OverviewTab, VerifyTab, heroPicks } from '../components/ProfileSections'
+import { BuildStatus, FactsRow, FactsRowSkeleton, HeroGallery, OverviewTab, VerifyTab, heroPicks } from '../components/ProfileSections'
 import type { ContextPack } from '../lib/types'
 import { store, useStoreVersion } from '../lib/store'
 
@@ -45,11 +45,15 @@ export default function Profile() {
   const [run, setRun] = useState(0)
   const refresh = params.get('refresh') === '1'
 
+  // react-router gives setParams a new identity whenever the query changes (opening a photo, switching a tab): the
+  // callbacks below go through a ref so they stay the same and the memoised photo tiles do not all render again
+  const paramsRef = useRef(setParams)
+  paramsRef.current = setParams
   const [tab, setTabState] = useState<Tab>(asTab(params.get('tab')))
   const setTab = useCallback((next: Tab) => {
     setTabState(next)
-    setParams((prev) => { const n = new URLSearchParams(prev); if (next === 'overview') n.delete('tab'); else n.set('tab', next); return n }, { replace: true })
-  }, [setParams])
+    paramsRef.current((prev) => { const n = new URLSearchParams(prev); if (next === 'overview') n.delete('tab'); else n.set('tab', next); return n }, { replace: true })
+  }, [])
   const [view, setView] = useState<View>(params.get('tab') === 'bvr' ? 'bvr' : 'album')
   const [filter, setFilter] = useState<string>('all')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
@@ -64,19 +68,21 @@ export default function Profile() {
 
   useEffect(() => {
     setStages({}); setSources({}); setUni(null); setCampus(null); setPrelim([]); setProfile(null); setError(null); setElapsed(0); setCached(false)
+    let onScreen = false   // once a profile is on screen the stream's raw photo batches are not drawn: they only re-rendered the page
     const close = streamProfile(qid, refresh, {
       onStage: (s, e) => { setStages((st) => ({ ...st, [s.key]: s })); setElapsed(e) },
       onUniversity: (u, c) => { setUni(u); setCampus(c) },
       onCampus: (c, u) => { setCampus(c); setUni(u) },
       onSource: (name, s, e) => { setSources((ss) => ({ ...ss, [name]: s })); setElapsed(e) },
-      onPhotos: (_src, photos) => setPrelim((pp) => { const ids = new Set(pp.map((p) => p.id)); return [...pp, ...photos.filter((p) => !ids.has(p.id))] }),
+      onPhotos: (_src, photos) => { if (!onScreen) setPrelim((pp) => { const ids = new Set(pp.map((p) => p.id)); return [...pp, ...photos.filter((p) => !ids.has(p.id))] }) },
       // the first live profile comes at ~24 s; the build then keeps collecting without a clock and sends it again
       // as it grows - silently: the status line stays "built in N s", only the photos and the details change
       onProfile: (p, c) => {
+        if (!onScreen) { onScreen = true; setPrelim([]) }
         setProfile(p); setUni(p.university); setCampus(p.campus ?? null); setCached(c); setElapsed(p.elapsed_ms)
         setStages((st) => (c && Object.keys(st).length ? st : Object.fromEntries(p.stages.map((s) => [s.key, s]))))
         setSources((ss) => (c && Object.keys(ss).length ? ss : p.sources_status))
-        if (refresh) setParams((prev) => { const n = new URLSearchParams(prev); n.delete('refresh'); return n }, { replace: true })
+        if (refresh) paramsRef.current((prev) => { const n = new URLSearchParams(prev); n.delete('refresh'); return n }, { replace: true })
       },
       onError: (m) => setError(m),
     })
@@ -95,8 +101,8 @@ export default function Profile() {
   const allForPassport = useMemo(() => (profile ? [...profile.photos, ...profile.rejected] : prelim), [profile, prelim])
   const hero = useMemo(() => heroPicks(photos, 5, profile?.cover), [photos, profile?.cover])
   const open = openId ? allForPassport.find((p) => p.id === openId) ?? null : null
-  const openPhoto = useCallback((p: Photo) => { setOpenId(p.id); setParams((prev) => { const n = new URLSearchParams(prev); n.set('photo', p.id); return n }, { replace: true }) }, [setParams])
-  const closePhoto = useCallback(() => { setOpenId(null); setParams((prev) => { const n = new URLSearchParams(prev); n.delete('photo'); return n }, { replace: true }) }, [setParams])
+  const openPhoto = useCallback((p: Photo) => { setOpenId(p.id); paramsRef.current((prev) => { const n = new URLSearchParams(prev); n.set('photo', p.id); return n }, { replace: true }) }, [])
+  const closePhoto = useCallback(() => { setOpenId(null); paramsRef.current((prev) => { const n = new URLSearchParams(prev); n.delete('photo'); return n }, { replace: true }) }, [])
   // arrows walk through what the viewer came from: the filtered grid, else every photo
   const seq = tab === 'photos' ? shown : allForPassport
   const idx = open ? seq.findIndex((p) => p.id === open.id) : -1
@@ -165,7 +171,7 @@ export default function Profile() {
           </div>
         </div>
 
-        {uni && <FactsRow uni={uni} />}
+        {uni ? <FactsRow uni={uni} /> : !error && <FactsRowSkeleton />}
         {(!error || photos.length > 0) && <HeroGallery photos={hero} total={photos.length} loading={loading} onOpen={openPhoto} onAll={() => { setFilter('all'); setTab('photos') }} />}
         {!error && <BuildStatus profile={profile} photos={photos} stages={stages} sources={sources} elapsed={elapsed} cached={cached} onVerify={() => setTab('verify')} />}
 
@@ -179,7 +185,7 @@ export default function Profile() {
         )}
       </div>
 
-      <div className="sticky top-14 z-30 mt-12 bg-white/92 backdrop-blur-md border-b border-line">
+      <div className="sticky top-14 z-30 mt-12 bg-white border-b border-line">
         <div role="tablist" className="mx-auto max-w-7xl px-4 sm:px-6 flex gap-7 overflow-x-auto no-scrollbar">
           {tabs.map((x) => (
             <button key={x.key} role="tab" aria-selected={tab === x.key} onClick={() => setTab(x.key)} className={`tab ${tab === x.key ? 'tab-active' : ''}`}>

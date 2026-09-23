@@ -55,7 +55,7 @@ export function HeroGallery({ photos, total, loading, onOpen, onAll }: {
   if (!photos.length) {
     if (!loading) return null
     return (
-      <div className="mt-8 grid grid-cols-4 grid-rows-2 gap-2 h-[260px] sm:h-[420px] rounded-2xl overflow-hidden">
+      <div className="mt-8 grid grid-cols-4 grid-rows-2 gap-2 h-[260px] sm:h-[420px] lg:h-[460px] rounded-2xl overflow-hidden">
         <div className="shimmer col-span-4 row-span-2 sm:col-span-2" />
         {[0, 1, 2, 3].map((i) => <div key={i} className="shimmer hidden sm:block" />)}
       </div>
@@ -125,6 +125,15 @@ export function BuildStatus({ profile, photos, stages, sources, elapsed, cached,
 }
 
 /* ---------------------------------------------------------------- facts row */
+
+/** The facts row's place while the university is not known yet: the gallery below must not jump when it arrives. */
+export function FactsRowSkeleton() {
+  return (
+    <dl className="mt-6 flex gap-x-10" aria-hidden>
+      <div><dt className="text-[13px]">&nbsp;</dt><dd className="mt-0.5 text-[16px] font-medium"><span className="shimmer inline-block w-40 h-4 rounded align-middle" /></dd></div>
+    </dl>
+  )
+}
 
 export function FactsRow({ uni }: { uni: University }) {
   const t = useT()
