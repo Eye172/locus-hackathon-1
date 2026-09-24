@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://pip00sya--campuslense-web.modal.run").rstrip("/")
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://nnurkhan91--campuslense-web.modal.run").rstrip("/")
 CASES = [
     ("/", 200, "text/html"),
     ("/saved", 200, "text/html"),

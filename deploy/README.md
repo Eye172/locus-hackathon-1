@@ -1,8 +1,8 @@
 # MVP on Modal
 
-Live app: https://pip00sya--campuslense-web.modal.run
+Live app: https://nnurkhan91--campuslense-web.modal.run
 
-Deployment: https://modal.com/apps/pip00sya/main/deployed/campuslense
+Deployment: https://modal.com/apps/nnurkhan91/main/deployed/campuslense
 
 React and FastAPI run together, with same-origin `/api` and `/s` routes. CLIP and
 Depth Anything weights are included in the image. Runtime profiles, SQLite,
@@ -57,7 +57,7 @@ index matches the local build, rather than relying only on CLI deployment succes
 ## Verify
 
 ```powershell
-Invoke-RestMethod 'https://pip00sya--campuslense-web.modal.run/api/health'
+Invoke-RestMethod 'https://nnurkhan91--campuslense-web.modal.run/api/health'
 ```
 
 Expect `ok: true`, `index: 14467` and, after model warmup, `clip_ready: true`.

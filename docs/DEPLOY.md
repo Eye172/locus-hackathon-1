@@ -2,8 +2,8 @@
 
 ## Рабочий сайт: Modal
 
-**https://pip00sya--campuslense-web.modal.run** — бэкенд и собранный фронтенд в одном контейнере (`deploy/modal_app.py`), кэш профилей и превью — в
-Modal Volume `campuslens-data`, один контейнер держится тёплым (`MIN_CONTAINERS=1`), чтобы у жюри не было холодного старта.
+**https://nnurkhan91--campuslense-web.modal.run** — бэкенд и собранный фронтенд в одном контейнере (`deploy/modal_app.py`), кэш профилей и превью — в
+Modal Volume `campuslens-data`, без запросов контейнер засыпает (`MIN_CONTAINERS=0`), первый запрос после простоя будит его примерно за полминуты.
 
 ```bash
 pip install modal && modal token new          # один раз, вход через браузер
